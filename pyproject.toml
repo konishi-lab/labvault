@@ -1,0 +1,77 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "labvault"
+version = "0.1.0"
+description = "Lab data management SDK. Auto-logs notebook execution, stores data with LLM-friendly metadata."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Konishi Lab" },
+]
+keywords = ["experiment", "lab", "data-management", "llm", "notebook", "auto-logging"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "click>=8.1",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+gcp = [
+    "google-cloud-firestore>=2.16",
+    "google-cloud-aiplatform>=1.50",
+]
+nextcloud = [
+    "nc-py-api>=0.19",
+]
+numpy = [
+    "numpy>=1.24",
+]
+all = [
+    "labvault[gcp,nextcloud,numpy]",
+]
+dev = [
+    "pytest>=8.1",
+    "pytest-cov>=6.1",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.11",
+    "mypy>=1.9",
+]
+
+[project.scripts]
+labvault = "labvault.cli.main:app"
+
+[project.urls]
+Homepage = "https://github.com/konishi-lab/labvault"
+Repository = "https://github.com/konishi-lab/labvault"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/labvault"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=src/labvault --cov-report=term-missing"
+
+[tool.ruff]
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
