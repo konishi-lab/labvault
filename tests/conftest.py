@@ -9,6 +9,7 @@ from labvault.backends.memory import (
     InMemorySearchBackend,
     InMemoryStorageBackend,
 )
+from labvault.core.lab import Lab
 
 
 @pytest.fixture()
@@ -24,3 +25,13 @@ def storage_backend() -> InMemoryStorageBackend:
 @pytest.fixture()
 def search_backend() -> InMemorySearchBackend:
     return InMemorySearchBackend()
+
+
+@pytest.fixture()
+def lab() -> Lab:
+    return Lab(
+        "test-team",
+        metadata_backend=InMemoryMetadataBackend(),
+        storage_backend=InMemoryStorageBackend(),
+        search_backend=InMemorySearchBackend(),
+    )
