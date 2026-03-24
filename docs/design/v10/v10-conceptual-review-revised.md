@@ -57,7 +57,7 @@ exp.log_event("deposition_start", "RF ON")     # イベント記録
 
 一晩放置のSQUID測定をNotebookから実行 → カーネルがタイムアウト/OOMで死ぬ → Recordがrunningのまま放置 → セルログが中断。
 
-**提案**: `lab.resume("AB3F")` で既存Recordに再接続し、IPython hooksを再開するAPI。
+**対応**: `lab.get("AB3F", auto_log=True)` で既存Recordに再接続し、IPython hooksを再開する。新APIは不要。
 
 ### N-3. セル再実行の冪等性保証 【高】
 
@@ -72,11 +72,11 @@ Notebookが日常 = セル再実行が高頻度。以下を冪等にすべき:
 1. `measurement.ipynb` で装置制御・データ取得
 2. `analysis.ipynb` で解析・可視化（同じRecordに追記）
 
-**提案**: `lab.open("AB3F")` を提供。セルログをセッション単位でグループ化:
+**対応**: `lab.get("AB3F", auto_log=True)` で既存Recordを取得し、セルログを追記する。セッション分離はNotebook名やカーネルIDで内部的に自動判別する。新APIは不要。
 ```
 sessions: [
   {notebook: "measurement.ipynb", cells: [...]},
-  {notebook: "analysis.ipynb", cells: [...]},
+  {notebook: "analysis.ipynb", cells: [...]},  ← lab.get(auto_log=True) で自動分離
 ]
 ```
 
@@ -122,7 +122,7 @@ sessions: [
 
 | # | 項目 | 重要度 | 内容 |
 |---|------|:------:|------|
-| 1 | **`lab.resume(id)` / `lab.open(id)` API** | 高 | 長時間測定のカーネル再起動、別Notebookでの解析追記に対応。セルログのセッション単位グループ化 |
+| 1 | **`lab.get(id, auto_log=True)` による既存Record再接続** | 高 | 長時間測定のカーネル再起動、別Notebookでの解析追記に対応。新APIは追加せず `get` のオプションで実現。セルログはNotebook名/カーネルIDで内部的にセッション分離 |
 | 2 | **装置制御スクリプト向けAPI** | 高 | `exp.log_value()` / `exp.log_event()` 。IPython hooks非依存の時系列ロガー。.pyスクリプトから使える |
 | 3 | **セル再実行の冪等性保証** | 高 | `note()` 重複防止、`add()` ファイル重複防止、セルログのexecution_countベース上書き |
 | 4 | **自動ログと手動入力の関係の説明** | 高 | 「自動で記録されるもの（コード履歴）」と「手動で入力するもの（条件・結果）」の2層構造をCookbookで明確化 |

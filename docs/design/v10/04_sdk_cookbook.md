@@ -63,8 +63,11 @@ lab = Lab("test", metadata_backend=InMemoryMetadataBackend())
 ### 2.2 レコードの取得・一覧
 
 ```python
-# IDで取得
+# IDで取得（読み取りのみ）
 exp = lab.get("AB3F")
+
+# 既存Recordに追記（IPython hooks ON。解析Notebookでの追記や、カーネル再起動後の復帰に使う）
+exp = lab.get("AB3F", auto_log=True)
 
 # 最新10件
 recent = lab.recent(10)
@@ -435,7 +438,31 @@ api_key = "sk-1234567890"
 exp.exclude_vars("my_private_var")
 ```
 
-### 5.4 2つ目のレコードへの切り替え
+### 5.4 既存Recordへの追記・カーネル復帰
+
+`lab.get(id, auto_log=True)` で既存Recordにセルログを追記できる。カーネル再起動後の復帰や、別Notebookでの解析追記に使う。
+
+```python
+# カーネルが死んだ後の復帰
+from labvault import Lab
+lab = Lab()
+exp = lab.get("AB3F", auto_log=True)
+# → IPython hooksが再起動。以降のセルはAB3Fに記録される
+
+# 別Notebook（analysis.ipynb）からの追記
+exp = lab.get("AB3F", auto_log=True)
+# → セルログは自動的にセッション分離される
+#    measurement.ipynb のログと analysis.ipynb のログが区別される
+```
+
+読み取りだけの場合は `auto_log` なし（デフォルト `False`）:
+
+```python
+exp = lab.get("AB3F")  # 読み取りのみ。hooksは起動しない
+print(exp.results["lattice_a"])
+```
+
+### 5.5 2つ目のレコードへの切り替え
 
 ```python
 exp1 = lab.new("実験1")
@@ -445,7 +472,32 @@ exp2 = lab.new("実験2")
 # → exp1のログは自動停止、exp2のログが開始
 ```
 
-### 5.5 @exp.track デコレータ（スクリプト用）
+### 5.6 装置制御スクリプト向けAPI（.py用）
+
+IPython hooksが効かない `.py` スクリプトでは、明示的なログAPIを使う。
+
+```python
+# instrument_control.py（Notebookではなく通常のPythonスクリプト）
+from labvault import Lab
+
+lab = Lab()
+exp = lab.new("スパッタ成膜", auto_log=False)  # hooksは不要
+exp.conditions(temperature_C=500, pressure_Pa=0.5)
+
+# 装置パラメータの時系列記録
+exp.log_value("substrate_temperature_C", 501.2)
+exp.log_value("chamber_pressure_Pa", 0.48)
+
+# イベント記録
+exp.log_event("rf_on", "RF電源 ON, 200W")
+# ... 成膜中 ...
+exp.log_event("rf_off", "RF電源 OFF")
+
+exp.add("process_log.csv")
+exp.status = "success"
+```
+
+### 5.7 @exp.track デコレータ（関数単位のトラッキング）
 
 Notebook以外の環境では、関数単位でトラッキングする。
 
@@ -878,7 +930,53 @@ exp.status = "success"
 # → LLMが「このフィッティングはどうやったの？」に答えられる
 ```
 
-### パターン G: テスト（InMemoryBackend）
+### パターン G: 装置制御（.py）→ 解析（.ipynb）の連携
+
+装置制御スクリプトでRecordを作成し、解析Notebookで同じRecordに追記する。
+
+```python
+# ===== instrument_control.py（装置制御スクリプト）=====
+from labvault import Lab
+
+lab = Lab()
+exp = lab.new("スパッタ成膜 Fe-Cr", template="sputter", auto_log=False)
+exp.conditions(temperature_C=500, pressure_Pa=0.5, rf_power_W=200)
+
+# 装置パラメータの時系列記録
+exp.log_event("process_start", "基板加熱開始")
+for t in measure_temperature_series():
+    exp.log_value("substrate_temperature_C", t)
+exp.log_event("deposition_start", "RF ON")
+# ... 成膜 ...
+exp.log_event("deposition_end", "RF OFF")
+
+exp.add("process_log.csv")
+exp.note(f"成膜完了。膜厚推定: 200nm")
+# statusはまだ設定しない（解析後に判断）
+print(f"Record ID: {exp.id}")  # → "AB3F"（解析Notebookで使う）
+```
+
+```python
+# ===== analysis.ipynb（解析Notebook）=====
+from labvault import Lab
+lab = Lab()
+
+# 既存Recordに接続（auto_log=True でセルログ記録開始）
+exp = lab.get("AB3F", auto_log=True)
+# → 以降のセルは AB3F に記録される（セッション自動分離）
+
+# セル2: XRDデータ解析
+import numpy as np
+data = np.loadtxt("xrd_data.csv", delimiter=",")
+# ... フィッティング ...
+
+exp.results["lattice_a"] = 2.873
+exp.results["phase"] = "BCC"
+exp.save("fit_plot", fig)
+exp.status = "success"
+```
+
+### パターン H: テスト（InMemoryBackend）
 
 ```python
 import pytest
@@ -922,7 +1020,7 @@ def test_search(lab):
 |---------|------|
 | `Lab(team?)` | 初期化 |
 | `.new(title, template?, type?, **conditions)` | レコード作成 |
-| `.get(id)` | ID取得 |
+| `.get(id, auto_log=False)` | ID取得。`auto_log=True` で既存Recordにhooks追記 |
 | `.list(tags?, status?, type?, limit?)` | 一覧 |
 | `.search(query, tags?, status?)` | 検索 |
 | `.recent(n)` | 最新n件 |
@@ -958,6 +1056,8 @@ def test_search(lab):
 | `.sub(title, type?)` | 子レコード作成 | - |
 | `.children()` | 子レコード一覧 | - |
 | `.link(target, relation?)` | リンク作成 | ✓ |
+| `.log_value(key, value)` | 時系列値記録（装置制御用） | ✓ |
+| `.log_event(type, description)` | イベント記録（装置制御用） | ✓ |
 | `.snapshot()` | 手動スナップショット | ✓ |
 | `.pause_logging()` | 自動ログ停止 | ✓ |
 | `.resume_logging()` | 自動ログ再開 | ✓ |
