@@ -32,7 +32,7 @@ mypy src/
 
 ```
 src/labvault/
-├── core/          # Lab, Record, types, config, id生成
+├── core/          # Lab, Record, types, config, id生成, auth
 ├── backends/      # Backend Protocol, InMemory, Firestore, Nextcloud
 ├── tracking/      # IPython hooks自動ログ, @exp.track, snapshot
 ├── buffer/        # ローカルバッファ（SQLite。データ消失防止）
@@ -44,13 +44,14 @@ src/labvault/
 ### labvault-platform（プラットフォーム）
 - パス: /Users/hirosuke/ghq/github.com/konishi-lab/labvault-platform（未作成）
 - 内容: MCPサーバー + WebApp(Streamlit) + Cloud Functions + GCPインフラ
-- 共有スキーマ: Firestoreのドキュメント構造はこのリポのmodels.pyが正（SSOT）
+- 共有スキーマ: Firestoreのドキュメント構造はこのリポのtypes.pyが正（SSOT）
 
 ## 設計資料
 
-- `docs/design/REQUIREMENTS.md` — 確定要件
-- `docs/design/v8/` — 実装仕様（最終版）
-- `docs/design/v7/` — SDK詳細設計（実装コード付き）
+- `docs/design/REQUIREMENTS.md` — 確定要件（R01-R22）
+- `docs/design/v9/` — 最新の実装仕様（labvault化済み）
+- `docs/design/v8/` — v8実装仕様（議論の経緯として保存）
+- `docs/design/v7/` — v7 SDK詳細設計
 
 ## 重要な規約
 
@@ -59,3 +60,5 @@ src/labvault/
 - **ローカルバッファ必須**: `exp.add()` は必ずローカルに先に保存してからリモートに送る
 - **IPython hooks**: Notebook環境では `lab.new()` だけで全セル自動記録
 - **テスト**: InMemoryBackendで全テストがオフラインで動くこと
+- **認証**: GCP ADC → サービスアカウント → 設定ファイルの順で解決
+- **チーム管理**: admin / member ロール。Firestore `teams/{team_id}/` に保存

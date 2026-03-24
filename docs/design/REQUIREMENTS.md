@@ -1,387 +1,336 @@
-# 重要要件一覧
+# labvault 要件定義書
 
-> ここまでの議論から抽出した、ユーザー（プロジェクトオーナー）の要件。
-> スペシャリストレビューの指摘ではなく、**あなた自身が述べた要件**を優先。
-
----
-
-## 核心の目的
-
-**実験者がコードに組み込みやすく、結果としてのデータがLLMが扱いやすい形で貯まるライブラリ**
+> 実験者がコードに組み込みやすく、結果としてのデータがLLMが扱いやすい形で貯まるライブラリ。
+> パッケージ名: `labvault` / import: `from labvault import Lab`
 
 ---
 
-## Tier 1: 絶対に必要（あなたが明言した要件）
+## 要件一覧
 
-### 1. チームでデータを共有し、活用する
-- 実験チーム（研究室）が1つのデータプールを共有
-- 全メンバーのデータが検索・閲覧可能
-- LLMがチーム全体のデータを横断的に解析
-
-### 2. LLMによるデータの検索と解析
-- データを入れる → LLMから呼び出す → 解析する、の全フローが設計されている
-- **速さと正確さ**が最重要
-- 数万件規模での検索性能
-
-### 3. 実験者が使いやすいSDK
-- 実験コードに組み込みやすい（最小限のboilerplate）
-- 汎用的な実験用ライブラリ（特定プロジェクトに縛られない）
-
-### 4. 別PC・別フェーズのデータを後から紐付け
-- サンプル作製と測定が別PCで行われる前提
-- 短いID（"ab3f"）で、どのPCからでもデータを追加できる
-- 装置PCはPythonが使えないことがある → Nextcloudブラウザ経由でも投入可能
-
-### 5. 子レコード（階層構造）
-- 1回の実験で1サンプルに対し、複数の加工条件 × 複数の測定
-- 測定はデータとして入れれば十分（独立した実験ではない）
-- 測定条件が複雑な場合は孫レコードにもできる（柔軟）
-
-### 6. 実験コード + 実行時の変数をセットで保存
-- 分析コード（Python/Jupyter）をデータと一緒に保存
-- **コード実行時の変数の値**もセットで保存（コードだけでは再現条件が不明）
-- LLMがコード + 変数の値を読んで「何をどういう条件で計算したか」を正確に理解できる
-
-```python
-# === 基本: 1行呼ぶだけで全部自動キャプチャ ===
-exp.snapshot()
-
-# → 呼び出し時点のスタックフレームから自動取得:
-#   - ローカル変数の値（シリアライズ可能なもの）
-#   - コードのファイル名・行番号・関数名
-#   - Python版・パッケージバージョン
-#   - Git commit hash（リポジトリ内なら）
-
-# === 実際の使い方 ===
-cutoff_freq = 0.5
-window_size = 1024
-method = "butterworth"
-order = 4
-
-filtered = apply_filter(raw_data, cutoff_freq, window_size, method, order)
-
-exp.snapshot()  # ← この時点の変数を全キャプチャ
-exp.save("filtered_data", filtered)
-
-# === 保存される内容（LLMが読める形） ===
-{
-  "snapshot_at": "2026-03-16T15:30:00",
-  "caller": {
-    "file": "analysis.py",
-    "line": 42,
-    "function": "process_xrd"
-  },
-  "locals": {
-    "cutoff_freq": 0.5,
-    "window_size": 1024,
-    "method": "butterworth",
-    "order": 4,
-    "raw_data": "<ndarray shape=(5000,2) dtype=float64>",  # 大きいオブジェクトは要約
-    "filtered": "<ndarray shape=(5000,2) dtype=float64>"
-  },
-  "env": {
-    "python": "3.12.0",
-    "packages": {"numpy": "1.26.0", "scipy": "1.12.0"},
-    "git_commit": "abc123"
-  }
-}
-
-# === 複数回呼べば実行の流れが追える ===
-raw = load_data("xrd.ras")
-exp.snapshot()  # snapshot #1: データ読み込み後
-
-processed = remove_background(raw, poly_order=3)
-exp.snapshot()  # snapshot #2: バックグラウンド除去後
-
-peaks = find_peaks(processed, threshold=100)
-exp.snapshot()  # snapshot #3: ピーク検出後
-
-# → LLMは3つのsnapshotを時系列で辿り、
-#   「poly_order=3でバックグラウンド除去→threshold=100でピーク検出」
-#   という処理フローと各段階の変数値を完全に把握できる
-```
-
-**自動ログの設計思想: 実験者は何もしなくていい**
-
-Notebookのコードは70%が関数化されていない（ベタ書き）。
-デコレータは関数にしか付けられない。
-→ **Jupyterのセル実行を自動で全部記録する**のが最もシンプル。
-
-```python
-# === これだけ。以降の全セル実行が自動記録される ===
-from mdxdb import Lab
-exp = Lab("konishi-lab").new("XRD解析")
-
-# ↑ IPython環境を検出し、pre_run_cell / post_run_cell フックを自動登録。
-# 以降、実験者が普通にNotebookを書くだけで全てログされる。
-```
-
-```python
-# --- セル2（普通にデータ読み込み） ---
-import numpy as np
-data = np.loadtxt("xrd_data.csv", delimiter=",")
-cutoff = 0.5
-
-# → 自動記録:
-# {
-#   "cell_number": 2,
-#   "source": "import numpy as np\ndata = np.loadtxt(...)\ncutoff = 0.5",
-#   "new_vars": {
-#     "data": "<ndarray shape=(5000,2) dtype=float64>",
-#     "cutoff": 0.5
-#   },
-#   "duration_sec": 0.12
-# }
-```
-
-```python
-# --- セル3（前処理） ---
-from scipy.signal import butter, filtfilt
-b, a = butter(4, cutoff, btype='low')
-filtered = filtfilt(b, a, data[:, 1])
-
-# → 自動記録:
-# {
-#   "cell_number": 3,
-#   "source": "from scipy.signal import ...\n...",
-#   "new_vars": {"filtered": "<ndarray shape=(5000,) dtype=float64>"},
-#   "changed_vars": {},  ← 前セルから変わった変数
-#   "duration_sec": 0.05
-# }
-```
-
-```python
-# --- セル4（結果保存。これだけ明示的） ---
-exp.results["n_peaks"] = 12
-exp.results["lattice_a"] = 2.873
-exp.save("filtered_data", filtered)
-```
-
-**実装の仕組み（IPython hooks）:**
-```python
-# IPython環境検出時に自動登録
-ip = get_ipython()
-ip.events.register('pre_run_cell', self._pre_cell)
-ip.events.register('post_run_cell', self._post_cell)
-
-def _pre_cell(self, info):
-    # セル実行前のnamespace（変数一覧）をスナップショット
-    self._pre_ns = {k: _summarize(v) for k, v in ip.user_ns.items()
-                    if not k.startswith('_')}
-
-def _post_cell(self, result):
-    # セル実行後のnamespaceとdiffを取って、新規/変更変数を検出
-    post_ns = {k: _summarize(v) for k, v in ip.user_ns.items()
-               if not k.startswith('_')}
-    new_vars = {k: v for k, v in post_ns.items() if k not in self._pre_ns}
-    changed_vars = {k: v for k, v in post_ns.items()
-                    if k in self._pre_ns and v != self._pre_ns[k]}
-    # Firestoreに自動保存
-    self._save_cell_log(source=info.raw_cell, new_vars=new_vars, ...)
-```
-
-**スクリプト(.py)の場合はデコレータも使える:**
-```python
-# Notebook: 自動（何もしなくていい）
-# スクリプト: @exp.track で関数単位、または with exp.track_block() でブロック単位
-
-@exp.track
-def process_xrd(data, cutoff=0.5):
-    ...
-```
-
-**3つのモード（環境に応じて自動選択）:**
-
-| 環境 | 方法 | 実験者の手間 |
-|------|------|------------|
-| **Jupyter Notebook** | IPython hooksで全セル自動記録 | **ゼロ**（`exp = lab.new()` だけ） |
-| **Pythonスクリプト** | `@exp.track` デコレータ or `with exp.track_block()` | デコレータ1行 |
-| **どちらでも** | `exp.snapshot()` で明示的にキャプチャ | 1行 |
-
-**LLMから見た価値:**
-- Notebookの全セル実行履歴が残る → 「どの順番で何を実行したか」が完全にわかる
-- 各セルの新規/変更変数が記録される → 「cutoffの値は何だったか」が正確
-- 関数呼び出しツリー（@exp.track使用時）→ 処理パイプラインの構造把握
-- **実験者が記録を忘れることが構造的にない**
-
-**`conditions` との使い分け:**
-- `conditions` = 実験者が意図的に記録する物理条件（温度、圧力）
-- セル自動記録 / `@exp.track` = プログラムの実行状態の自動キャプチャ
-
-### 7. 保存先はGCP + Nextcloud（30TB無料ストレージ）
-
-**確定アーキテクチャ:**
-
-```
-Phase 1（初期）:
-  Nextcloud (30TB無料) = バイナリ実体の倉庫 + ブラウザ投入口
-  Firestore            = メタデータ、リアルタイム読み書き、ベクトル検索
-  Vertex AI            = Embedding生成、Gemini
-
-Phase 2（後から追加）:
-  BigQuery             = Firestoreから自動同期。LLM向けSQL分析、横断集約
-```
-
-- **Nextcloud**: 30TBの無料ストレージ。バイナリ実体はここに保存。ブラウザ投入口にもなる
-- **Firestore**: メタデータのリアルタイム読み書き。サーバーレス、月$5-20
-- **BigQuery**: 後から追加。Firestoreの自動エクスポート機能で連携（設定だけ、コード変更ほぼ不要）
-- **GCP内完結**: コンプライアンス審査が通りやすい
-
-Phase 1 コスト: 月$5-20（Firestore）+ Nextcloud無料
+| ID | カテゴリ | 要件名 | MVP | Phase |
+|----|---------|--------|:---:|-------|
+| R01 | データ管理 | チームデータ共有 | ✅ | M1 |
+| R02 | データ管理 | 子レコード（階層構造） | ✅ | M1 |
+| R03 | データ管理 | 別PC・別フェーズのデータ紐付け | ✅ | M1 |
+| R04 | データ管理 | タグ・ステータス・メモ | ✅ | M1 |
+| R05 | データ管理 | Recordモデルの汎用化 | ✅ | M1 |
+| R06 | データ管理 | ソフトデリート/ゴミ箱 | ✅ | M1 |
+| R07 | データ投入 | 使いやすいSDK（3行で開始） | ✅ | M1 |
+| R08 | データ投入 | ローカルバッファ（データ消失防止） | ✅ | M2 |
+| R09 | データ投入 | 大容量データ対応 | ✅ | M1 |
+| R10 | データ投入 | 投入経路の多様性（SDK/CLI/ブラウザ） | ✅ | M4 |
+| R11 | データ投入 | テンプレートシステム | ✅ | M1 |
+| R12 | データ投入 | データ投入時の自動処理トリガー | - | M5 |
+| R13 | 自動記録 | 実験コード+変数の自動保存 | ✅ | M2 |
+| R14 | LLM連携 | LLMによるデータ検索と解析 | ✅ | M3-M4 |
+| R15 | LLM連携 | MCPサーバー（14ツール） | ✅ | M4 |
+| R16 | LLM連携 | LLMによるコード実行解析 | - | M5 |
+| R17 | LLM連携 | LLMの役割の明確化 | ✅ | 設計方針 |
+| R18 | 運用・管理 | 認証・認可 | ✅ | M1-M4 |
+| R19 | 運用・管理 | チーム管理 | ✅ | M1 |
+| R20 | 運用・管理 | エクスポート/バックアップ | - | M6 |
+| R21 | 運用・管理 | バッチ操作 | - | M6 |
+| R22 | 運用・管理 | マイグレーション（旧mdxdb→labvault） | - | M6 |
 
 ---
 
-### 8a. 大容量データ対応（Tier 1に昇格）
-- 数GB~TBのデータは転送せず参照登録（`add_ref()`）
-- 外部リポジトリ（DOI等）へのリンク
-- 中サイズ（100MB~数GB）はNextcloudへの非同期アップロード
-- LLMにはサマリー/統計量のみ渡す（バイナリ全体は渡さない）
+## データ管理
 
-### 8b. LLMによるコード実行解析（Tier 1に昇格）
-- LLMがデータに対して**Pythonコードを生成・実行**し、結果をグラフ/画像で返す
-- 具体的なユースケース:
-  - 「hogehogeに正規分布でフィッティングして、各パラメータを結果として」
-  - 「同じ解析をfugaにも適用して」
-  - 「全サンプルのXRDデータにピークフィッティングを一括実行して、結果を比較表で」
-- **任意のスクリプトを複数データに一括適用**し、結果をグラフ/画像で閲覧
-- 設計上のポイント:
-  - MCPサーバーにサンドボックス化されたPython実行環境を持たせる
-  - LLMがコードを生成 → 実行環境で実行 → 結果（数値+画像）をLLMに返す → ユーザーに提示
-  - 同一コードを複数レコードに一括適用する `batch_execute` ツール
-  - 生成された画像/グラフはレコードに自動保存される
-  - **解析履歴の自動保存**: 実行コード・入力ファイル・結果（数値+画像）・元の指示・実行日時が全てレコードに記録される
-  - 「誰がいつどんなコードでどんな結果を得たか」を後から完全に辿れる
-  - 過去の解析コードを再利用して他のレコードに適用できる
-  - WebAppで解析履歴をコード+グラフ付きで閲覧可能
-  - **解析の連鎖**: 過去の解析結果を入力にして次の解析を実行できる
-    - フィッティング → 結果の横断比較 → 相関解析 → 統計検定 と積み重ね可能
-    - 各ステップが全て自動保存され、解析の論理的な流れが追跡可能
-    - LLMが過去の解析結果（数値・画像）を参照して次の解析コードを生成できる
+### R01: チームデータ共有 [MVP]
 
-### 8c. データ投入時の自動処理トリガー（Tier 1）
-- ファイルがレコードに追加されたとき、ファイル種別に応じた前処理を自動実行
-- 具体例:
-  - **画像（SEM, 光学顕微鏡等）**: サムネイル/プレビュー画像の自動生成（大容量TIFFを小さなPNG/JPEGに）
-  - **NumPy配列**: 統計サマリー（shape, dtype, min/max/mean/std）の自動計算
-  - **CSV/TSV**: カラム名・行数・先頭数行のプレビューを自動抽出
-  - **Notebook(.ipynb)**: セル一覧・出力サマリーの自動抽出
-- トリガーの仕組み: Firestoreの `data_refs` フィールド更新 → Cloud Functions起動
-- 生成物は `_preview/` 配下に自動保存（元データは変更しない）
-- LLMは元の大容量ファイルではなくプレビュー/サマリーを参照（高速+コンテキスト節約）
-- ユーザーが独自のトリガー処理を追加登録できる（将来）
+実験チーム（研究室）が1つのデータプールを共有し、全メンバーのデータが検索・閲覧可能であること。
 
-```
-exp.add("SEM_50000x.tif")  # 200MB の SEM画像
+- Firestore `teams/{team_id}/records/` + Nextcloud共有フォルダ構成
+- 全メンバーが同一コレクションに読み書き
+- LLMがチーム全体のデータを横断的に解析可能
 
-→ 自動で以下が生成される:
-  _preview/SEM_50000x_thumb.jpg    (256x256, 数KB)
-  _preview/SEM_50000x_preview.jpg  (1024x1024, 数十KB)
-  _preview/SEM_50000x_meta.json    (解像度, ビット深度, サイズ等)
+### R02: 子レコード（階層構造） [MVP]
 
-→ LLMやWebAppはプレビューを参照。元の200MBは触らない。
-```
+1回の実験で1サンプルに対し、複数の加工条件×複数の測定を階層的に記録できること。
 
-```
-ユーザー: 「AB3FのXRDデータに正規分布でフィッティングして」
+- `exp.sub("加工条件A", type="process")` で子レコード作成
+- Firestoreサブコレクション `sub_records/{sub_id}` で再帰的階層
+- 測定条件が複雑な場合は孫レコードにも対応（実用上2-3階層）
 
-LLM:
-  1. get_file_content("AB3F", "xrd.csv") でデータ取得
-  2. Pythonコードを生成:
-     from scipy.optimize import curve_fit
-     popt, pcov = curve_fit(gaussian, x, y)
-     fig = plot_fit(x, y, popt)
-  3. execute_code(record_id="AB3F", code=上記) で実行
-  4. 結果: popt=[center=28.4, sigma=0.18, amp=15000]
-     + フィッティンググラフ画像
+### R03: 別PC・別フェーズのデータ紐付け [MVP]
 
-ユーザー: 「同じ解析をKL67とST45にも」
+サンプル作製と測定が別PCで行われる前提で、短いIDで紐付けできること。
 
-LLM:
-  1. batch_execute(record_ids=["KL67","ST45"], code=同じコード)
-  2. 3つの結果を比較表+重ね書きグラフで返す
-```
+- Crockford's Base32 4文字ID（約100万通り。例: "AB3F"）
+- CLI `labvault add <ID> <file>` でどのPCからでもデータ追加
+- Nextcloudブラウザ経由の投入にも対応（装置PCなどPythonなし環境）
 
----
+### R04: タグ・ステータス・メモ [MVP]
 
-## Tier 2: 高い優先度（議論の中で合意した要件）
+失敗実験も記録でき、後からメタデータを付加できること。
 
-### 8. ローカルバッファ必須（Tier 1に昇格）
-- **`exp.add()` したデータは必ずローカルに先に保存してからリモートに送る**
-- ネットワークエラーでデータが消失することは絶対にあってはならない
-- オフライン時はローカルに保存、オンライン復帰時に自動同期
-- 「データが消えるかも」という恐怖があると誰も使わない → MVP必須
+- `exp.tag("XRD", "Fe-Cr")` / `exp.status = "success"` / `exp.note("メモ")`
+- ステータス: `running` / `success` / `failed` / `partial`
+- 後付け可能（「まず記録、整理は後」の運用）
 
-### 9. 投入経路の多様性
-- ① Python SDK（メイン）
-- ② CLI
-- ③ Nextcloudブラウザ（装置PCなどPythonなし環境）
-- ④ Web UI（将来）
+### R05: Recordモデルの汎用化 [MVP]
 
-### 10. テンプレートシステム
-- XRD, SEM等のよく使う測定のテンプレートを事前定義
-- 装置条件やデフォルトタグが自動設定される
+`type` フィールドで用途を表現し、材料科学以外にも対応できること。
 
-### 11. タグ・ステータス・メモ
-- 失敗実験も記録（status: failed/partial/success）
-- タグで分類、メモで後から情報追記
-- 後付け可能（「まず記録、整理は後」）
+- type: `experiment`, `sample`, `process`, `measurement`, `computation`, `analysis` 等
+- typeはフリーテキスト（enumではない。拡張自由）
 
-### 12. MCPサーバー
-- LLMからデータにアクセスするためのインターフェース
-- Claude Desktop / Claude Code から接続
+### R06: ソフトデリート/ゴミ箱 [MVP]
 
----
+誤削除防止のため、削除は即座に消さずゴミ箱に移動すること。
 
-## Tier 3: スペシャリストレビューからの重要指摘
-
-### 13. Recordモデルの汎用化
-- `type` フィールドで用途を表現（experiment, sample, process, reaction, computation等）
-- 材料科学だけでなく化学・計算科学にも対応可能に
-
-### 14. バッチ操作
-- パラメータスイープの一括登録（`sweep()`）
-- ディレクトリ構造からの自動インポート
-
-### 15. 大容量データの参照登録
-- TB級データは転送せず参照（`add_ref()`）
-- 外部リポジトリ（DOI等）へのリンク
-
-### 16. LLMの役割の明確化
-- LLM = オーケストレーター（検索・要約・提案）
-- 数値計算・フィッティング → Python実行環境に委譲
-
-### 17. エクスポート/バックアップ
-- GCP非依存のローカルバックアップ
-- `lab.export()` でフルエクスポート
-
-### 18. FAIR原則への段階的対応
-- ライセンス、DOI、メタデータ標準（将来的に）
-
----
-
-### 19. ソフトデリート/ゴミ箱（UXシミュレーションで発見）
-- 誤削除防止: 削除は即座に消さず、ゴミ箱（30日保持）に移動
-- 管理者のみ完全削除可能
+- `lab.delete(id)` → `status="deleted"` + `deleted_at` タイムスタンプ
+- 30日後に完全削除（Cloud Scheduler）
+- `lab.trash()` でゴミ箱一覧、`lab.restore(id)` で復元
 - 削除権限: 作成者 + 管理者のみ
 
 ---
+
+## データ投入
+
+### R07: 使いやすいSDK（3行で開始） [MVP]
+
+実験コードに組み込みやすく、最小限のboilerplateであること。
+
+- `from labvault import Lab` → `lab = Lab("konishi-lab")` → `exp = lab.new("タイトル")` の3行で開始
+- 汎用的な実験用ライブラリ（特定プロジェクトに縛られない）
+- `exp.add("file")` / `exp.save("name", data)` でデータ保存（型自動判定）
+
+### R08: ローカルバッファ（データ消失防止） [MVP]
+
+`exp.add()` したデータは必ずローカルに先に保存し、ネットワークエラーでデータが消失しないこと。
+
+- SQLiteローカルDB + ローカルファイルコピー
+- `exp.add()` → ローカル即保存 → バックグラウンドでリモート同期
+- オフライン時はローカルに蓄積、復帰時に自動同期
+- `exp.flush()` で即時送信
+
+### R09: 大容量データ対応 [MVP]
+
+小～TB級のデータに対して適切な保存・参照方式を提供すること。
+
+- 小（~100MB）: `exp.add()` → Nextcloudアップロード
+- 中（100MB~数GB）: `exp.add()` → 非同期アップロード（進捗表示はPost-MVP）
+- 大（数GB~TB）: `exp.add_ref(location="HPC:/path", size_gb=8)` で参照のみ
+- DOIリンク: `exp.add_ref(doi="10.5281/zenodo.12345")`
+- LLMにはサマリー/統計量のみ渡す
+
+### R10: 投入経路の多様性 [MVP: SDK+CLI]
+
+Python SDK以外からもデータを投入できること。
+
+- ① Python SDK（メイン経路）
+- ② CLI: `labvault new` / `labvault add` 等
+- ③ Nextcloudブラウザ（フォルダ直接投入 → ポーラーで自動認識）[Post-MVP: M6]
+- ④ WebApp [Post-MVP: M7]
+
+### R11: テンプレートシステム [MVP]
+
+よく使う測定のテンプレートを事前定義し、装置条件やデフォルトタグを自動設定できること。
+
+- `lab.define_template("XRD", defaults={...}, recommended_results=[...])`
+- `lab.new(template="XRD")` でテンプレート適用
+- ビルトイン: XRD, SEM, SQUID（内容は実データで調整）
+
+### R12: データ投入時の自動処理トリガー [Post-MVP: M5]
+
+ファイル追加時にファイル種別に応じた前処理を自動実行すること。
+
+- 画像（SEM, 光学顕微鏡等）: サムネイル/プレビュー画像を `_preview/` に自動生成
+- NumPy配列: 統計サマリー（shape, dtype, min/max/mean/std）を自動計算
+- CSV/TSV: カラム名・行数・先頭行のプレビューを自動抽出
+- トリガー: Firestore `data_refs` 更新 → Cloud Functions起動
+
+---
+
+## 自動記録
+
+### R13: 実験コード+変数の自動保存 [MVP]
+
+実験者が何もしなくても、コード実行の全履歴がLLMに理解可能な形で保存されること。
+
+**3層の自動ログ戦略:**
+
+| 環境 | 方法 | 実験者の手間 |
+|------|------|------------|
+| Jupyter Notebook | IPython hooksで全セル自動記録 | **ゼロ**（`exp = lab.new()` だけ） |
+| Pythonスクリプト | `@exp.track` デコレータ or `with exp.track_block()` | デコレータ1行 |
+| どちらでも | `exp.snapshot()` で明示的にキャプチャ | 1行 |
+
+- 各セルのソースコード・新規/変更変数・実行時間を自動記録
+- 変数値もキャプチャ（LLMが「何をどういう条件で計算したか」を理解可能）
+- 機微情報フィルタ必須（`*password*`, `*secret*`, `*token*` 等を自動マスク）
+- 詳細設計: v9/01_sdk_implementation.md 参照
+
+---
+
+## LLM連携
+
+### R14: LLMによるデータ検索と解析 [MVP]
+
+数万件規模で速さと正確さを兼ね備えた検索をLLMから利用できること。
+
+- Firestore Vector Search（768次元）+ 構造化フィルタのハイブリッド検索
+- Vertex AI `text-embedding-004` によるセマンティック検索
+- `lab.search("温度300度以上の実験")` でSDKからも利用可能
+
+### R15: MCPサーバー（14ツール） [MVP: 11ツール]
+
+LLMからデータにアクセスするためのMCPインターフェースを提供すること。
+
+- Claude Desktop / Claude Code から接続（Streamable HTTP transport）
+- 検索系: `search`, `get_detail`, `compare`, `data_preview`, `get_results`, `aggregate`
+- 履歴系: `get_timeline`, `get_trace`, `explain_result`, `compare_runs`, `get_notebook_log`
+- 実行系（M5）: `execute_code`, `batch_execute`, `get_image`
+
+### R16: LLMによるコード実行解析 [Post-MVP: M5]
+
+LLMがデータに対してPythonコードを生成・実行し、結果をグラフ/画像で返せること。
+
+- MCPツール `execute_code` / `batch_execute` でサンドボックス実行
+- 解析履歴の自動保存（コード・結果・画像・元の指示を `analyses/` に記録）
+- 解析の連鎖（過去の解析結果を入力にして次の解析を実行）
+- 同一コードを複数レコードに一括適用して比較表+グラフで返す
+
+### R17: LLMの役割の明確化 [設計方針]
+
+LLM = オーケストレーター（検索・要約・提案）。数値計算・フィッティング → Python実行環境（`execute_code`）に委譲。
+
+---
+
+## 運用・管理
+
+### R18: 認証・認可 [MVP]
+
+適切な認証と権限管理を提供すること。
+
+- **SDK認証**: GCPサービスアカウント or ユーザー認証（Application Default Credentials）
+- **MCPサーバー認証**: Cloud Run IAM invoker + サービスアカウントトークン
+- **チーム内ロール**: admin（テンプレート管理・完全削除権限）/ member（CRUD）
+- **データの可視性**: `visibility: "team" | "private"`（デフォルト: team）
+- **APIキー**: MCPサーバー接続用Bearer Token
+
+### R19: チーム管理 [MVP]
+
+チーム（研究室）の作成・メンバー管理ができること。
+
+- Firestore `teams/{team_id}/info` にチーム情報を保存
+- フィールド: `name`, `nextcloud_group_folder`, `members: [str]`, `admin: [str]`
+- `labvault init` で対話的にチーム作成・設定
+- メンバーの招待・削除はadminのみ
+
+### R20: エクスポート/バックアップ [Post-MVP: M6]
+
+GCP非依存のローカルバックアップを作成できること。
+
+- `lab.export(path="./backup/")` で全メタデータ+バイナリをローカルエクスポート
+- JSON Lines + ファイルコピー
+- 差分エクスポート対応
+
+### R21: バッチ操作 [Post-MVP: M6]
+
+パラメータスイープの一括登録やディレクトリからの自動インポートができること。
+
+- `exp.sweep("temperature_C", [300, 500, 700])` → 子レコード一括生成
+- `lab.import_dir("path/to/experiments/")` → ディレクトリ構造から自動インポート
+
+### R22: マイグレーション（旧mdxdb→labvault） [Post-MVP: M6]
+
+旧Nextcloud/mdxdbフォーマットからlabvault形式への移行ツールを提供すること。
+
+- 旧フォーマット（`v{major}/{db_name}/`）からの変換スクリプト
+- Firestoreへの一括登録 + embedding一括生成
+- ドライランモード
+
+---
+
+## 非機能要件
+
+### NF01: 検索性能
+
+- 数万件規模でのVector Search応答: 200ms以下（10K件）、500ms以下（50K件）
+- POCで検証。NG時はPinecone Serverlessにフォールバック
+
+### NF02: データ消失ゼロ
+
+- ローカルバッファ（SQLite）により、ネットワーク切断時もデータ消失しない
+- Firestore + Nextcloudの二重保存でバックエンド障害にも耐性
+
+### NF03: オフライン動作
+
+- ネットワーク切断時も `exp.add()` / `exp.save()` が即座に成功（ローカル保存）
+- オンライン復帰時に自動同期
+
+### NF04: GCP内完結
+
+- バックエンドはGCPサービスのみ（Firestore, Vertex AI, Cloud Functions, Cloud Run）
+- コンプライアンス審査が通りやすい構成
+- Nextcloud（オンプレ or 学内）+ GCP のハイブリッド
+
+### NF05: 運用ゼロ
+
+- サーバーレス構成（Firestore + Cloud Functions）でパッチ・バックアップ・スケーリング全自動
+- 研究室にDB管理者がいない前提
+- コスト: Phase 1で月$5-20（Firestore） + Nextcloud無料
+
+---
+
+## 確定アーキテクチャ
+
+```
+SDK (pip install labvault)
+├── IPython hooks（全セル自動記録）
+├── ローカルバッファ（SQLite。データ消失防止）
+├── Firestore（メタデータ + Vector Search + セルログ + 解析履歴）
+└── Nextcloud（30TB。バイナリ実体 + ブラウザ投入口）
+
+MCP Server (Cloud Run)
+├── 検索系: search, get_detail, compare, data_preview, get_results, aggregate
+├── 履歴系: get_timeline, get_trace, explain_result, compare_runs, get_notebook_log
+└── 実行系: execute_code, batch_execute, get_image
+
+Cloud Functions (トリガー)
+├── embedding_generator（レコード作成時 → Vertex AI → embedding書き戻し）
+├── nextcloud_poller（5分間隔 → ブラウザ投入の自動認識）
+└── preview_generator（ファイル追加時 → サムネイル/統計サマリー生成）
+```
+
+---
+
+## 保存先: GCP + Nextcloud
+
+- **Nextcloud**: 30TBの無料ストレージ。バイナリ実体+ブラウザ投入口
+- **Firestore**: メタデータのリアルタイム読み書き。サーバーレス、月$5-20
+- **Vertex AI**: Embedding生成（text-embedding-004）
+- **BigQuery**: Phase 2で追加。Firestoreの自動エクスポート機能で連携（追加コードほぼ不要）
+- DB選定根拠: `DB_SELECTION.md` 参照
 
 ---
 
 ## 確定事項
 
-### パッケージ名: `labvault`
-- PyPI名: `labvault`
-- import: `from labvault import Lab`
-- CLI: `labvault init`, `labvault new`, `labvault add`, ...
-- SDKリポジトリ: `kpro-arim-mdxdb` → 将来的に `labvault` にリネームも検討
-- プラットフォームリポジトリ: `labvault-platform`（モノレポ）
+- **パッケージ名**: `labvault`（PyPI）
+- **import**: `from labvault import Lab`
+- **CLI**: `labvault init`, `labvault new`, `labvault add`, ...
+- **SDKリポジトリ**: `github.com/konishi-lab/labvault`
+- **プラットフォームリポジトリ**: `github.com/konishi-lab/labvault-platform`（モノレポ）
+- **ID**: Crockford's Base32（4文字、大文字。例: "AB3F"）
 
 ---
 
-## 明示的にスコープ外とするもの
+## 明示的にスコープ外
 
-- Web UIの初期実装（将来対応）
+- Web UIの初期実装（M7で対応）
 - オントロジーマッピング（将来対応）
 - HPC連携（将来対応）
 - 全ての装置フォーマットのパーサー（プラグインとして将来対応）
+- FAIR原則への完全対応（段階的に対応。ライセンス・DOI・メタデータ標準）
+
+---
+
+## 設計資料
+
+- `docs/design/v9/` — 最新の実装仕様（v8をlabvault化+補完）
+- `docs/design/v8/` — v8実装仕様（議論の経緯として保存）
+- `docs/design/v7/` — v7 SDK詳細設計
+- `docs/design/DB_SELECTION.md` — DB選定根拠
