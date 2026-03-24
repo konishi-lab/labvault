@@ -67,6 +67,12 @@ src/labvault/
 - **例外名**: `LabvaultPermissionError`（ビルトインPermissionErrorとの衝突回避）
 - **依存軽量化**: `google-cloud-aiplatform` は使わない。Embedding は REST API 直接呼び出し
 
+## インストール済みスキル
+
+- **python-testing-patterns** — pytestのパターン・ベストプラクティス
+- **python-performance-optimization** — Pythonパフォーマンス最適化
+- **python-sdk** — Python SDK開発ガイドライン
+
 ## 関連リポジトリ
 
 ### labvault-platform（プラットフォーム）
