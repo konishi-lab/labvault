@@ -1,14 +1,9 @@
-"""labvault — Lab data management SDK.
+"""labvault -- Python/Notebook 実験データ基盤。"""
 
-Auto-logs notebook execution, stores data with LLM-friendly metadata,
-and enables AI-powered analysis.
+from __future__ import annotations
 
-Usage:
-    from labvault import Lab
-
-    lab = Lab("konishi-lab")
-    exp = lab.new("XRD measurement", sample="Fe-10Cr alloy #42")
-    exp.add("~/Desktop/xrd_data.ras")
-"""
+from labvault.core.lab import Lab
+from labvault.core.record import Record
 
 __version__ = "0.1.0"
+__all__ = ["Lab", "Record"]
