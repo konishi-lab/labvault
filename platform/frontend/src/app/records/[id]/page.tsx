@@ -63,6 +63,46 @@ function fileTypeBadge(name: string): string {
   return styles[ext] || "";
 }
 
+function isPreviewable(name: string): boolean {
+  return name.toLowerCase().endsWith(".vk4");
+}
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+function Vk4Preview({
+  recordId,
+  filename,
+}: {
+  recordId: string;
+  filename: string;
+}) {
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">(
+    "loading"
+  );
+  const url = `${API_BASE}/api/records/${recordId}/preview/${encodeURIComponent(filename)}`;
+
+  return (
+    <div className="rounded-lg border bg-muted/30 p-2">
+      {status === "loading" && (
+        <Skeleton className="h-48 w-full rounded" />
+      )}
+      {status === "error" && (
+        <p className="py-4 text-center text-xs text-muted-foreground">
+          プレビューを読み込めません
+        </p>
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={filename}
+        className={`max-h-96 rounded ${status !== "loaded" ? "hidden" : ""}`}
+        onLoad={() => setStatus("loaded")}
+        onError={() => setStatus("error")}
+      />
+    </div>
+  );
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -215,16 +255,16 @@ export default function RecordDetailPage() {
 
         {/* ファイル */}
         {record.files.length > 0 && (
-          <Card>
+          <Card className="md:col-span-2">
             <CardHeader>
               <CardTitle className="text-base">
                 ファイル ({record.files.length})
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2 text-sm">
+            <CardContent className="space-y-3 text-sm">
               {record.files.map((file, i) => (
                 <div key={file.name}>
-                  {i > 0 && <Separator className="mb-2" />}
+                  {i > 0 && <Separator className="mb-3" />}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="shrink-0">{fileIcon(file.name)}</span>
@@ -242,6 +282,11 @@ export default function RecordDetailPage() {
                         : ""}
                     </span>
                   </div>
+                  {isPreviewable(file.name) && (
+                    <div className="mt-2">
+                      <Vk4Preview recordId={id} filename={file.name} />
+                    </div>
+                  )}
                 </div>
               ))}
             </CardContent>
