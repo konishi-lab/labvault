@@ -38,6 +38,7 @@ class Lab:
         self._storage = storage_backend or InMemoryStorageBackend()
         self._search = search_backend or InMemorySearchBackend()
         self._settings = settings
+        self._active_tracker: Any | None = None
 
     # --- Record 生成 ---
 
@@ -86,9 +87,11 @@ class Lab:
         if sample:
             rec.link(sample, "measured_on")
 
-        # auto_log / template は M2 以降で実装
-        _ = auto_log
+        # template は M3 以降で実装
         _ = template
+
+        if auto_log:
+            self._activate_tracker(rec)
 
         return rec
 
@@ -118,8 +121,9 @@ class Lab:
 
         rec = Record._from_dict(data, lab=self)
 
-        # auto_log は M2 以降で実装
-        _ = auto_log
+        if auto_log:
+            self._activate_tracker(rec)
+
         return rec
 
     # --- 一覧 ---
@@ -247,6 +251,9 @@ class Lab:
 
     def close(self) -> None:
         """リソースを解放する。"""
+        if self._active_tracker is not None:
+            self._active_tracker.deactivate()
+            self._active_tracker = None
 
     def __enter__(self) -> Lab:
         return self
@@ -269,6 +276,19 @@ class Lab:
                 return rid
         msg = "Failed to generate unique ID"
         raise RuntimeError(msg)
+
+    def _activate_tracker(self, record: Record) -> None:
+        """CellTracker を起動する (IPython 環境の場合のみ)."""
+        from labvault.tracking.cell_tracker import CellTracker
+
+        if self._active_tracker is not None:
+            self._active_tracker.deactivate()
+
+        tracker = CellTracker(record, self)
+        tracker.activate()
+
+        if tracker._active:
+            self._active_tracker = tracker
 
     def __repr__(self) -> str:
         return f"Lab(team={self._team!r})"

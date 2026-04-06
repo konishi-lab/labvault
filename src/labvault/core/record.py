@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import mimetypes
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -329,6 +330,29 @@ class Record:
         )
         self._persist()
         return self
+
+    # --- ログ制御 ---
+
+    def pause_logging(self) -> Record:
+        """セル自動記録を一時停止する。"""
+        if self._lab and self._lab._active_tracker:
+            self._lab._active_tracker.paused = True
+        return self
+
+    def resume_logging(self) -> Record:
+        """セル自動記録を再開する。"""
+        if self._lab and self._lab._active_tracker:
+            self._lab._active_tracker.paused = False
+        return self
+
+    @contextmanager
+    def no_logging(self) -> Any:
+        """セル自動記録を一時的に無効化するコンテキストマネージャ。"""
+        self.pause_logging()
+        try:
+            yield
+        finally:
+            self.resume_logging()
 
     # --- 子レコード ---
 
