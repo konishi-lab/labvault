@@ -244,7 +244,23 @@ def doctor() -> None:
 @cli.command("mcp")
 def mcp_cmd() -> None:
     """MCP サーバーを起動する (stdio)."""
+    import sys
+
+    from labvault.core.config import Settings
     from labvault.mcp.server import create_server
+
+    settings = Settings()
+    backend = "Firestore" if settings.gcp_project else "InMemory"
+    storage = "Nextcloud" if settings.nextcloud_url else "InMemory"
+    team = settings.team or "default"
+
+    print("labvault MCP server starting...", file=sys.stderr)
+    print(f"  Team:     {team}", file=sys.stderr)
+    print(f"  Metadata: {backend}", file=sys.stderr)
+    print(f"  Storage:  {storage}", file=sys.stderr)
+    print("  Tools:    6", file=sys.stderr)
+    print("  Transport: stdio", file=sys.stderr)
+    print(file=sys.stderr)
 
     server = create_server()
     server.run(transport="stdio")
