@@ -163,91 +163,11 @@ export function BulkUploadButton({
 
           {/* Step 2: マッチング確認 */}
           {step === "preview" && preview && (
-            <div className="space-y-3">
-              <div className="flex gap-2">
-                <Badge variant="secondary">合計: {preview.total}</Badge>
-                <Badge
-                  variant="secondary"
-                  className="bg-green-100 text-green-800"
-                >
-                  マッチ: {preview.matched}
-                </Badge>
-                {preview.unmatched > 0 && (
-                  <Badge
-                    variant="secondary"
-                    className="bg-red-100 text-red-800"
-                  >
-                    未マッチ: {preview.unmatched}
-                  </Badge>
-                )}
-              </div>
-
-              <div className="max-h-80 overflow-y-auto rounded border text-sm">
-                <table className="w-full">
-                  <thead className="sticky top-0 bg-muted">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-medium">
-                        ファイル名
-                      </th>
-                      <th className="px-3 py-2 text-left font-medium">→</th>
-                      <th className="px-3 py-2 text-left font-medium">
-                        マッチ先
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {preview.items.map((item, i) => (
-                      <tr
-                        key={i}
-                        className={
-                          item.status === "unmatched" ? "bg-red-50" : ""
-                        }
-                      >
-                        <td className="px-3 py-1.5 font-mono text-xs">
-                          {item.filename}
-                        </td>
-                        <td className="px-3 py-1.5 text-muted-foreground">
-                          →
-                        </td>
-                        <td className="px-3 py-1.5">
-                          {item.record_id ? (
-                            <span>
-                              <span className="font-mono text-xs text-primary">
-                                {item.record_id}
-                              </span>{" "}
-                              <span className="text-xs">
-                                {item.record_title}
-                              </span>
-                            </span>
-                          ) : (
-                            <span className="text-xs text-destructive">
-                              マッチなし
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex gap-2 justify-end">
-                <Button
-                  variant="outline"
-                  className="cursor-pointer"
-                  onClick={reset}
-                >
-                  やり直す
-                </Button>
-                <Button
-                  className="cursor-pointer"
-                  disabled={preview.matched === 0}
-                  onClick={handleUpload}
-                >
-                  {preview.matched} 件をアップロード
-                </Button>
-              </div>
-            </div>
+            <PreviewTable
+              preview={preview}
+              onUpload={handleUpload}
+              onReset={reset}
+            />
           )}
 
           {/* Step 3: アップロード中 */}
@@ -293,5 +213,145 @@ export function BulkUploadButton({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+type PreviewSortKey = "filename" | "record_title";
+type PreviewSortDir = "asc" | "desc";
+
+function PreviewTable({
+  preview,
+  onUpload,
+  onReset,
+}: {
+  preview: MatchPreview;
+  onUpload: () => void;
+  onReset: () => void;
+}) {
+  const [sortKey, setSortKey] = useState<PreviewSortKey>("filename");
+  const [sortDir, setSortDir] = useState<PreviewSortDir>("asc");
+
+  const sorted = [...preview.items].sort((a, b) => {
+    let va: string;
+    let vb: string;
+    if (sortKey === "filename") {
+      va = a.filename;
+      vb = b.filename;
+    } else {
+      va = a.record_title || "\uffff";
+      vb = b.record_title || "\uffff";
+    }
+    const cmp = va.localeCompare(vb, "ja");
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  const toggleSort = (key: PreviewSortKey) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const arrow = (key: PreviewSortKey) =>
+    sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          <Badge variant="secondary">合計: {preview.total}</Badge>
+          <Badge
+            variant="secondary"
+            className="bg-green-100 text-green-800"
+          >
+            マッチ: {preview.matched}
+          </Badge>
+          {preview.unmatched > 0 && (
+            <Badge
+              variant="secondary"
+              className="bg-red-100 text-red-800"
+            >
+              未マッチ: {preview.unmatched}
+            </Badge>
+          )}
+        </div>
+        <div className="flex gap-1">
+          <Button
+            variant={sortKey === "filename" ? "default" : "outline"}
+            size="sm"
+            className="h-7 text-xs cursor-pointer"
+            onClick={() => toggleSort("filename")}
+          >
+            ファイル名{arrow("filename")}
+          </Button>
+          <Button
+            variant={sortKey === "record_title" ? "default" : "outline"}
+            size="sm"
+            className="h-7 text-xs cursor-pointer"
+            onClick={() => toggleSort("record_title")}
+          >
+            マッチ先{arrow("record_title")}
+          </Button>
+        </div>
+      </div>
+
+      <div className="max-h-80 overflow-y-auto rounded border text-sm">
+        <table className="w-full">
+          <thead className="sticky top-0 bg-muted">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">ファイル名</th>
+              <th className="px-3 py-2 text-left font-medium">→</th>
+              <th className="px-3 py-2 text-left font-medium">マッチ先</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((item, i) => (
+              <tr
+                key={i}
+                className={item.status === "unmatched" ? "bg-red-50" : ""}
+              >
+                <td className="px-3 py-1.5 font-mono text-xs">
+                  {item.filename}
+                </td>
+                <td className="px-3 py-1.5 text-muted-foreground">→</td>
+                <td className="px-3 py-1.5">
+                  {item.record_id ? (
+                    <span>
+                      <span className="font-mono text-xs text-primary">
+                        {item.record_id}
+                      </span>{" "}
+                      <span className="text-xs">{item.record_title}</span>
+                    </span>
+                  ) : (
+                    <span className="text-xs text-destructive">
+                      マッチなし
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex gap-2 justify-end">
+        <Button
+          variant="outline"
+          className="cursor-pointer"
+          onClick={onReset}
+        >
+          やり直す
+        </Button>
+        <Button
+          className="cursor-pointer"
+          disabled={preview.matched === 0}
+          onClick={onUpload}
+        >
+          {preview.matched} 件をアップロード
+        </Button>
+      </div>
+    </div>
   );
 }
