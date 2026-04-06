@@ -1,5 +1,6 @@
-"""ローカルバッファ (SQLite WAL)。データ消失防止。"""
+"""ローカルバッファ (SQLite WAL) + 自動同期。"""
 
 from labvault.buffer.database import BufferDatabase
+from labvault.buffer.sync import SyncManager
 
-__all__ = ["BufferDatabase"]
+__all__ = ["BufferDatabase", "SyncManager"]

@@ -39,6 +39,11 @@ class Lab:
         self._search = search_backend or InMemorySearchBackend()
         self._settings = settings
         self._active_tracker: Any | None = None
+        self._buffer: Any | None = None
+        self._sync_manager: Any | None = None
+
+        if settings.auto_sync:
+            self._init_sync()
 
     # --- Record 生成 ---
 
@@ -249,11 +254,30 @@ class Lab:
 
     # --- コンテキストマネージャ ---
 
+    @property
+    def sync_status(self) -> dict[str, Any]:
+        """同期状態を返す。"""
+        if self._sync_manager is None:
+            return {
+                "pending": 0,
+                "last_error": None,
+                "last_sync": 0.0,
+                "is_running": False,
+            }
+        status: dict[str, Any] = self._sync_manager.sync_status
+        return status
+
     def close(self) -> None:
         """リソースを解放する。"""
         if self._active_tracker is not None:
             self._active_tracker.deactivate()
             self._active_tracker = None
+        if self._sync_manager is not None:
+            self._sync_manager.stop(flush=True)
+            self._sync_manager = None
+        if self._buffer is not None:
+            self._buffer.close()
+            self._buffer = None
 
     def __enter__(self) -> Lab:
         return self
@@ -276,6 +300,21 @@ class Lab:
                 return rid
         msg = "Failed to generate unique ID"
         raise RuntimeError(msg)
+
+    def _init_sync(self) -> None:
+        """BufferDatabase + SyncManager を初期化する。"""
+        from labvault.buffer.database import BufferDatabase
+        from labvault.buffer.sync import SyncManager
+
+        db_path = self._settings.buffer_dir / f"{self._team}.db"
+        self._buffer = BufferDatabase(db_path)
+        self._sync_manager = SyncManager(
+            buffer_db=self._buffer,
+            metadata_backend=self._metadata,
+            storage_backend=self._storage,
+            interval_sec=self._settings.sync_interval_sec,
+        )
+        self._sync_manager.start()
 
     def _activate_tracker(self, record: Record) -> None:
         """CellTracker を起動する (IPython 環境の場合のみ)."""

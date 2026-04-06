@@ -512,6 +512,11 @@ class Record:
         self._updated_at = datetime.now(_dt.UTC)
         if self._lab and self._lab._metadata:
             self._lab._metadata.update_record(self._team, self._id, self._to_dict())
+        # バッファにも書く (データ消失防止)
+        if self._lab and self._lab._buffer:
+            self._lab._buffer.save_record(
+                self._team, self._id, json.dumps(self._to_dict())
+            )
 
     def _to_dict(self) -> dict[str, Any]:
         """永続化用の辞書表現。"""
