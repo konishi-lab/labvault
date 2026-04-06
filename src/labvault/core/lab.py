@@ -35,10 +35,10 @@ class Lab:
         settings = Settings()
         self._team = team or settings.team or "default"
         self._user = user or settings.user or ""
-        self._metadata = metadata_backend or InMemoryMetadataBackend()
-        self._storage = storage_backend or InMemoryStorageBackend()
+        self._metadata = metadata_backend or _auto_metadata(settings)
+        self._storage = storage_backend or _auto_storage(settings)
         self._search = search_backend or InMemorySearchBackend()
-        self._embedding = embedding_client
+        self._embedding = embedding_client or _auto_embedding(settings)
         self._settings = settings
         self._active_tracker: Any | None = None
         self._buffer: Any | None = None
@@ -359,3 +359,45 @@ class Lab:
 
     def __repr__(self) -> str:
         return f"Lab(team={self._team!r})"
+
+
+def _auto_metadata(settings: Settings) -> Any:
+    """設定に応じてメタデータバックエンドを自動選択する。"""
+    if settings.gcp_project:
+        from labvault.backends.firestore import FirestoreMetadataBackend
+
+        return FirestoreMetadataBackend(
+            project=settings.gcp_project,
+            database=settings.firestore_database,
+        )
+    return InMemoryMetadataBackend()
+
+
+def _auto_storage(settings: Settings) -> Any:
+    """設定に応じてストレージバックエンドを自動選択する。"""
+    if (
+        settings.nextcloud_url
+        and settings.nextcloud_user
+        and settings.nextcloud_password
+    ):
+        from labvault.backends.nextcloud import NextcloudStorage
+
+        return NextcloudStorage(
+            url=settings.nextcloud_url,
+            user=settings.nextcloud_user,
+            password=settings.nextcloud_password,
+            group_folder=settings.nextcloud_group_folder,
+        )
+    return InMemoryStorageBackend()
+
+
+def _auto_embedding(settings: Settings) -> Any | None:
+    """設定に応じて EmbeddingClient を自動作成する。"""
+    if settings.gcp_project:
+        try:
+            from labvault.backends.embedding import EmbeddingClient
+
+            return EmbeddingClient(project=settings.gcp_project)
+        except Exception:
+            return None
+    return None
