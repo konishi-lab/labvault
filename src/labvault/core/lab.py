@@ -30,6 +30,7 @@ class Lab:
         metadata_backend: Any | None = None,
         storage_backend: Any | None = None,
         search_backend: Any | None = None,
+        embedding_client: Any | None = None,
     ) -> None:
         settings = Settings()
         self._team = team or settings.team or "default"
@@ -37,6 +38,7 @@ class Lab:
         self._metadata = metadata_backend or InMemoryMetadataBackend()
         self._storage = storage_backend or InMemoryStorageBackend()
         self._search = search_backend or InMemorySearchBackend()
+        self._embedding = embedding_client
         self._settings = settings
         self._active_tracker: Any | None = None
         self._buffer: Any | None = None
@@ -87,7 +89,7 @@ class Lab:
         self._metadata.create_record(self._team, rec._to_dict())
 
         # 検索インデックスに追加
-        self._search.index(self._team, record_id, title)
+        self._index_record(rec)
 
         if sample:
             rec.link(sample, "measured_on")
@@ -181,7 +183,7 @@ class Lab:
         type: str | RecordType | None = None,
         limit: int = 20,
     ) -> builtins.list[Record]:
-        """レコードを検索する (M1: 部分文字列一致)."""
+        """レコードを検索する。Embedding があればセマンティック検索。"""
         filters: dict[str, Any] = {}
         if tags:
             filters["tags"] = tags
@@ -190,9 +192,18 @@ class Lab:
         if type:
             filters["type"] = str(type)
 
+        # Embedding が利用可能ならクエリを embed
+        import contextlib
+
+        query_embedding: builtins.list[float] | None = None
+        if self._embedding is not None:
+            with contextlib.suppress(Exception):
+                query_embedding = self._embedding.embed(query)
+
         hits = self._search.search(
             self._team,
             query,
+            embedding=query_embedding,
             filters=filters if filters else None,
             limit=limit,
         )
@@ -300,6 +311,21 @@ class Lab:
                 return rid
         msg = "Failed to generate unique ID"
         raise RuntimeError(msg)
+
+    def _index_record(self, record: Record) -> None:
+        """レコードを検索インデックスに追加する。"""
+        from labvault.backends.embedding import build_embedding_text
+
+        text = build_embedding_text(record._to_dict())
+
+        import contextlib
+
+        embedding: list[float] | None = None
+        if self._embedding is not None:
+            with contextlib.suppress(Exception):
+                embedding = self._embedding.embed(text)
+
+        self._search.index(self._team, record.id, text, embedding=embedding)
 
     def _init_sync(self) -> None:
         """BufferDatabase + SyncManager を初期化する。"""
