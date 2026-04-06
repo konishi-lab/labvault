@@ -87,15 +87,25 @@ def list_records(
 ) -> RecordListResponse:
     """レコード一覧を取得する。"""
     tag_list = tags.split(",") if tags else None
-    records = lab.list(
-        tags=tag_list,
-        status=status,
-        type=type,
-        limit=1000,
-        offset=0,
-    )
-    # ルートレコードのみ (サブレコードを除外)
-    root_records = [r for r in records if r.parent_id is None]
+    # ルートレコードを取得するため十分な件数を取得
+    # TODO: Firestore に parent_id==None のインデックスを追加して効率化
+    all_records = []
+    batch_offset = 0
+    batch_size = 500
+    while True:
+        batch = lab.list(
+            tags=tag_list,
+            status=status,
+            type=type,
+            limit=batch_size,
+            offset=batch_offset,
+        )
+        all_records.extend(batch)
+        if len(batch) < batch_size:
+            break
+        batch_offset += batch_size
+
+    root_records = [r for r in all_records if r.parent_id is None]
     page = root_records[offset : offset + limit]
     return RecordListResponse(
         items=[_to_summary(r) for r in page],
