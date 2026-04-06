@@ -87,29 +87,29 @@ def list_records(
 ) -> RecordListResponse:
     """レコード一覧を取得する。"""
     tag_list = tags.split(",") if tags else None
-    # ルートレコードを取得するため十分な件数を取得
-    # TODO: Firestore に parent_id==None のインデックスを追加して効率化
-    all_records = []
-    batch_offset = 0
-    batch_size = 500
-    while True:
-        batch = lab.list(
+    # Firestore に parent_id==None フィルタを直接渡す
+    if hasattr(lab._metadata, "list_records"):
+        records = lab._metadata.list_records(
+            lab._team,
             tags=tag_list,
             status=status,
-            type=type,
-            limit=batch_size,
-            offset=batch_offset,
+            record_type=type,
+            parent_id=None,  # ルートレコードのみ
+            limit=limit,
+            offset=offset,
         )
-        all_records.extend(batch)
-        if len(batch) < batch_size:
-            break
-        batch_offset += batch_size
+        from labvault.core.record import Record
 
-    root_records = [r for r in all_records if r.parent_id is None]
-    page = root_records[offset : offset + limit]
+        items = [Record._from_dict(r, lab=lab) for r in records]
+    else:
+        items = lab.list(
+            tags=tag_list, status=status, type=type, limit=limit, offset=offset
+        )
+        items = [r for r in items if r.parent_id is None]
+
     return RecordListResponse(
-        items=[_to_summary(r) for r in page],
-        total=len(root_records),
+        items=[_to_summary(r) for r in items],
+        total=len(items),
     )
 
 

@@ -76,6 +76,7 @@ class FirestoreMetadataBackend:
         status: str | None = None,
         record_type: str | None = None,
         created_by: str | None = None,
+        parent_id: str | None = "__unset__",
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
@@ -86,6 +87,10 @@ class FirestoreMetadataBackend:
 
         # ソフトデリート除外
         q = q.where(filter=FieldFilter("deleted_at", "==", None))
+
+        # parent_id フィルタ (ルートレコードのみ等)
+        if parent_id != "__unset__":
+            q = q.where(filter=FieldFilter("parent_id", "==", parent_id))
 
         if tags:
             q = q.where(filter=FieldFilter("tags", "array_contains_any", tags))
