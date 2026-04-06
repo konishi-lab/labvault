@@ -46,9 +46,7 @@ class NextcloudStorage:
         """SDK パスを Nextcloud フルパスに変換する。"""
         return f"{self._base_path}/{path}"
 
-    def upload(
-        self, path: str, data: bytes, content_type: str = ""
-    ) -> str:
+    def upload(self, path: str, data: bytes, content_type: str = "") -> str:
         """ファイルをアップロードする。親ディレクトリは自動作成。"""
         nc = self._get_client()
         full = self._full_path(path)

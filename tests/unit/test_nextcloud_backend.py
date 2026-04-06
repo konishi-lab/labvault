@@ -13,9 +13,7 @@ from labvault.backends.nextcloud import NextcloudStorage
 @pytest.fixture()
 def storage():
     """モック済み NextcloudStorage。"""
-    with patch(
-        "labvault.backends.nextcloud.NextcloudStorage._get_client"
-    ) as mock_get:
+    with patch("labvault.backends.nextcloud.NextcloudStorage._get_client") as mock_get:
         mock_nc = MagicMock()
         mock_get.return_value = mock_nc
         s = NextcloudStorage(
@@ -101,9 +99,7 @@ class TestDelete:
 
 class TestExists:
     def test_exists_true(self, storage):
-        storage._nc.files.by_path.return_value = SimpleNamespace(
-            name="data.csv"
-        )
+        storage._nc.files.by_path.return_value = SimpleNamespace(name="data.csv")
         assert storage.exists("team/AB3F/data.csv") is True
 
     def test_exists_false(self, storage):
