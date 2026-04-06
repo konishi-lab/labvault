@@ -693,7 +693,7 @@ def _try_save_special(obj: Any, name: str, content_type: str) -> tuple[bytes, st
 
     # pandas.DataFrame
     try:
-        import pandas as pd  # type: ignore[import-untyped]
+        import pandas as pd
 
         if isinstance(obj, pd.DataFrame):
             csv_data = obj.to_csv(index=False)
@@ -709,7 +709,7 @@ def _try_save_special(obj: Any, name: str, content_type: str) -> tuple[bytes, st
 
     # matplotlib.Figure
     try:
-        import matplotlib.figure  # type: ignore[import-not-found]
+        import matplotlib.figure
 
         if isinstance(obj, matplotlib.figure.Figure):
             buf = io.BytesIO()

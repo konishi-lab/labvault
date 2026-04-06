@@ -33,7 +33,7 @@ def _shallow_digest(obj: Any) -> str:
 
     # pandas.DataFrame / Series
     try:
-        import pandas as pd  # type: ignore[import-untyped]
+        import pandas as pd
 
         if isinstance(obj, pd.DataFrame):
             cols = list(obj.columns[:10])

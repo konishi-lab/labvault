@@ -85,16 +85,12 @@ warn_unused_configs = true
 [[tool.mypy.overrides]]
 module = [
     "numpy",
-    "numpy.*",
     "pandas",
-    "pandas.*",
     "matplotlib",
-    "matplotlib.*",
+    "matplotlib.figure",
     "ipykernel",
-    "ipykernel.*",
+    "ipykernel.connect",
     "IPython",
-    "IPython.*",
     "nc_py_api",
-    "nc_py_api.*",
 ]
 ignore_missing_imports = true
