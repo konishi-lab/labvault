@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="LABVAULT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
         toml_file=str(Path.home() / ".labvault" / "config.toml"),
         extra="ignore",
     )
