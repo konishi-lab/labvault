@@ -17,6 +17,7 @@ from typing import Any
 
 from labvault import Lab
 from labvault.core.config import Settings
+from labvault.core.record import _parse_dt
 
 
 def get_nc_client(settings: Settings) -> Any:
@@ -90,11 +91,15 @@ def migrate_record(
     description = ""
     created_by = ""
     created_at_str = ""
+    updated_at_str = ""
+    record_config = None
 
     if meta:
         description = meta.get("description", "") or ""
         created_by = meta.get("created_by", "") or ""
         created_at_str = meta.get("created_at", "") or ""
+        updated_at_str = meta.get("updated_at", "") or ""
+        record_config = meta.get("record_config")
         if description:
             title = f"{record_id_mdxdb}: {description}"
 
@@ -119,16 +124,29 @@ def migrate_record(
     else:
         rec = lab.new(title, auto_log=False)
 
-    # メタデータ設定
-    if description:
-        rec.note(f"mdxdb description: {description}")
+    # _record_meta.json のメタデータを活用
     if created_by:
-        rec.note(f"mdxdb created_by: {created_by}")
+        rec._created_by = created_by
     if created_at_str:
-        rec.note(f"mdxdb created_at: {created_at_str}")
+        rec._created_at = _parse_dt(created_at_str)
+    if updated_at_str:
+        rec._updated_at = _parse_dt(updated_at_str)
+    if description:
+        rec.note(description)
+    if record_config:
+        rec.note(f"mdxdb record_config: {json.dumps(record_config, ensure_ascii=False)}")
 
     rec.tag("migrated-from-mdxdb")
-    rec.conditions(mdxdb_id=record_id_mdxdb, mdxdb_path=record_path)
+
+    # condition.json または condition ファイルから条件を読み取り
+    conditions: dict[str, Any] = {"mdxdb_id": record_id_mdxdb}
+    for cond_name in ("condition.json", "condition"):
+        cond_path = f"{record_path}/_data/{cond_name}"
+        cond_data = read_json(nc, cond_path)
+        if cond_data:
+            conditions.update(cond_data)
+            break
+    rec.conditions(**conditions)
 
     # ファイル参照を登録 (ファイル自体は Nextcloud にあるのでコピー不要)
     from labvault.core.types import DataRef
