@@ -91,12 +91,12 @@ def generate_grid_mapping(
 
 
 def _get_children_sorted(lab: Lab, record_id: str) -> list[Record]:
-    """子レコードをタイトル順で取得する。"""
+    """子レコードを自然順ソートで取得する。"""
     rows = lab._metadata.list_records(
         lab._team, parent_id=record_id, limit=2000
     )
     children = [Record._from_dict(r, lab=lab) for r in rows]
-    return sorted(children, key=lambda c: c.title)
+    return sorted(children, key=lambda c: _natural_sort_key(c.title))
 
 
 # --- Endpoints ---
