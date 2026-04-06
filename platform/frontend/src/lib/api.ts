@@ -113,6 +113,12 @@ export async function createRecord(data: {
   return res.json();
 }
 
+export async function fetchChildren(id: string): Promise<RecordSummary[]> {
+  const res = await fetch(`${API_BASE}/api/records/${id}/children`);
+  if (!res.ok) throw new Error(`Failed to fetch children: ${res.status}`);
+  return res.json();
+}
+
 export async function deleteRecord(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/records/${id}`, {
     method: "DELETE",

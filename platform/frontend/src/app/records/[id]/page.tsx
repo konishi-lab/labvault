@@ -13,8 +13,8 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchRecord } from "@/lib/api";
-import type { RecordDetail } from "@/lib/api";
+import { fetchRecord, fetchChildren } from "@/lib/api";
+import type { RecordDetail, RecordSummary } from "@/lib/api";
 
 const statusColor: Record<string, string> = {
   running: "bg-blue-100 text-blue-800",
@@ -113,12 +113,19 @@ export default function RecordDetailPage() {
   const params = useParams();
   const id = params.id as string;
   const [record, setRecord] = useState<RecordDetail | null>(null);
+  const [children, setChildren] = useState<RecordSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchRecord(id)
-      .then(setRecord)
+    Promise.all([
+      fetchRecord(id),
+      fetchChildren(id).catch(() => []),
+    ])
+      .then(([rec, kids]) => {
+        setRecord(rec);
+        setChildren(kids);
+      })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
   }, [id]);
@@ -312,26 +319,39 @@ export default function RecordDetailPage() {
           </Card>
         )}
 
-        {/* リンク */}
-        {record.links.length > 0 && (
-          <Card>
+        {/* サブレコード */}
+        {children.length > 0 && (
+          <Card className="md:col-span-2">
             <CardHeader>
-              <CardTitle className="text-base">リンク</CardTitle>
+              <CardTitle className="text-base">
+                サブレコード ({children.length})
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
-              {record.links.map((link, i) => (
-                <div key={i}>
+              {children.map((child, i) => (
+                <div key={child.id}>
                   {i > 0 && <Separator className="mb-2" />}
-                  <div className="flex justify-between">
-                    <Link
-                      href={`/records/${link.target_id}`}
-                      className="font-mono text-primary hover:underline cursor-pointer"
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/records/${child.id}`}
+                        className="font-mono text-primary hover:underline cursor-pointer"
+                      >
+                        {child.id}
+                      </Link>
+                      <Link
+                        href={`/records/${child.id}`}
+                        className="hover:underline cursor-pointer"
+                      >
+                        {child.title}
+                      </Link>
+                    </div>
+                    <Badge
+                      variant="secondary"
+                      className={statusColor[child.status]}
                     >
-                      {link.target_id}
-                    </Link>
-                    <span className="text-muted-foreground">
-                      {link.relation}
-                    </span>
+                      {child.status}
+                    </Badge>
                   </div>
                 </div>
               ))}
