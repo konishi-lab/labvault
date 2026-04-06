@@ -170,14 +170,31 @@ def restore_record(
 @router.get("/{record_id}/children", response_model=list[RecordSummary])
 def get_children(
     record_id: str,
+    limit: int = 500,
     lab: Lab = Depends(get_lab),
 ) -> list[RecordSummary]:
-    """子レコード一覧を取得する。"""
+    """子レコード一覧を取得する。Firestore の parent_id インデックスを使用。"""
+    from labvault.core.record import Record
+
     try:
-        rec = lab.get(record_id)
+        lab.get(record_id)  # 存在確認
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
-    return [_to_summary(c) for c in rec.children()]
+
+    # Firestore に直接 parent_id フィルタで問い合わせ
+    if hasattr(lab._metadata, "list_records"):
+        rows = lab._metadata.list_records(
+            lab._team,
+            parent_id=record_id,
+            limit=limit,
+        )
+        children = [Record._from_dict(r, lab=lab) for r in rows]
+    else:
+        # InMemory fallback
+        all_records = lab.list(limit=10000)
+        children = [r for r in all_records if r.parent_id == record_id]
+
+    return [_to_summary(c) for c in children]
 
 
 # --- Record Operations ---
