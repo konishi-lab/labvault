@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { RecordTable } from "@/components/record-table";
+import { SortableRecordTable } from "@/components/sortable-record-table";
 import { SearchBar } from "@/components/search-bar";
 import { fetchRecords, searchRecords } from "@/lib/api";
 import type { RecordSummary } from "@/lib/api";
@@ -46,7 +46,7 @@ function RecordsContent() {
     );
   }
 
-  return <RecordTable records={records} />;
+  return <SortableRecordTable records={records} defaultSort="created_at" />;
 }
 
 export default function HomePage() {

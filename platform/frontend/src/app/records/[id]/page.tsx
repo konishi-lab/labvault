@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { fetchRecord, fetchChildren } from "@/lib/api";
 import type { RecordDetail, RecordSummary } from "@/lib/api";
 import { BulkUploadButton } from "@/components/bulk-upload";
+import { SortableRecordTable } from "@/components/sortable-record-table";
 
 const statusColor: Record<string, string> = {
   running: "bg-blue-100 text-blue-800",
@@ -337,9 +338,6 @@ export default function RecordDetailPage() {
   );
 }
 
-type SortKey = "title" | "created_at";
-type SortDir = "asc" | "desc";
-
 function ChildrenSection({
   recordId,
   children,
@@ -349,28 +347,6 @@ function ChildrenSection({
   children: RecordSummary[];
   onRefresh: () => void;
 }) {
-  const [sortKey, setSortKey] = useState<SortKey>("title");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
-
-  const sorted = [...children].sort((a, b) => {
-    const va = sortKey === "title" ? a.title : a.created_at;
-    const vb = sortKey === "title" ? b.title : b.created_at;
-    const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-    return sortDir === "asc" ? cmp : -cmp;
-  });
-
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir(sortDir === "asc" ? "desc" : "asc");
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  };
-
-  const arrow = (key: SortKey) =>
-    sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
-
   return (
           <Card className="md:col-span-2">
             <CardHeader className="pb-3">
@@ -378,61 +354,15 @@ function ChildrenSection({
                 <CardTitle className="text-base">
                   サブレコード ({children.length})
                 </CardTitle>
-                <div className="flex gap-2">
-                  <BulkUploadButton
-                    recordId={recordId}
-                    childCount={children.length}
-                    onComplete={onRefresh}
-                  />
-                  <div className="flex gap-1">
-                    <Button
-                      variant={sortKey === "title" ? "default" : "outline"}
-                      size="sm"
-                      className="h-7 text-xs cursor-pointer"
-                      onClick={() => toggleSort("title")}
-                    >
-                      名前{arrow("title")}
-                    </Button>
-                    <Button
-                      variant={sortKey === "created_at" ? "default" : "outline"}
-                      size="sm"
-                      className="h-7 text-xs cursor-pointer"
-                      onClick={() => toggleSort("created_at")}
-                    >
-                      作成日{arrow("created_at")}
-                    </Button>
-                  </div>
-                </div>
+                <BulkUploadButton
+                  recordId={recordId}
+                  childCount={children.length}
+                  onComplete={onRefresh}
+                />
               </div>
             </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {sorted.map((child, i) => (
-                <div key={child.id}>
-                  {i > 0 && <Separator className="mb-2" />}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/records/${child.id}`}
-                        className="font-mono text-primary hover:underline cursor-pointer"
-                      >
-                        {child.id}
-                      </Link>
-                      <Link
-                        href={`/records/${child.id}`}
-                        className="hover:underline cursor-pointer"
-                      >
-                        {child.title}
-                      </Link>
-                    </div>
-                    <Badge
-                      variant="secondary"
-                      className={statusColor[child.status]}
-                    >
-                      {child.status}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
+            <CardContent>
+              <SortableRecordTable records={children} defaultSort="title" />
             </CardContent>
           </Card>
   );
