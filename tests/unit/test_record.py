@@ -395,3 +395,160 @@ class TestRepr:
         assert "Record(" in r
         assert rec.id in r
         assert "テスト実験" in r
+
+
+class TestSubAndChildren:
+    """sub() / children() のテスト。"""
+
+    def test_sub_creates_child(self, lab: Lab) -> None:
+        parent = lab.new("親実験")
+        child = parent.sub("XRD測定")
+        assert child.parent_id == parent.id
+        assert child.title == "XRD測定"
+        assert child.type == "measurement"  # デフォルト
+
+    def test_sub_with_conditions(self, lab: Lab) -> None:
+        parent = lab.new("親実験")
+        child = parent.sub("SEM観察", voltage_kV=15)
+        assert child.get_conditions()["voltage_kV"] == 15
+
+    def test_sub_with_custom_type(self, lab: Lab) -> None:
+        parent = lab.new("親実験")
+        child = parent.sub("解析", type="analysis")
+        assert child.type == "analysis"
+
+    def test_sub_creates_bidirectional_links(self, lab: Lab) -> None:
+        parent = lab.new("親実験")
+        child = parent.sub("子実験")
+
+        parent_links = parent.links
+        assert any(
+            lk.target_id == child.id and lk.relation == "has_child"
+            for lk in parent_links
+        )
+
+        child_links = child.links
+        assert any(
+            lk.target_id == parent.id and lk.relation == "child_of"
+            for lk in child_links
+        )
+
+    def test_children_returns_child_records(self, lab: Lab) -> None:
+        parent = lab.new("親実験")
+        c1 = parent.sub("子1")
+        c2 = parent.sub("子2")
+
+        kids = parent.children()
+        kid_ids = {r.id for r in kids}
+        assert c1.id in kid_ids
+        assert c2.id in kid_ids
+        assert len(kids) == 2
+
+    def test_children_empty(self, lab: Lab) -> None:
+        rec = lab.new("単独実験")
+        assert rec.children() == []
+
+    def test_children_no_cross_contamination(self, lab: Lab) -> None:
+        """他のレコードの子は含まない。"""
+        p1 = lab.new("親1")
+        p2 = lab.new("親2")
+        c1 = p1.sub("子1")
+        c2 = p2.sub("子2")
+
+        p1_kids = p1.children()
+        assert len(p1_kids) == 1
+        assert p1_kids[0].id == c1.id
+
+        p2_kids = p2.children()
+        assert len(p2_kids) == 1
+        assert p2_kids[0].id == c2.id
+
+    def test_parent_id_default_none(self, lab: Lab) -> None:
+        rec = lab.new("ルート")
+        assert rec.parent_id is None
+
+    def test_parent_id_persisted(self, lab: Lab) -> None:
+        parent = lab.new("親")
+        child = parent.sub("子")
+        fetched = lab.get(child.id)
+        assert fetched.parent_id == parent.id
+
+    def test_sub_without_lab_raises(self) -> None:
+        rec = Record(id="TEST", team="t", title="t", record_type="experiment")
+        with pytest.raises(RuntimeError, match="Lab instance"):
+            rec.sub("child")
+
+
+class TestAddDir:
+    """add_dir() のテスト。"""
+
+    def test_add_dir_recursive(self, lab: Lab, tmp_path: Path) -> None:
+        (tmp_path / "a.csv").write_text("a")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "b.csv").write_text("b")
+
+        rec = lab.new("テスト")
+        rec.add_dir(tmp_path)
+
+        names = {ref.name for ref in rec.data_refs}
+        assert "a.csv" in names
+        assert str(Path("sub") / "b.csv") in names
+
+    def test_add_dir_returns_self(self, lab: Lab, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("a")
+        rec = lab.new("テスト")
+        assert rec.add_dir(tmp_path) is rec
+
+    def test_add_dir_not_a_directory(self, lab: Lab, tmp_path: Path) -> None:
+        f = tmp_path / "file.txt"
+        f.write_text("x")
+        rec = lab.new("テスト")
+        with pytest.raises(NotADirectoryError):
+            rec.add_dir(f)
+
+    def test_add_dir_empty(self, lab: Lab, tmp_path: Path) -> None:
+        rec = lab.new("テスト")
+        rec.add_dir(tmp_path)
+        assert rec.data_refs == []
+
+
+class TestGetData:
+    """get_data() のテスト。"""
+
+    def test_get_data_returns_bytes(self, lab: Lab) -> None:
+        rec = lab.new("テスト")
+        rec.add(b"hello world", name="test.txt")
+        data = rec.get_data("test.txt")
+        assert data == b"hello world"
+
+    def test_get_data_file_not_found(self, lab: Lab) -> None:
+        rec = lab.new("テスト")
+        with pytest.raises(FileNotFoundError, match="no_such_file"):
+            rec.get_data("no_such_file")
+
+    def test_get_data_after_file_add(self, lab: Lab, tmp_path: Path) -> None:
+        f = tmp_path / "data.csv"
+        f.write_text("a,b\n1,2\n")
+        rec = lab.new("テスト")
+        rec.add(f)
+        data = rec.get_data("data.csv")
+        assert data == b"a,b\n1,2\n"
+
+
+class TestListData:
+    """list_data() のテスト。"""
+
+    def test_list_data_empty(self, lab: Lab) -> None:
+        rec = lab.new("テスト")
+        assert rec.list_data() == []
+
+    def test_list_data_returns_refs(self, lab: Lab) -> None:
+        rec = lab.new("テスト")
+        rec.add(b"aaa", name="a.bin")
+        rec.add(b"bbb", name="b.bin")
+
+        refs = rec.list_data()
+        assert len(refs) == 2
+        names = {r.name for r in refs}
+        assert names == {"a.bin", "b.bin"}

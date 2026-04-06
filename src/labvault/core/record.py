@@ -95,6 +95,7 @@ class Record:
         results_data: dict[str, Any] | None = None,
         events: list[dict[str, Any]] | None = None,
         deleted_at: datetime | None = None,
+        parent_id: str | None = None,
         lab: Lab | None = None,
     ) -> None:
         self._id = id
@@ -121,6 +122,7 @@ class Record:
             self._results._load(results_data)
         self._events: list[dict[str, Any]] = list(events) if events else []
         self._deleted_at = deleted_at
+        self._parent_id = parent_id
         self._lab = lab
 
     # --- プロパティ ---
@@ -214,6 +216,11 @@ class Record:
     def deleted_at(self) -> datetime | None:
         """削除日時 (None = 未削除)."""
         return self._deleted_at
+
+    @property
+    def parent_id(self) -> str | None:
+        """親レコード ID (None = ルート)."""
+        return self._parent_id
 
     # --- ミューテーション (全て self を返す) ---
 
@@ -323,6 +330,38 @@ class Record:
         self._persist()
         return self
 
+    # --- 子レコード ---
+
+    def sub(
+        self,
+        title: str,
+        *,
+        type: str | None = None,
+        **conditions: Any,
+    ) -> Record:
+        """子レコードを作成する。"""
+        from labvault.core.types import RecordType
+
+        if self._lab is None:
+            msg = "Cannot create sub-record without a Lab instance"
+            raise RuntimeError(msg)
+
+        rec_type = type or RecordType.MEASUREMENT
+        child = self._lab.new(title, type=rec_type, **conditions)
+        child._parent_id = self._id
+        child._persist()
+
+        self.link(child.id, "has_child")
+        child.link(self._id, "child_of")
+        return child
+
+    def children(self) -> builtins.list[Record]:
+        """直接の子レコード一覧を返す。"""
+        if self._lab is None:
+            return []
+        all_records = self._lab.list(limit=1000)
+        return [r for r in all_records if r.parent_id == self._id]
+
     # --- ファイル操作 ---
 
     def add(
@@ -415,6 +454,33 @@ class Record:
 
         return self.add(data, name=name, content_type=ct)
 
+    def add_dir(self, dir_path: str | Path) -> Record:
+        """ディレクトリ配下の全ファイルを再帰的に追加する。"""
+        root = Path(dir_path)
+        if not root.is_dir():
+            msg = f"Not a directory: {root}"
+            raise NotADirectoryError(msg)
+        for p in sorted(root.rglob("*")):
+            if p.is_file():
+                rel = p.relative_to(root)
+                self.add(p, name=str(rel))
+        return self
+
+    def get_data(self, name: str) -> bytes:
+        """保存済みファイルのデータをバイナリで取得する。"""
+        for ref in self._data_refs:
+            if ref.name == name:
+                if self._lab and self._lab._storage:
+                    return self._lab._storage.download(ref.nextcloud_path)
+                msg = "No storage backend available"
+                raise RuntimeError(msg)
+        msg = f"File not found: {name}"
+        raise FileNotFoundError(msg)
+
+    def list_data(self) -> builtins.list[DataRef]:
+        """レコードに紐づくファイルの一覧を返す。"""
+        return list(self._data_refs)
+
     # --- 永続化 ---
 
     def _persist(self) -> None:
@@ -475,6 +541,7 @@ class Record:
             "results": self._results.to_dict(),
             "events": list(self._events),
             "deleted_at": (self._deleted_at.isoformat() if self._deleted_at else None),
+            "parent_id": self._parent_id,
         }
 
     # --- コンテキストマネージャ ---
@@ -561,6 +628,7 @@ class Record:
             results_data=data.get("results"),
             events=data.get("events"),
             deleted_at=(_parse_dt(deleted_at_raw) if deleted_at_raw else None),
+            parent_id=data.get("parent_id"),
             lab=lab,
         )
 
