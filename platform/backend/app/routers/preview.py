@@ -22,9 +22,13 @@ router = APIRouter(
 
 def _nc_download(lab: Lab, nc_path: str) -> bytes | None:
     """Nextcloud からパスを直接指定してダウンロードする。"""
+    import io
+
     try:
         nc = lab._storage._get_client()
-        return nc.files.download(nc_path)
+        buf = io.BytesIO()
+        nc.files.download2stream(nc_path, buf)
+        return buf.getvalue()
     except Exception:
         return None
 
