@@ -131,7 +131,7 @@ export function BulkUploadButton({
     }
   };
 
-  const handleUpload = () => {
+  const handleUpload = async () => {
     setStep("uploading");
     setUploadProgress(0);
     setUploadCurrent("ファイルを送信中...");
@@ -145,74 +145,68 @@ export function BulkUploadButton({
       direction,
     });
 
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API_BASE}/api/records/${recordId}/bulk-upload?${params}`);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/records/${recordId}/bulk-upload?${params}`,
+        { method: "POST", body: formData }
+      );
 
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 50); // 送信は前半50%
-        setUploadProgress(pct);
-        const mb = (e.loaded / 1048576).toFixed(1);
-        const totalMb = (e.total / 1048576).toFixed(1);
-        setUploadCurrent(`送信中: ${mb} / ${totalMb} MB`);
-      }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        setUploadProgress(100);
-        setUploadCurrent("完了");
-        const data: UploadResult = JSON.parse(xhr.responseText);
-        setResult(data);
-        setStep("done");
-        if (data.uploaded > 0) onComplete?.();
-      } else {
+      if (!res.ok || !res.body) {
         setResult({
           total: files.length, matched: 0, uploaded: 0,
-          errors: [`Upload failed: ${xhr.status}`],
+          errors: [`Upload failed: ${res.status}`],
         });
         setStep("done");
+        return;
       }
-    };
 
-    xhr.onerror = () => {
+      // SSE を読む
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const block of lines) {
+          const eventMatch = block.match(/^event: (\w+)/m);
+          const dataMatch = block.match(/^data: (.+)/m);
+          if (!eventMatch || !dataMatch) continue;
+
+          const eventType = eventMatch[1];
+          const data = JSON.parse(dataMatch[1]);
+
+          if (eventType === "progress") {
+            const pct = Math.round((data.current / data.total) * 100);
+            setUploadProgress(pct);
+            setUploadCurrent(
+              `${data.current} / ${data.total}: ${data.filename} ${data.status === "ok" ? "✓" : data.status === "error" ? "✗" : "⏭"}`
+            );
+          } else if (eventType === "done") {
+            setUploadProgress(100);
+            setResult({
+              total: data.total,
+              matched: data.uploaded,
+              uploaded: data.uploaded,
+              errors: data.errors,
+            });
+            setStep("done");
+            if (data.uploaded > 0) onComplete?.();
+          }
+        }
+      }
+    } catch (err) {
       setResult({
         total: files.length, matched: 0, uploaded: 0,
-        errors: ["Network error"],
+        errors: [(err as Error).message],
       });
       setStep("done");
-    };
-
-    // 送信完了 → サーバー処理中
-    xhr.upload.onloadend = () => {
-      setUploadProgress(50);
-      setUploadCurrent("サーバーで処理中...");
-      // 50→99 をアニメーション
-      let p = 50;
-      const timer = setInterval(() => {
-        p = Math.min(p + 1, 99);
-        setUploadProgress(p);
-        if (p >= 99) clearInterval(timer);
-      }, 500);
-      xhr.onload = () => {
-        clearInterval(timer);
-        setUploadProgress(100);
-        if (xhr.status >= 200 && xhr.status < 300) {
-          const data: UploadResult = JSON.parse(xhr.responseText);
-          setResult(data);
-          setStep("done");
-          if (data.uploaded > 0) onComplete?.();
-        } else {
-          setResult({
-            total: files.length, matched: 0, uploaded: 0,
-            errors: [`Upload failed: ${xhr.status}`],
-          });
-          setStep("done");
-        }
-      };
-    };
-
-    xhr.send(formData);
+    }
   };
 
   return (
