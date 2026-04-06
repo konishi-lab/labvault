@@ -79,6 +79,77 @@ pip install labvault[gcp,nextcloud]
 pip install labvault[all]
 ```
 
+## セットアップ
+
+### 1. 開発環境
+
+```bash
+git clone https://github.com/konishi-lab/labvault.git
+cd labvault
+pip install -e ".[dev]"
+pytest  # テストが通ることを確認
+```
+
+### 2. 環境変数の設定
+
+```bash
+cp .env.example .env
+```
+
+`.env` を編集して接続情報を設定:
+
+```bash
+LABVAULT_TEAM=konishi-lab
+LABVAULT_USER=your-name
+LABVAULT_NEXTCLOUD_URL=https://arim.mdx.jp/nextcloud
+LABVAULT_NEXTCLOUD_USER=your-nextcloud-user
+LABVAULT_NEXTCLOUD_PASSWORD=your-app-password
+LABVAULT_NEXTCLOUD_GROUP_FOLDER=24UTARIM004
+LABVAULT_GCP_PROJECT=your-gcp-project
+LABVAULT_FIRESTORE_DATABASE=(default)
+```
+
+### 3. GCP (Firestore) セットアップ
+
+```bash
+# GCP CLI のインストール (未インストールの場合)
+# https://cloud.google.com/sdk/docs/install
+
+# ログイン
+gcloud auth login
+gcloud auth application-default login
+gcloud config set project your-gcp-project
+
+# Firestore API の有効化
+gcloud services enable firestore.googleapis.com --project=your-gcp-project
+
+# Firestore データベースの作成 (初回のみ)
+gcloud firestore databases create --location=asia-northeast1 --project=your-gcp-project
+```
+
+### 4. 動作確認
+
+```bash
+# ユニットテスト (外部サービス不要)
+pytest
+
+# 結合テスト (Nextcloud)
+pytest tests/integration/test_nextcloud_live.py -v -m integration
+
+# 結合テスト (Firestore)
+pytest tests/integration/test_firestore_live.py -v -m integration
+```
+
+### 5. examples を試す
+
+```bash
+pip install jupyter
+jupyter lab examples/
+
+# スクリプト版
+python examples/02_instrument_script.py
+```
+
 ## アーキテクチャ
 
 ```
