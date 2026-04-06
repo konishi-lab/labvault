@@ -44,8 +44,11 @@ numpy = [
 keyring = [
     "keyring>=25.0",
 ]
+mcp = [
+    "mcp>=1.0",
+]
 all = [
-    "labvault[gcp,nextcloud,numpy,keyring]",
+    "labvault[gcp,nextcloud,numpy,keyring,mcp]",
 ]
 dev = [
     "pytest>=8.1",
@@ -99,5 +102,8 @@ module = [
     "google.cloud.firestore",
     "google.cloud.firestore_v1",
     "google.cloud.firestore_v1.base_query",
+    "mcp",
+    "mcp.server",
+    "mcp.server.fastmcp",
 ]
 ignore_missing_imports = true

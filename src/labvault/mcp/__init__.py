@@ -1,0 +1,1 @@
+"""labvault MCP サーバー。"""

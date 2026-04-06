@@ -241,6 +241,15 @@ def doctor() -> None:
         click.echo("Some checks failed. See above.")
 
 
+@cli.command("mcp")
+def mcp_cmd() -> None:
+    """MCP サーバーを起動する (stdio)."""
+    from labvault.mcp.server import create_server
+
+    server = create_server()
+    server.run(transport="stdio")
+
+
 def _get_lab() -> Any:
     """CLI 用に Lab を初期化する。auto_log=False。"""
     from labvault import Lab
