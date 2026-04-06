@@ -229,46 +229,13 @@ export function BulkUploadButton({
               </div>
 
               {/* グリッドビジュアル + コーナー選択 */}
-              <div className="space-y-2">
-                <p className="text-sm font-medium">
-                  開始位置をクリック:
-                </p>
-                <div className="inline-grid gap-1" style={{
-                  gridTemplateColumns: `repeat(${Math.min(cols, 10)}, minmax(0, 1fr))`,
-                }}>
-                  {Array.from({ length: Math.min(rows, 10) * Math.min(cols, 10) }).map((_, idx) => {
-                    const r = Math.floor(idx / Math.min(cols, 10));
-                    const c = idx % Math.min(cols, 10);
-                    const isCorner =
-                      (r === 0 && c === 0) ||
-                      (r === 0 && c === Math.min(cols, 10) - 1) ||
-                      (r === Math.min(rows, 10) - 1 && c === 0) ||
-                      (r === Math.min(rows, 10) - 1 && c === Math.min(cols, 10) - 1);
-                    const cornerName: Corner | null =
-                      r === 0 && c === 0 ? "top-left" :
-                      r === 0 && c === Math.min(cols, 10) - 1 ? "top-right" :
-                      r === Math.min(rows, 10) - 1 && c === 0 ? "bottom-left" :
-                      r === Math.min(rows, 10) - 1 && c === Math.min(cols, 10) - 1 ? "bottom-right" : null;
-                    const isSelected = cornerName === corner;
-                    return (
-                      <div
-                        key={idx}
-                        className={`w-8 h-8 border rounded text-[10px] flex items-center justify-center
-                          ${isCorner ? "cursor-pointer hover:bg-blue-100 font-bold" : ""}
-                          ${isSelected ? "bg-blue-500 text-white" : isCorner ? "bg-yellow-100" : "bg-muted/50"}`}
-                        onClick={() => cornerName && setCorner(cornerName)}
-                      >
-                        {isCorner ? "★" : ""}
-                      </div>
-                    );
-                  })}
-                </div>
-                {(rows > 10 || cols > 10) && (
-                  <p className="text-xs text-muted-foreground">
-                    (プレビューは10×10まで表示)
-                  </p>
-                )}
-              </div>
+              <GridVisual
+                rows={rows}
+                cols={cols}
+                corner={corner}
+                files={files}
+                onCornerClick={setCorner}
+              />
 
               {/* 走査方向 */}
               <div className="flex items-center gap-3">
@@ -496,4 +463,114 @@ function PreviewTable({
       </div>
     </div>
   );
+}
+
+function naturalSortKey(s: string): string {
+  return s.replace(/(\d+)/g, (m) => m.padStart(10, "0")).toLowerCase();
+}
+
+function GridVisual({
+  rows,
+  cols,
+  corner,
+  files,
+  onCornerClick,
+}: {
+  rows: number;
+  cols: number;
+  corner: Corner;
+  files: File[];
+  onCornerClick: (c: Corner) => void;
+}) {
+  const sortedNames = [...files]
+    .map((f) => f.name)
+    .sort((a, b) => naturalSortKey(a).localeCompare(naturalSortKey(b)));
+
+  // 表示する行・列を決定 (端2行/列 + 省略)
+  const maxShow = 6;
+  const showRows = getVisibleIndices(rows, maxShow);
+  const showCols = getVisibleIndices(cols, maxShow);
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">開始位置をクリック:</p>
+      <div className="overflow-x-auto">
+        <table className="border-collapse text-[9px]">
+          <tbody>
+            {showRows.map((r, ri) => (
+              <tr key={ri}>
+                {r === -1 ? (
+                  <td
+                    colSpan={showCols.length}
+                    className="text-center text-muted-foreground py-0.5"
+                  >
+                    ⋮
+                  </td>
+                ) : (
+                  showCols.map((c, ci) => {
+                    if (c === -1) {
+                      return (
+                        <td
+                          key={ci}
+                          className="text-center text-muted-foreground px-1"
+                        >
+                          ⋯
+                        </td>
+                      );
+                    }
+                    const isCorner =
+                      (r === 0 && c === 0) ||
+                      (r === 0 && c === cols - 1) ||
+                      (r === rows - 1 && c === 0) ||
+                      (r === rows - 1 && c === cols - 1);
+                    const cornerName: Corner | null =
+                      r === 0 && c === 0
+                        ? "top-left"
+                        : r === 0 && c === cols - 1
+                          ? "top-right"
+                          : r === rows - 1 && c === 0
+                            ? "bottom-left"
+                            : r === rows - 1 && c === cols - 1
+                              ? "bottom-right"
+                              : null;
+                    const isSelected = cornerName === corner;
+                    const idx = r * cols + c;
+                    const fname = idx < sortedNames.length ? sortedNames[idx] : "";
+                    const stem =
+                      fname.lastIndexOf(".") > 0
+                        ? fname.slice(0, fname.lastIndexOf("."))
+                        : fname;
+                    const isEdge = r === 0 || r === rows - 1 || c === 0 || c === cols - 1;
+
+                    return (
+                      <td
+                        key={ci}
+                        className={`border px-1 py-0.5 max-w-[80px] truncate
+                          ${isCorner ? "cursor-pointer hover:bg-blue-100 font-bold" : ""}
+                          ${isSelected ? "bg-blue-500 text-white" : isCorner ? "bg-yellow-100" : isEdge ? "bg-muted/30" : "bg-muted/10"}`}
+                        title={fname}
+                        onClick={() => cornerName && onCornerClick(cornerName)}
+                      >
+                        {isEdge ? stem.slice(0, 12) : ""}
+                      </td>
+                    );
+                  })
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function getVisibleIndices(total: number, maxShow: number): number[] {
+  if (total <= maxShow) {
+    return Array.from({ length: total }, (_, i) => i);
+  }
+  const half = Math.floor(maxShow / 2);
+  const head = Array.from({ length: half }, (_, i) => i);
+  const tail = Array.from({ length: half }, (_, i) => total - half + i);
+  return [...head, -1, ...tail]; // -1 = ellipsis
 }
