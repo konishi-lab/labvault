@@ -67,7 +67,10 @@ packages = ["src/labvault"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=src/labvault --cov-report=term-missing"
+addopts = "--cov=src/labvault --cov-report=term-missing -m 'not integration'"
+markers = [
+    "integration: requires external services (Nextcloud, Firestore, etc.)",
+]
 
 [tool.ruff]
 target-version = "py311"
