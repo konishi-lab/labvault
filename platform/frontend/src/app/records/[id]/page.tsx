@@ -321,14 +321,68 @@ export default function RecordDetailPage() {
 
         {/* サブレコード */}
         {children.length > 0 && (
+          <ChildrenSection children={children} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+type SortKey = "title" | "created_at";
+type SortDir = "asc" | "desc";
+
+function ChildrenSection({ children }: { children: RecordSummary[] }) {
+  const [sortKey, setSortKey] = useState<SortKey>("title");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const sorted = [...children].sort((a, b) => {
+    const va = sortKey === "title" ? a.title : a.created_at;
+    const vb = sortKey === "title" ? b.title : b.created_at;
+    const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const arrow = (key: SortKey) =>
+    sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
+
+  return (
           <Card className="md:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-base">
-                サブレコード ({children.length})
-              </CardTitle>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">
+                  サブレコード ({children.length})
+                </CardTitle>
+                <div className="flex gap-1">
+                  <Button
+                    variant={sortKey === "title" ? "default" : "outline"}
+                    size="sm"
+                    className="h-7 text-xs cursor-pointer"
+                    onClick={() => toggleSort("title")}
+                  >
+                    名前{arrow("title")}
+                  </Button>
+                  <Button
+                    variant={sortKey === "created_at" ? "default" : "outline"}
+                    size="sm"
+                    className="h-7 text-xs cursor-pointer"
+                    onClick={() => toggleSort("created_at")}
+                  >
+                    作成日{arrow("created_at")}
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
-              {children.map((child, i) => (
+              {sorted.map((child, i) => (
                 <div key={child.id}>
                   {i > 0 && <Separator className="mb-2" />}
                   <div className="flex items-center justify-between gap-2">
@@ -357,8 +411,5 @@ export default function RecordDetailPage() {
               ))}
             </CardContent>
           </Card>
-        )}
-      </div>
-    </div>
   );
 }
