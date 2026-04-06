@@ -69,6 +69,8 @@ export function BulkUploadButton({
   const [result, setResult] = useState<UploadResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [children, setChildren] = useState<RecordSummary[]>([]);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadCurrent, setUploadCurrent] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -90,6 +92,8 @@ export function BulkUploadButton({
     setPreview(null);
     setResult(null);
     setLoading(false);
+    setUploadProgress(0);
+    setUploadCurrent("");
   };
 
   const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -127,8 +131,11 @@ export function BulkUploadButton({
     }
   };
 
-  const handleUpload = async () => {
+  const handleUpload = () => {
     setStep("uploading");
+    setUploadProgress(0);
+    setUploadCurrent("ファイルを送信中...");
+
     const formData = new FormData();
     for (const file of files) formData.append("files", file);
     const params = new URLSearchParams({
@@ -137,25 +144,75 @@ export function BulkUploadButton({
       start_position: corner,
       direction,
     });
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/records/${recordId}/bulk-upload?${params}`,
-        { method: "POST", body: formData }
-      );
-      if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-      const data: UploadResult = await res.json();
-      setResult(data);
-      setStep("done");
-      if (data.uploaded > 0) onComplete?.();
-    } catch (err) {
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/api/records/${recordId}/bulk-upload?${params}`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 50); // 送信は前半50%
+        setUploadProgress(pct);
+        const mb = (e.loaded / 1048576).toFixed(1);
+        const totalMb = (e.total / 1048576).toFixed(1);
+        setUploadCurrent(`送信中: ${mb} / ${totalMb} MB`);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        setUploadProgress(100);
+        setUploadCurrent("完了");
+        const data: UploadResult = JSON.parse(xhr.responseText);
+        setResult(data);
+        setStep("done");
+        if (data.uploaded > 0) onComplete?.();
+      } else {
+        setResult({
+          total: files.length, matched: 0, uploaded: 0,
+          errors: [`Upload failed: ${xhr.status}`],
+        });
+        setStep("done");
+      }
+    };
+
+    xhr.onerror = () => {
       setResult({
-        total: files.length,
-        matched: 0,
-        uploaded: 0,
-        errors: [(err as Error).message],
+        total: files.length, matched: 0, uploaded: 0,
+        errors: ["Network error"],
       });
       setStep("done");
-    }
+    };
+
+    // 送信完了 → サーバー処理中
+    xhr.upload.onloadend = () => {
+      setUploadProgress(50);
+      setUploadCurrent("サーバーで処理中...");
+      // 50→99 をアニメーション
+      let p = 50;
+      const timer = setInterval(() => {
+        p = Math.min(p + 1, 99);
+        setUploadProgress(p);
+        if (p >= 99) clearInterval(timer);
+      }, 500);
+      xhr.onload = () => {
+        clearInterval(timer);
+        setUploadProgress(100);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const data: UploadResult = JSON.parse(xhr.responseText);
+          setResult(data);
+          setStep("done");
+          if (data.uploaded > 0) onComplete?.();
+        } else {
+          setResult({
+            total: files.length, matched: 0, uploaded: 0,
+            errors: [`Upload failed: ${xhr.status}`],
+          });
+          setStep("done");
+        }
+      };
+    };
+
+    xhr.send(formData);
   };
 
   return (
@@ -311,10 +368,21 @@ export function BulkUploadButton({
 
           {/* Step 4: アップロード中 */}
           {step === "uploading" && (
-            <div className="py-16 text-center">
-              <div className="text-lg font-medium">アップロード中...</div>
-              <p className="text-sm text-muted-foreground mt-2">
-                {files.length} ファイルを処理しています
+            <div className="py-8 space-y-4">
+              <div className="text-center">
+                <div className="text-lg font-medium">{uploadCurrent}</div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {files.length} ファイル
+                </p>
+              </div>
+              <div className="w-full bg-muted rounded-full h-3 overflow-hidden">
+                <div
+                  className="bg-blue-500 h-full rounded-full transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+              <p className="text-center text-sm font-mono text-muted-foreground">
+                {uploadProgress}%
               </p>
             </div>
           )}
