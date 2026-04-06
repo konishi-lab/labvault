@@ -81,3 +81,20 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = [
+    "numpy",
+    "numpy.*",
+    "pandas",
+    "pandas.*",
+    "matplotlib",
+    "matplotlib.*",
+    "ipykernel",
+    "ipykernel.*",
+    "IPython",
+    "IPython.*",
+    "nc_py_api",
+    "nc_py_api.*",
+]
+ignore_missing_imports = true
