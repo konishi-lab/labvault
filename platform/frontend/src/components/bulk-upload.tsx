@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,6 +10,8 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { fetchChildren } from "@/lib/api";
+import type { RecordSummary } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -42,6 +44,10 @@ type Corner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 type Direction = "row-first" | "column-first";
 type Step = "select" | "grid" | "preview" | "uploading" | "done";
 
+function naturalSortKey(s: string): string {
+  return s.replace(/(\d+)/g, (m) => m.padStart(10, "0")).toLowerCase();
+}
+
 export function BulkUploadButton({
   recordId,
   childCount,
@@ -62,6 +68,21 @@ export function BulkUploadButton({
   const [preview, setPreview] = useState<MatchPreview | null>(null);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [children, setChildren] = useState<RecordSummary[]>([]);
+
+  useEffect(() => {
+    if (open) {
+      fetchChildren(recordId)
+        .then((kids) =>
+          setChildren(
+            [...kids].sort((a, b) =>
+              naturalSortKey(a.title).localeCompare(naturalSortKey(b.title))
+            )
+          )
+        )
+        .catch(() => {});
+    }
+  }, [open, recordId]);
 
   const reset = () => {
     setStep("select");
@@ -75,7 +96,6 @@ export function BulkUploadButton({
     const selected = Array.from(e.target.files || []);
     if (selected.length === 0) return;
     setFiles(selected);
-    // グリッドサイズの初期推定
     const n = selected.length;
     const sqrt = Math.ceil(Math.sqrt(n));
     setRows(Math.ceil(n / sqrt));
@@ -98,8 +118,7 @@ export function BulkUploadButton({
         }
       );
       if (!res.ok) throw new Error(`Preview failed: ${res.status}`);
-      const data: MatchPreview = await res.json();
-      setPreview(data);
+      setPreview(await res.json());
       setStep("preview");
     } catch {
       setStep("preview");
@@ -111,16 +130,13 @@ export function BulkUploadButton({
   const handleUpload = async () => {
     setStep("uploading");
     const formData = new FormData();
-    for (const file of files) {
-      formData.append("files", file);
-    }
+    for (const file of files) formData.append("files", file);
     const params = new URLSearchParams({
       rows: String(rows),
       cols: String(cols),
       start_position: corner,
       direction,
     });
-
     try {
       const res = await fetch(
         `${API_BASE}/api/records/${recordId}/bulk-upload?${params}`,
@@ -156,17 +172,20 @@ export function BulkUploadButton({
         一括アップロード
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl w-[90vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>一括アップロード</DialogTitle>
+            <DialogTitle className="text-lg">一括アップロード</DialogTitle>
           </DialogHeader>
 
           {/* Step 1: フォルダ選択 */}
           {step === "select" && (
-            <div className="space-y-3">
+            <div className="space-y-4 py-4">
               <p className="text-sm text-muted-foreground">
-                フォルダを選択してください。ファイルは NxM
-                のグリッドでサブレコードにマッチングされます。
+                アップロードするファイルが入ったフォルダを選択してください。
+                ファイルは N×M グリッドでサブレコードにマッチングされます。
+              </p>
+              <p className="text-sm text-muted-foreground">
+                サブレコード数: <strong>{childCount}</strong>
               </p>
               <input
                 ref={inputRef}
@@ -179,7 +198,8 @@ export function BulkUploadButton({
               />
               <Button
                 variant="outline"
-                className="w-full cursor-pointer"
+                size="lg"
+                className="w-full cursor-pointer h-16 text-base"
                 onClick={() => inputRef.current?.click()}
               >
                 フォルダを選択
@@ -189,81 +209,90 @@ export function BulkUploadButton({
 
           {/* Step 2: グリッド設定 */}
           {step === "grid" && (
-            <div className="space-y-4">
-              <div className="flex gap-2 text-sm">
-                <Badge variant="secondary">
+            <div className="space-y-6 py-2">
+              {/* 件数バッジ */}
+              <div className="flex gap-3 flex-wrap">
+                <Badge variant="secondary" className="text-sm px-3 py-1">
                   ファイル: {files.length}
                 </Badge>
-                <Badge variant="secondary">
+                <Badge variant="secondary" className="text-sm px-3 py-1">
                   サブレコード: {childCount}
                 </Badge>
                 {rows * cols === files.length ? (
-                  <Badge className="bg-green-100 text-green-800">
-                    グリッドサイズ一致
+                  <Badge className="bg-green-100 text-green-800 text-sm px-3 py-1">
+                    グリッド一致 ({rows}×{cols}={rows * cols})
                   </Badge>
                 ) : (
-                  <Badge className="bg-red-100 text-red-800">
-                    {rows}×{cols}={rows * cols} (不一致)
+                  <Badge className="bg-red-100 text-red-800 text-sm px-3 py-1">
+                    不一致: {rows}×{cols}={rows * cols} ≠ {files.length}
                   </Badge>
                 )}
               </div>
 
-              {/* グリッドサイズ入力 */}
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium w-12">行数</label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={rows}
-                  onChange={(e) => setRows(Number(e.target.value) || 1)}
-                  className="w-20"
-                />
-                <label className="text-sm font-medium w-12">列数</label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={cols}
-                  onChange={(e) => setCols(Number(e.target.value) || 1)}
-                  className="w-20"
-                />
+              {/* グリッドサイズ + 方向 */}
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium">行</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={rows}
+                    onChange={(e) => setRows(Number(e.target.value) || 1)}
+                    className="w-20"
+                  />
+                </div>
+                <span className="text-muted-foreground">×</span>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium">列</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={cols}
+                    onChange={(e) => setCols(Number(e.target.value) || 1)}
+                    className="w-20"
+                  />
+                </div>
+                <div className="border-l pl-4 flex items-center gap-2">
+                  <Button
+                    variant={direction === "row-first" ? "default" : "outline"}
+                    size="sm"
+                    className="cursor-pointer"
+                    onClick={() => setDirection("row-first")}
+                  >
+                    行優先 →
+                  </Button>
+                  <Button
+                    variant={direction === "column-first" ? "default" : "outline"}
+                    size="sm"
+                    className="cursor-pointer"
+                    onClick={() => setDirection("column-first")}
+                  >
+                    列優先 ↓
+                  </Button>
+                </div>
               </div>
 
-              {/* グリッドビジュアル + コーナー選択 */}
-              <GridVisual
-                rows={rows}
-                cols={cols}
-                corner={corner}
-                files={files}
-                onCornerClick={setCorner}
-              />
-
-              {/* 走査方向 */}
-              <div className="flex items-center gap-3">
-                <p className="text-sm font-medium">走査方向:</p>
-                <Button
-                  variant={direction === "row-first" ? "default" : "outline"}
-                  size="sm"
-                  className="cursor-pointer"
-                  onClick={() => setDirection("row-first")}
-                >
-                  行優先 →
-                </Button>
-                <Button
-                  variant={direction === "column-first" ? "default" : "outline"}
-                  size="sm"
-                  className="cursor-pointer"
-                  onClick={() => setDirection("column-first")}
-                >
-                  列優先 ↓
-                </Button>
+              {/* グリッドビジュアル (子レコード名表示) */}
+              <div className="space-y-2">
+                <p className="text-sm font-medium">
+                  開始位置を選択 (★をクリック):
+                </p>
+                <GridVisual
+                  rows={rows}
+                  cols={cols}
+                  corner={corner}
+                  children={children}
+                  onCornerClick={setCorner}
+                />
               </div>
 
               <Button
+                size="lg"
                 className="w-full cursor-pointer"
                 disabled={loading || rows * cols < files.length}
                 onClick={handlePreview}
               >
-                {loading ? "マッチング確認中..." : "マッチング確認"}
+                {loading ? "マッチング確認中..." : "マッチング確認 →"}
               </Button>
             </div>
           )}
@@ -280,31 +309,37 @@ export function BulkUploadButton({
 
           {/* Step 4: アップロード中 */}
           {step === "uploading" && (
-            <div className="py-8 text-center text-muted-foreground">
-              アップロード中...
+            <div className="py-16 text-center">
+              <div className="text-lg font-medium">アップロード中...</div>
+              <p className="text-sm text-muted-foreground mt-2">
+                {files.length} ファイルを処理しています
+              </p>
             </div>
           )}
 
           {/* Step 5: 完了 */}
           {step === "done" && result && (
-            <div className="space-y-3">
-              <div className="flex gap-2">
-                <Badge variant="secondary">合計: {result.total}</Badge>
-                <Badge className="bg-blue-100 text-blue-800">
+            <div className="space-y-4 py-4">
+              <div className="flex gap-3 flex-wrap">
+                <Badge variant="secondary" className="text-sm px-3 py-1">
+                  合計: {result.total}
+                </Badge>
+                <Badge className="bg-blue-100 text-blue-800 text-sm px-3 py-1">
                   マッチ: {result.matched}
                 </Badge>
-                <Badge className="bg-green-100 text-green-800">
+                <Badge className="bg-green-100 text-green-800 text-sm px-3 py-1">
                   成功: {result.uploaded}
                 </Badge>
               </div>
               {result.errors.length > 0 && (
-                <div className="max-h-32 overflow-y-auto rounded border p-2 text-xs text-destructive">
+                <div className="max-h-40 overflow-y-auto rounded border p-3 text-sm text-destructive">
                   {result.errors.map((e, i) => (
                     <div key={i}>{e}</div>
                   ))}
                 </div>
               )}
               <Button
+                size="lg"
                 className="w-full cursor-pointer"
                 onClick={() => setOpen(false)}
               >
@@ -317,6 +352,101 @@ export function BulkUploadButton({
     </>
   );
 }
+
+/* ---- Grid Visual ---- */
+
+function GridVisual({
+  rows,
+  cols,
+  corner,
+  children,
+  onCornerClick,
+}: {
+  rows: number;
+  cols: number;
+  corner: Corner;
+  children: RecordSummary[];
+  onCornerClick: (c: Corner) => void;
+}) {
+  const showRows = getVisibleIndices(rows, 8);
+  const showCols = getVisibleIndices(cols, 8);
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="border-collapse">
+        <tbody>
+          {showRows.map((r, ri) => (
+            <tr key={ri}>
+              {r === -1 ? (
+                <td
+                  colSpan={showCols.length}
+                  className="text-center text-muted-foreground py-1 text-xs"
+                >
+                  ⋮ ({rows - 8} 行省略)
+                </td>
+              ) : (
+                showCols.map((c, ci) => {
+                  if (c === -1) {
+                    return (
+                      <td key={ci} className="text-center text-muted-foreground px-1 text-xs">
+                        ⋯
+                      </td>
+                    );
+                  }
+                  const idx = r * cols + c;
+                  const child = idx < children.length ? children[idx] : null;
+                  const isCorner =
+                    (r === 0 && c === 0) ||
+                    (r === 0 && c === cols - 1) ||
+                    (r === rows - 1 && c === 0) ||
+                    (r === rows - 1 && c === cols - 1);
+                  const cornerName: Corner | null =
+                    r === 0 && c === 0 ? "top-left" :
+                    r === 0 && c === cols - 1 ? "top-right" :
+                    r === rows - 1 && c === 0 ? "bottom-left" :
+                    r === rows - 1 && c === cols - 1 ? "bottom-right" : null;
+                  const isSelected = cornerName === corner;
+
+                  return (
+                    <td
+                      key={ci}
+                      className={`border text-[10px] leading-tight p-1 min-w-[70px] max-w-[100px] truncate align-top
+                        ${isCorner ? "cursor-pointer hover:ring-2 hover:ring-blue-400" : ""}
+                        ${isSelected ? "bg-blue-500 text-white ring-2 ring-blue-600" : isCorner ? "bg-yellow-50 font-semibold" : "bg-white"}`}
+                      title={child ? `[${r},${c}] ${child.id}: ${child.title}` : `[${r},${c}]`}
+                      onClick={() => cornerName && onCornerClick(cornerName)}
+                    >
+                      {isCorner && <span className="text-xs">★ </span>}
+                      {child ? (
+                        <>
+                          <span className="text-muted-foreground">{child.id}</span>
+                          <br />
+                          <span>{child.title}</span>
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </td>
+                  );
+                })
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function getVisibleIndices(total: number, maxShow: number): number[] {
+  if (total <= maxShow) return Array.from({ length: total }, (_, i) => i);
+  const half = Math.floor(maxShow / 2);
+  const head = Array.from({ length: half }, (_, i) => i);
+  const tail = Array.from({ length: half }, (_, i) => total - half + i);
+  return [...head, -1, ...tail];
+}
+
+/* ---- Preview Table ---- */
 
 type PreviewSortKey = "filename" | "record_title" | "grid" | "created_at";
 type PreviewSortDir = "asc" | "desc";
@@ -339,8 +469,7 @@ function PreviewTable({
     let va: string | number;
     let vb: string | number;
     if (sortKey === "filename") {
-      va = a.filename;
-      vb = b.filename;
+      va = a.filename; vb = b.filename;
     } else if (sortKey === "grid") {
       va = a.grid_row * cols + a.grid_col;
       vb = b.grid_row * cols + b.grid_col;
@@ -356,87 +485,74 @@ function PreviewTable({
   });
 
   const toggleSort = (key: PreviewSortKey) => {
-    if (sortKey === key) {
-      setSortDir(sortDir === "asc" ? "desc" : "asc");
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
+    if (sortKey === key) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir("asc"); }
   };
 
   const arrow = (key: PreviewSortKey) =>
     sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex gap-2">
-          <Badge variant="secondary">ファイル: {preview.total_files}</Badge>
-          <Badge variant="secondary">レコード: {preview.total_records}</Badge>
-          <Badge className="bg-green-100 text-green-800">
+    <div className="space-y-4 py-2">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex gap-2 flex-wrap">
+          <Badge variant="secondary" className="text-sm px-3 py-1">
+            ファイル: {preview.total_files}
+          </Badge>
+          <Badge variant="secondary" className="text-sm px-3 py-1">
+            レコード: {preview.total_records}
+          </Badge>
+          <Badge className="bg-green-100 text-green-800 text-sm px-3 py-1">
             マッチ: {preview.matched}
           </Badge>
           {preview.unmatched > 0 && (
-            <Badge className="bg-red-100 text-red-800">
+            <Badge className="bg-red-100 text-red-800 text-sm px-3 py-1">
               未マッチ: {preview.unmatched}
             </Badge>
           )}
         </div>
         <div className="flex gap-1">
-          {(["grid", "filename", "record_title", "created_at"] as const).map(
-            (key) => (
-              <Button
-                key={key}
-                variant={sortKey === key ? "default" : "outline"}
-                size="sm"
-                className="h-7 text-xs cursor-pointer"
-                onClick={() => toggleSort(key)}
-              >
-                {{ grid: "位置", filename: "ファイル", record_title: "名前", created_at: "作成日" }[key]}
-                {arrow(key)}
-              </Button>
-            )
-          )}
+          {(["grid", "filename", "record_title", "created_at"] as const).map((key) => (
+            <Button
+              key={key}
+              variant={sortKey === key ? "default" : "outline"}
+              size="sm"
+              className="cursor-pointer"
+              onClick={() => toggleSort(key)}
+            >
+              {{ grid: "位置", filename: "ファイル", record_title: "名前", created_at: "作成日" }[key]}
+              {arrow(key)}
+            </Button>
+          ))}
         </div>
       </div>
 
-      <div className="max-h-80 overflow-y-auto rounded border text-sm">
-        <table className="w-full">
+      <div className="max-h-[50vh] overflow-y-auto rounded border">
+        <table className="w-full text-sm">
           <thead className="sticky top-0 bg-muted">
             <tr>
               <th className="px-3 py-2 text-left font-medium w-16">位置</th>
-              <th className="px-3 py-2 text-left font-medium">ファイル名</th>
-              <th className="px-3 py-2 text-left font-medium">→</th>
+              <th className="px-3 py-2 text-left font-medium">ファイル</th>
+              <th className="px-3 py-2 text-center font-medium w-8">→</th>
               <th className="px-3 py-2 text-left font-medium">マッチ先</th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((item, i) => (
-              <tr
-                key={i}
-                className={item.status === "unmatched" ? "bg-red-50" : ""}
-              >
-                <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">
-                  {item.grid_row >= 0
-                    ? `[${item.grid_row},${item.grid_col}]`
-                    : "-"}
+              <tr key={i} className={`border-t ${item.status === "unmatched" ? "bg-red-50" : "hover:bg-muted/30"}`}>
+                <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                  {item.grid_row >= 0 ? `[${item.grid_row},${item.grid_col}]` : "-"}
                 </td>
-                <td className="px-3 py-1.5 font-mono text-xs">
-                  {item.filename}
-                </td>
-                <td className="px-3 py-1.5 text-muted-foreground">→</td>
-                <td className="px-3 py-1.5">
+                <td className="px-3 py-2 font-mono text-xs">{item.filename}</td>
+                <td className="px-3 py-2 text-center text-muted-foreground">→</td>
+                <td className="px-3 py-2">
                   {item.record_id ? (
                     <span>
-                      <span className="font-mono text-xs text-primary">
-                        {item.record_id}
-                      </span>{" "}
+                      <span className="font-mono text-xs text-primary">{item.record_id}</span>{" "}
                       <span className="text-xs">{item.record_title}</span>
                     </span>
                   ) : (
-                    <span className="text-xs text-destructive">
-                      マッチなし
-                    </span>
+                    <span className="text-xs text-destructive">マッチなし</span>
                   )}
                 </td>
               </tr>
@@ -445,15 +561,12 @@ function PreviewTable({
         </table>
       </div>
 
-      <div className="flex gap-2 justify-end">
-        <Button
-          variant="outline"
-          className="cursor-pointer"
-          onClick={onBack}
-        >
-          戻る
+      <div className="flex gap-3 justify-end">
+        <Button variant="outline" className="cursor-pointer" onClick={onBack}>
+          ← 戻る
         </Button>
         <Button
+          size="lg"
           className="cursor-pointer"
           disabled={preview.matched === 0}
           onClick={onUpload}
@@ -463,114 +576,4 @@ function PreviewTable({
       </div>
     </div>
   );
-}
-
-function naturalSortKey(s: string): string {
-  return s.replace(/(\d+)/g, (m) => m.padStart(10, "0")).toLowerCase();
-}
-
-function GridVisual({
-  rows,
-  cols,
-  corner,
-  files,
-  onCornerClick,
-}: {
-  rows: number;
-  cols: number;
-  corner: Corner;
-  files: File[];
-  onCornerClick: (c: Corner) => void;
-}) {
-  const sortedNames = [...files]
-    .map((f) => f.name)
-    .sort((a, b) => naturalSortKey(a).localeCompare(naturalSortKey(b)));
-
-  // 表示する行・列を決定 (端2行/列 + 省略)
-  const maxShow = 6;
-  const showRows = getVisibleIndices(rows, maxShow);
-  const showCols = getVisibleIndices(cols, maxShow);
-
-  return (
-    <div className="space-y-2">
-      <p className="text-sm font-medium">開始位置をクリック:</p>
-      <div className="overflow-x-auto">
-        <table className="border-collapse text-[9px]">
-          <tbody>
-            {showRows.map((r, ri) => (
-              <tr key={ri}>
-                {r === -1 ? (
-                  <td
-                    colSpan={showCols.length}
-                    className="text-center text-muted-foreground py-0.5"
-                  >
-                    ⋮
-                  </td>
-                ) : (
-                  showCols.map((c, ci) => {
-                    if (c === -1) {
-                      return (
-                        <td
-                          key={ci}
-                          className="text-center text-muted-foreground px-1"
-                        >
-                          ⋯
-                        </td>
-                      );
-                    }
-                    const isCorner =
-                      (r === 0 && c === 0) ||
-                      (r === 0 && c === cols - 1) ||
-                      (r === rows - 1 && c === 0) ||
-                      (r === rows - 1 && c === cols - 1);
-                    const cornerName: Corner | null =
-                      r === 0 && c === 0
-                        ? "top-left"
-                        : r === 0 && c === cols - 1
-                          ? "top-right"
-                          : r === rows - 1 && c === 0
-                            ? "bottom-left"
-                            : r === rows - 1 && c === cols - 1
-                              ? "bottom-right"
-                              : null;
-                    const isSelected = cornerName === corner;
-                    const idx = r * cols + c;
-                    const fname = idx < sortedNames.length ? sortedNames[idx] : "";
-                    const stem =
-                      fname.lastIndexOf(".") > 0
-                        ? fname.slice(0, fname.lastIndexOf("."))
-                        : fname;
-                    const isEdge = r === 0 || r === rows - 1 || c === 0 || c === cols - 1;
-
-                    return (
-                      <td
-                        key={ci}
-                        className={`border px-1 py-0.5 max-w-[80px] truncate
-                          ${isCorner ? "cursor-pointer hover:bg-blue-100 font-bold" : ""}
-                          ${isSelected ? "bg-blue-500 text-white" : isCorner ? "bg-yellow-100" : isEdge ? "bg-muted/30" : "bg-muted/10"}`}
-                        title={fname}
-                        onClick={() => cornerName && onCornerClick(cornerName)}
-                      >
-                        {isEdge ? stem.slice(0, 12) : ""}
-                      </td>
-                    );
-                  })
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function getVisibleIndices(total: number, maxShow: number): number[] {
-  if (total <= maxShow) {
-    return Array.from({ length: total }, (_, i) => i);
-  }
-  const half = Math.floor(maxShow / 2);
-  const head = Array.from({ length: half }, (_, i) => i);
-  const tail = Array.from({ length: half }, (_, i) => total - half + i);
-  return [...head, -1, ...tail]; // -1 = ellipsis
 }
