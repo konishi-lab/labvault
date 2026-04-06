@@ -91,12 +91,15 @@ def list_records(
         tags=tag_list,
         status=status,
         type=type,
-        limit=limit,
-        offset=offset,
+        limit=1000,
+        offset=0,
     )
+    # ルートレコードのみ (サブレコードを除外)
+    root_records = [r for r in records if r.parent_id is None]
+    page = root_records[offset : offset + limit]
     return RecordListResponse(
-        items=[_to_summary(r) for r in records],
-        total=len(records),
+        items=[_to_summary(r) for r in page],
+        total=len(root_records),
     )
 
 
