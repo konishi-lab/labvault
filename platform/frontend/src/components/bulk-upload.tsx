@@ -71,6 +71,8 @@ export function BulkUploadButton({
   const [children, setChildren] = useState<RecordSummary[]>([]);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadCurrent, setUploadCurrent] = useState("");
+  const [uploadEta, setUploadEta] = useState("");
+  const uploadStartRef = useRef(0);
 
   useEffect(() => {
     if (open) {
@@ -94,6 +96,7 @@ export function BulkUploadButton({
     setLoading(false);
     setUploadProgress(0);
     setUploadCurrent("");
+    setUploadEta("");
   };
 
   const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -135,6 +138,8 @@ export function BulkUploadButton({
     setStep("uploading");
     setUploadProgress(0);
     setUploadCurrent("ファイルを送信中...");
+    setUploadEta("");
+    uploadStartRef.current = Date.now();
 
     const formData = new FormData();
     for (const file of files) formData.append("files", file);
@@ -187,6 +192,19 @@ export function BulkUploadButton({
             setUploadCurrent(
               `${data.current} / ${data.total}: ${data.filename} ${data.status === "ok" ? "✓" : data.status === "error" ? "✗" : "⏭"}`
             );
+            // ETA 計算
+            const elapsed = (Date.now() - uploadStartRef.current) / 1000;
+            if (data.current > 0 && data.current < data.total) {
+              const perFile = elapsed / data.current;
+              const remaining = Math.round(perFile * (data.total - data.current));
+              if (remaining >= 60) {
+                setUploadEta(`残り約 ${Math.floor(remaining / 60)}分${remaining % 60}秒`);
+              } else {
+                setUploadEta(`残り約 ${remaining}秒`);
+              }
+            } else {
+              setUploadEta("");
+            }
           } else if (eventType === "done") {
             setUploadProgress(100);
             setResult({
@@ -375,9 +393,10 @@ export function BulkUploadButton({
                   style={{ width: `${uploadProgress}%` }}
                 />
               </div>
-              <p className="text-center text-sm font-mono text-muted-foreground">
-                {uploadProgress}%
-              </p>
+              <div className="flex justify-center gap-4 text-sm text-muted-foreground">
+                <span className="font-mono">{uploadProgress}%</span>
+                {uploadEta && <span>{uploadEta}</span>}
+              </div>
             </div>
           )}
 
