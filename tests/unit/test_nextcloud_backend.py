@@ -20,7 +20,7 @@ def storage():
             url="https://nc.example.com",
             user="testuser",
             password="testpass",
-            group_folder="24UTARIM004",
+            group_folder="large/24UTARIM004",
         )
         # _nc を直接セットして遅延初期化をバイパス
         s._nc = mock_nc
@@ -33,10 +33,10 @@ class TestPathConversion:
             url="https://nc.example.com",
             user="u",
             password="p",
-            group_folder="24UTARIM004",
+            group_folder="large/24UTARIM004",
         )
         assert s._full_path("team/AB3F/data.csv") == (
-            "24UTARIM004/labvault/team/AB3F/data.csv"
+            "large/24UTARIM004/labvault/team/AB3F/data.csv"
         )
 
     def test_base_path(self):
@@ -54,14 +54,14 @@ class TestUpload:
         storage.upload("team/AB3F/data.csv", b"hello")
 
         storage._nc.files.makedirs.assert_called_once_with(
-            "24UTARIM004/labvault/team/AB3F", exist_ok=True
+            "large/24UTARIM004/labvault/team/AB3F", exist_ok=True
         )
 
     def test_upload_calls_nc_upload(self, storage):
         storage.upload("team/AB3F/data.csv", b"hello")
 
         storage._nc.files.upload.assert_called_once_with(
-            "24UTARIM004/labvault/team/AB3F/data.csv", b"hello"
+            "large/24UTARIM004/labvault/team/AB3F/data.csv", b"hello"
         )
 
     def test_upload_returns_sdk_path(self, storage):
@@ -77,7 +77,7 @@ class TestDownload:
 
         assert result == b"file content"
         storage._nc.files.download.assert_called_once_with(
-            "24UTARIM004/labvault/team/AB3F/data.csv"
+            "large/24UTARIM004/labvault/team/AB3F/data.csv"
         )
 
     def test_download_raises_on_bad_type(self, storage):
@@ -92,7 +92,7 @@ class TestDelete:
         storage.delete("team/AB3F/data.csv")
 
         storage._nc.files.delete.assert_called_once_with(
-            "24UTARIM004/labvault/team/AB3F/data.csv",
+            "large/24UTARIM004/labvault/team/AB3F/data.csv",
             not_fail=True,
         )
 
@@ -112,15 +112,15 @@ class TestListFiles:
         storage._nc.files.listdir.return_value = [
             SimpleNamespace(
                 is_dir=False,
-                user_path="/24UTARIM004/labvault/team/AB3F/a.csv",
+                user_path="/large/24UTARIM004/labvault/team/AB3F/a.csv",
             ),
             SimpleNamespace(
                 is_dir=False,
-                user_path="/24UTARIM004/labvault/team/AB3F/b.csv",
+                user_path="/large/24UTARIM004/labvault/team/AB3F/b.csv",
             ),
             SimpleNamespace(
                 is_dir=True,
-                user_path="/24UTARIM004/labvault/team/AB3F/subdir",
+                user_path="/large/24UTARIM004/labvault/team/AB3F/subdir",
             ),
         ]
 
