@@ -27,6 +27,42 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("ja-JP");
 }
 
+function fileExt(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot + 1).toUpperCase() : "FILE";
+}
+
+function fileIcon(name: string): string {
+  const ext = fileExt(name).toLowerCase();
+  const icons: Record<string, string> = {
+    vk4: "\u{1F52C}", // 🔬 microscope
+    csv: "\u{1F4CA}", // 📊
+    json: "\u{1F4C4}", // 📄
+    txt: "\u{1F4DD}", // 📝
+    npy: "\u{1F522}", // 🔢
+    png: "\u{1F5BC}", // 🖼
+    jpg: "\u{1F5BC}",
+    tif: "\u{1F5BC}",
+    tiff: "\u{1F5BC}",
+    ras: "\u{1F4C8}", // 📈
+  };
+  return icons[ext] || "\u{1F4CE}"; // 📎 default
+}
+
+function fileTypeBadge(name: string): string {
+  const ext = fileExt(name).toLowerCase();
+  const styles: Record<string, string> = {
+    vk4: "bg-purple-100 text-purple-800 border-purple-200",
+    csv: "bg-green-100 text-green-800 border-green-200",
+    json: "bg-blue-100 text-blue-800 border-blue-200",
+    npy: "bg-orange-100 text-orange-800 border-orange-200",
+    png: "bg-pink-100 text-pink-800 border-pink-200",
+    jpg: "bg-pink-100 text-pink-800 border-pink-200",
+    ras: "bg-indigo-100 text-indigo-800 border-indigo-200",
+  };
+  return styles[ext] || "";
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -181,16 +217,29 @@ export default function RecordDetailPage() {
         {record.files.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">ファイル</CardTitle>
+              <CardTitle className="text-base">
+                ファイル ({record.files.length})
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               {record.files.map((file, i) => (
                 <div key={file.name}>
                   {i > 0 && <Separator className="mb-2" />}
-                  <div className="flex justify-between">
-                    <span className="font-mono">{file.name}</span>
-                    <span className="text-muted-foreground">
-                      {formatBytes(file.size_bytes)}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="shrink-0">{fileIcon(file.name)}</span>
+                      <span className="font-mono truncate">{file.name}</span>
+                      <Badge
+                        variant="outline"
+                        className={`shrink-0 text-xs ${fileTypeBadge(file.name)}`}
+                      >
+                        {fileExt(file.name)}
+                      </Badge>
+                    </div>
+                    <span className="shrink-0 text-muted-foreground">
+                      {file.size_bytes > 0
+                        ? formatBytes(file.size_bytes)
+                        : ""}
                     </span>
                   </div>
                 </div>
