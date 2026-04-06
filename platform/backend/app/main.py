@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .dependencies import close_lab, get_lab
-from .routers import files, preview, records, search
+from .routers import bulk_upload, files, preview, records, search
 from .schemas import HealthResponse
 
 
@@ -36,6 +36,7 @@ app.add_middleware(
 )
 
 app.include_router(records.router)
+app.include_router(bulk_upload.router)
 app.include_router(preview.router)
 app.include_router(files.router)
 app.include_router(search.router)

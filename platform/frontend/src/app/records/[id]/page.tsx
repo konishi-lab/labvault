@@ -15,6 +15,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchRecord, fetchChildren } from "@/lib/api";
 import type { RecordDetail, RecordSummary } from "@/lib/api";
+import { BulkUploadButton } from "@/components/bulk-upload";
 
 const statusColor: Record<string, string> = {
   running: "bg-blue-100 text-blue-800",
@@ -321,7 +322,15 @@ export default function RecordDetailPage() {
 
         {/* サブレコード */}
         {children.length > 0 && (
-          <ChildrenSection children={children} />
+          <ChildrenSection
+            recordId={id}
+            children={children}
+            onRefresh={() => {
+              fetchChildren(id)
+                .then(setChildren)
+                .catch(() => {});
+            }}
+          />
         )}
       </div>
     </div>
@@ -331,7 +340,15 @@ export default function RecordDetailPage() {
 type SortKey = "title" | "created_at";
 type SortDir = "asc" | "desc";
 
-function ChildrenSection({ children }: { children: RecordSummary[] }) {
+function ChildrenSection({
+  recordId,
+  children,
+  onRefresh,
+}: {
+  recordId: string;
+  children: RecordSummary[];
+  onRefresh: () => void;
+}) {
   const [sortKey, setSortKey] = useState<SortKey>("title");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
@@ -361,23 +378,29 @@ function ChildrenSection({ children }: { children: RecordSummary[] }) {
                 <CardTitle className="text-base">
                   サブレコード ({children.length})
                 </CardTitle>
-                <div className="flex gap-1">
-                  <Button
-                    variant={sortKey === "title" ? "default" : "outline"}
-                    size="sm"
-                    className="h-7 text-xs cursor-pointer"
-                    onClick={() => toggleSort("title")}
-                  >
-                    名前{arrow("title")}
-                  </Button>
-                  <Button
-                    variant={sortKey === "created_at" ? "default" : "outline"}
-                    size="sm"
-                    className="h-7 text-xs cursor-pointer"
-                    onClick={() => toggleSort("created_at")}
-                  >
-                    作成日{arrow("created_at")}
-                  </Button>
+                <div className="flex gap-2">
+                  <BulkUploadButton
+                    recordId={recordId}
+                    onComplete={onRefresh}
+                  />
+                  <div className="flex gap-1">
+                    <Button
+                      variant={sortKey === "title" ? "default" : "outline"}
+                      size="sm"
+                      className="h-7 text-xs cursor-pointer"
+                      onClick={() => toggleSort("title")}
+                    >
+                      名前{arrow("title")}
+                    </Button>
+                    <Button
+                      variant={sortKey === "created_at" ? "default" : "outline"}
+                      size="sm"
+                      className="h-7 text-xs cursor-pointer"
+                      onClick={() => toggleSort("created_at")}
+                    >
+                      作成日{arrow("created_at")}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </CardHeader>
