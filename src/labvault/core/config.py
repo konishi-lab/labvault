@@ -33,4 +33,6 @@ class Settings(BaseSettings):
     )
     auto_sync: bool = True
     sync_interval_sec: float = 30.0
+    buffer_cleanup: bool = True
+    buffer_retention_days: int = 7
     auto_log: bool = True

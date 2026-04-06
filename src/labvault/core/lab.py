@@ -313,6 +313,8 @@ class Lab:
             metadata_backend=self._metadata,
             storage_backend=self._storage,
             interval_sec=self._settings.sync_interval_sec,
+            cleanup=self._settings.buffer_cleanup,
+            retention_days=self._settings.buffer_retention_days,
         )
         self._sync_manager.start()
 

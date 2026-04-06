@@ -32,12 +32,16 @@ class SyncManager:
         *,
         interval_sec: float = 30.0,
         batch_size: int = 10,
+        cleanup: bool = True,
+        retention_days: int = 7,
     ) -> None:
         self._buffer = buffer_db
         self._metadata = metadata_backend
         self._storage = storage_backend
         self._interval = interval_sec
         self._batch_size = batch_size
+        self._cleanup = cleanup
+        self._retention_days = retention_days
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -108,6 +112,8 @@ class SyncManager:
         try:
             self._sync_records()
             self._sync_cell_logs()
+            if self._cleanup:
+                self._buffer.cleanup_synced(retention_days=self._retention_days)
             self._last_error = None
             self._last_sync_time = time.time()
         except Exception as e:
