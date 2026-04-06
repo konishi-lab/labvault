@@ -381,6 +381,7 @@ function ChildrenSection({
                 <div className="flex gap-2">
                   <BulkUploadButton
                     recordId={recordId}
+                    childCount={children.length}
                     onComplete={onRefresh}
                   />
                   <div className="flex gap-1">
