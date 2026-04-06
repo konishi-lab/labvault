@@ -459,9 +459,10 @@ function GridVisual({
   files: File[];
   onCornerClick: (c: Corner) => void;
 }) {
-  // ファイル名をソート
+  // ファイル名からフォルダパスを除去してソート
+  const basename = (s: string) => s.split("/").pop()?.split("\\").pop() || s;
   const sortedFileNames = [...files]
-    .map((f) => f.name)
+    .map((f) => basename(f.name))
     .sort((a, b) => naturalSortKey(a).localeCompare(naturalSortKey(b)));
 
   // グリッド走査順でファイルをセルにマップ

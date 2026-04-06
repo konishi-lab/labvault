@@ -117,8 +117,9 @@ async def preview_matching(
 
     children = _get_children_sorted(lab, record_id)
 
-    # ファイルを自然順ソート
-    sorted_files = sorted(filenames, key=_natural_sort_key)
+    # ファイル名からフォルダパスを除去して自然順ソート
+    basenames = [fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] for fn in filenames]
+    sorted_files = sorted(basenames, key=_natural_sort_key)
 
     # グリッド走査順序を生成
     positions = generate_grid_mapping(
@@ -194,15 +195,19 @@ async def bulk_upload(
 
     positions = generate_grid_mapping(rows, cols, start_position, direction)
 
-    # ファイルを自然順ソート
-    sorted_files = sorted(files, key=lambda f: _natural_sort_key(f.filename or ""))
+    # ファイル名からフォルダパスを除去して自然順ソート
+    def _basename(f: UploadFile) -> str:
+        name = f.filename or "untitled"
+        return name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+
+    sorted_files = sorted(files, key=lambda f: _natural_sort_key(_basename(f)))
 
     result = BulkUploadResult(
         total=len(sorted_files), matched=0, uploaded=0, errors=[]
     )
 
     for file_idx, file in enumerate(sorted_files):
-        filename = file.filename or "untitled"
+        filename = _basename(file)
         data = await file.read()
 
         if len(data) == 0:
