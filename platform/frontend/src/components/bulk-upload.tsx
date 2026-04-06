@@ -281,7 +281,9 @@ export function BulkUploadButton({
                   rows={rows}
                   cols={cols}
                   corner={corner}
+                  direction={direction}
                   children={children}
+                  files={files}
                   onCornerClick={setCorner}
                 />
               </div>
@@ -355,80 +357,160 @@ export function BulkUploadButton({
 
 /* ---- Grid Visual ---- */
 
+function generateGridPositions(
+  rows: number, cols: number, startPos: Corner, dir: Direction
+): { row: number; col: number }[] {
+  const rowIdx = Array.from({ length: rows }, (_, i) => i);
+  const colIdx = Array.from({ length: cols }, (_, i) => i);
+  if (startPos.includes("bottom")) rowIdx.reverse();
+  if (startPos.includes("right")) colIdx.reverse();
+
+  const positions: { row: number; col: number }[] = [];
+  if (dir === "row-first") {
+    for (const r of rowIdx) for (const c of colIdx) positions.push({ row: r, col: c });
+  } else {
+    for (const c of colIdx) for (const r of rowIdx) positions.push({ row: r, col: c });
+  }
+  return positions;
+}
+
 function GridVisual({
   rows,
   cols,
   corner,
+  direction,
   children,
+  files,
   onCornerClick,
 }: {
   rows: number;
   cols: number;
   corner: Corner;
+  direction: Direction;
   children: RecordSummary[];
+  files: File[];
   onCornerClick: (c: Corner) => void;
 }) {
-  const showRows = getVisibleIndices(rows, 8);
-  const showCols = getVisibleIndices(cols, 8);
+  // ファイル名をソート
+  const sortedFileNames = [...files]
+    .map((f) => f.name)
+    .sort((a, b) => naturalSortKey(a).localeCompare(naturalSortKey(b)));
+
+  // グリッド走査順でファイルをセルにマップ
+  const positions = generateGridPositions(rows, cols, corner, direction);
+  const fileAtCell: Record<string, string> = {};
+  positions.forEach((pos, i) => {
+    if (i < sortedFileNames.length) {
+      fileAtCell[`${pos.row}-${pos.col}`] = sortedFileNames[i];
+    }
+  });
+
+  const showRows = getVisibleIndices(rows, 6);
+  const showCols = getVisibleIndices(cols, 6);
+
+  const stem = (name: string) => {
+    const dot = name.lastIndexOf(".");
+    return dot > 0 ? name.slice(0, dot) : name;
+  };
 
   return (
-    <div className="overflow-x-auto">
-      <table className="border-collapse">
+    <div className="overflow-x-auto rounded-lg border">
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="bg-muted/50">
+            <th className="border-r border-b p-1.5 text-muted-foreground font-normal w-8"></th>
+            {showCols.map((c, ci) => (
+              <th key={ci} className="border-b p-1.5 text-center text-muted-foreground font-normal">
+                {c === -1 ? "⋯" : `列${c}`}
+              </th>
+            ))}
+          </tr>
+        </thead>
         <tbody>
           {showRows.map((r, ri) => (
             <tr key={ri}>
               {r === -1 ? (
-                <td
-                  colSpan={showCols.length}
-                  className="text-center text-muted-foreground py-1 text-xs"
-                >
-                  ⋮ ({rows - 8} 行省略)
-                </td>
+                <>
+                  <td className="border-r p-1.5 text-center text-muted-foreground">⋮</td>
+                  {showCols.map((_, ci) => (
+                    <td key={ci} className="p-1.5 text-center text-muted-foreground">⋮</td>
+                  ))}
+                </>
               ) : (
-                showCols.map((c, ci) => {
-                  if (c === -1) {
+                <>
+                  <td className="border-r p-1.5 text-center text-muted-foreground bg-muted/50 font-normal">
+                    行{r}
+                  </td>
+                  {showCols.map((c, ci) => {
+                    if (c === -1) {
+                      return (
+                        <td key={ci} className="p-1.5 text-center text-muted-foreground">⋯</td>
+                      );
+                    }
+                    const idx = r * cols + c;
+                    const child = idx < children.length ? children[idx] : null;
+                    const fileName = fileAtCell[`${r}-${c}`] || null;
+                    const isCorner =
+                      (r === 0 && c === 0) ||
+                      (r === 0 && c === cols - 1) ||
+                      (r === rows - 1 && c === 0) ||
+                      (r === rows - 1 && c === cols - 1);
+                    const cornerName: Corner | null =
+                      r === 0 && c === 0 ? "top-left" :
+                      r === 0 && c === cols - 1 ? "top-right" :
+                      r === rows - 1 && c === 0 ? "bottom-left" :
+                      r === rows - 1 && c === cols - 1 ? "bottom-right" : null;
+                    const isSelected = cornerName === corner;
+
                     return (
-                      <td key={ci} className="text-center text-muted-foreground px-1 text-xs">
-                        ⋯
+                      <td
+                        key={ci}
+                        className={`border p-1.5 align-top transition-colors
+                          ${isCorner ? "cursor-pointer" : ""}
+                          ${isSelected
+                            ? "bg-blue-500 text-white"
+                            : isCorner
+                              ? "bg-amber-50 hover:bg-amber-100"
+                              : "bg-white hover:bg-muted/30"
+                          }`}
+                        style={{ minWidth: 120, maxWidth: 160 }}
+                        title={[
+                          `[${r},${c}]`,
+                          child && `レコード: ${child.title}`,
+                          fileName && `ファイル: ${fileName}`,
+                        ].filter(Boolean).join("\n")}
+                        onClick={() => cornerName && onCornerClick(cornerName)}
+                      >
+                        {isCorner && (
+                          <div className={`text-[10px] font-bold mb-0.5 ${isSelected ? "text-white" : "text-amber-600"}`}>
+                            ★ 開始
+                          </div>
+                        )}
+                        {child ? (
+                          <div className="truncate">
+                            <div className={`font-mono text-[10px] ${isSelected ? "text-blue-100" : "text-muted-foreground"}`}>
+                              {child.id}
+                            </div>
+                            <div className="truncate font-medium text-[11px] leading-tight">
+                              {child.title}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={`text-[10px] ${isSelected ? "text-blue-200" : "text-muted-foreground"}`}>
+                            (空)
+                          </div>
+                        )}
+                        {fileName && (
+                          <div className={`mt-1 pt-1 border-t truncate text-[10px] ${
+                            isSelected ? "border-blue-400 text-blue-100" : "border-dashed text-blue-600"
+                          }`}>
+                            ↑ {stem(fileName)}
+                          </div>
+                        )}
                       </td>
                     );
-                  }
-                  const idx = r * cols + c;
-                  const child = idx < children.length ? children[idx] : null;
-                  const isCorner =
-                    (r === 0 && c === 0) ||
-                    (r === 0 && c === cols - 1) ||
-                    (r === rows - 1 && c === 0) ||
-                    (r === rows - 1 && c === cols - 1);
-                  const cornerName: Corner | null =
-                    r === 0 && c === 0 ? "top-left" :
-                    r === 0 && c === cols - 1 ? "top-right" :
-                    r === rows - 1 && c === 0 ? "bottom-left" :
-                    r === rows - 1 && c === cols - 1 ? "bottom-right" : null;
-                  const isSelected = cornerName === corner;
-
-                  return (
-                    <td
-                      key={ci}
-                      className={`border text-[10px] leading-tight p-1 min-w-[70px] max-w-[100px] truncate align-top
-                        ${isCorner ? "cursor-pointer hover:ring-2 hover:ring-blue-400" : ""}
-                        ${isSelected ? "bg-blue-500 text-white ring-2 ring-blue-600" : isCorner ? "bg-yellow-50 font-semibold" : "bg-white"}`}
-                      title={child ? `[${r},${c}] ${child.id}: ${child.title}` : `[${r},${c}]`}
-                      onClick={() => cornerName && onCornerClick(cornerName)}
-                    >
-                      {isCorner && <span className="text-xs">★ </span>}
-                      {child ? (
-                        <>
-                          <span className="text-muted-foreground">{child.id}</span>
-                          <br />
-                          <span>{child.title}</span>
-                        </>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </td>
-                  );
-                })
+                  })}
+                </>
               )}
             </tr>
           ))}
