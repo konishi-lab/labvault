@@ -95,5 +95,9 @@ module = [
     "ipykernel.connect",
     "IPython",
     "nc_py_api",
+    "google.cloud",
+    "google.cloud.firestore",
+    "google.cloud.firestore_v1",
+    "google.cloud.firestore_v1.base_query",
 ]
 ignore_missing_imports = true
