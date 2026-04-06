@@ -6,8 +6,6 @@ import json
 import statistics
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-
 from labvault import Lab
 
 _INSTRUCTIONS = """\
@@ -32,8 +30,10 @@ labvault MCP サーバー: 実験データの検索・閲覧・比較ツール�
 """
 
 
-def create_server(lab: Lab | None = None) -> FastMCP:
+def create_server(lab: Lab | None = None) -> Any:
     """MCP サーバーを作成する。"""
+    from mcp.server.fastmcp import FastMCP
+
     mcp = FastMCP("labvault", instructions=_INSTRUCTIONS)
     _lab = lab
 

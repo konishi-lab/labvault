@@ -495,9 +495,7 @@ class Record:
         for ref in self._data_refs:
             if ref.name == name:
                 if self._lab and self._lab._storage:
-                    result: bytes = self._lab._storage.download(
-                        ref.nextcloud_path
-                    )
+                    result: bytes = self._lab._storage.download(ref.nextcloud_path)
                     return result
                 msg = "No storage backend available"
                 raise RuntimeError(msg)

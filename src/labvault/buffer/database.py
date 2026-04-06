@@ -92,6 +92,7 @@ class BufferDatabase:
             self._conn = sqlite3.connect(
                 str(self._db_path),
                 timeout=5.0,
+                check_same_thread=False,
             )
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA busy_timeout = 5000")

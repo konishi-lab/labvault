@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from labvault.backends.memory import (
+mcp = pytest.importorskip("mcp", reason="mcp package not installed")
+
+from labvault.backends.memory import (  # noqa: E402
     InMemoryMetadataBackend,
     InMemorySearchBackend,
     InMemoryStorageBackend,
 )
-from labvault.core.lab import Lab
-from labvault.mcp.server import create_server
+from labvault.core.lab import Lab  # noqa: E402
+from labvault.mcp.server import create_server  # noqa: E402
 
 
 @pytest.fixture()
