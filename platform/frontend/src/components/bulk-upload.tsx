@@ -9,15 +9,32 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-interface BulkUploadResult {
+interface MatchItem {
+  filename: string;
+  record_id: string | null;
+  record_title: string | null;
+  status: string;
+}
+
+interface MatchPreview {
+  total: number;
+  matched: number;
+  unmatched: number;
+  items: MatchItem[];
+}
+
+interface UploadResult {
   total: number;
   matched: number;
   uploaded: number;
   errors: string[];
 }
+
+type Step = "select" | "preview" | "uploading" | "done";
 
 export function BulkUploadButton({
   recordId,
@@ -28,20 +45,50 @@ export function BulkUploadButton({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
+  const [step, setStep] = useState<Step>("select");
   const [files, setFiles] = useState<File[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [result, setResult] = useState<BulkUploadResult | null>(null);
+  const [preview, setPreview] = useState<MatchPreview | null>(null);
+  const [result, setResult] = useState<UploadResult | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = Array.from(e.target.files || []);
-    setFiles(selected);
+  const reset = () => {
+    setStep("select");
+    setFiles([]);
+    setPreview(null);
     setResult(null);
+    setLoading(false);
+  };
+
+  const handleSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(e.target.files || []);
+    if (selected.length === 0) return;
+    setFiles(selected);
+    setLoading(true);
+
+    // マッチングプレビューを取得
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/records/${recordId}/bulk-upload/preview`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(selected.map((f) => f.name)),
+        }
+      );
+      if (!res.ok) throw new Error(`Preview failed: ${res.status}`);
+      const data: MatchPreview = await res.json();
+      setPreview(data);
+      setStep("preview");
+    } catch (err) {
+      setPreview(null);
+      setStep("preview");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleUpload = async () => {
-    if (files.length === 0) return;
-    setUploading(true);
-    setResult(null);
+    setStep("uploading");
 
     const formData = new FormData();
     for (const file of files) {
@@ -54,8 +101,9 @@ export function BulkUploadButton({
         { method: "POST", body: formData }
       );
       if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-      const data: BulkUploadResult = await res.json();
+      const data: UploadResult = await res.json();
       setResult(data);
+      setStep("done");
       if (data.uploaded > 0) onComplete?.();
     } catch (err) {
       setResult({
@@ -64,8 +112,7 @@ export function BulkUploadButton({
         uploaded: 0,
         errors: [(err as Error).message],
       });
-    } finally {
-      setUploading(false);
+      setStep("done");
     }
   };
 
@@ -75,83 +122,175 @@ export function BulkUploadButton({
         variant="outline"
         size="sm"
         className="cursor-pointer"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          reset();
+          setOpen(true);
+        }}
       >
         一括アップロード
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>一括アップロード</DialogTitle>
-        </DialogHeader>
-        <p className="text-sm text-muted-foreground">
-          フォルダ内のファイルをサブレコードに自動マッチングしてアップロードします。
-          ファイル名の番号 (例: _1, _38) でサブレコードの順番にマッチします。
-        </p>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>一括アップロード</DialogTitle>
+          </DialogHeader>
 
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={handleSelect}
-          /* @ts-expect-error webkitdirectory is not in types */
-          webkitdirectory=""
-        />
+          {/* Step 1: フォルダ選択 */}
+          {step === "select" && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                フォルダを選択すると、ファイル名でサブレコードに自動マッチングします。
+              </p>
+              <input
+                ref={inputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleSelect}
+                /* @ts-expect-error webkitdirectory */
+                webkitdirectory=""
+              />
+              <Button
+                variant="outline"
+                className="w-full cursor-pointer"
+                disabled={loading}
+                onClick={() => inputRef.current?.click()}
+              >
+                {loading ? "マッチング確認中..." : "フォルダを選択"}
+              </Button>
+            </div>
+          )}
 
-        <div className="space-y-3">
-          <Button
-            variant="outline"
-            className="w-full cursor-pointer"
-            onClick={() => inputRef.current?.click()}
-          >
-            フォルダを選択
-          </Button>
-
-          {files.length > 0 && (
-            <div className="rounded border p-3 text-sm">
-              <p className="font-medium">{files.length} ファイル選択済み</p>
-              <div className="mt-1 max-h-32 overflow-y-auto text-xs text-muted-foreground">
-                {files.slice(0, 10).map((f) => (
-                  <div key={f.name}>{f.name}</div>
-                ))}
-                {files.length > 10 && (
-                  <div>... 他 {files.length - 10} ファイル</div>
+          {/* Step 2: マッチング確認 */}
+          {step === "preview" && preview && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <Badge variant="secondary">合計: {preview.total}</Badge>
+                <Badge
+                  variant="secondary"
+                  className="bg-green-100 text-green-800"
+                >
+                  マッチ: {preview.matched}
+                </Badge>
+                {preview.unmatched > 0 && (
+                  <Badge
+                    variant="secondary"
+                    className="bg-red-100 text-red-800"
+                  >
+                    未マッチ: {preview.unmatched}
+                  </Badge>
                 )}
+              </div>
+
+              <div className="max-h-80 overflow-y-auto rounded border text-sm">
+                <table className="w-full">
+                  <thead className="sticky top-0 bg-muted">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">
+                        ファイル名
+                      </th>
+                      <th className="px-3 py-2 text-left font-medium">→</th>
+                      <th className="px-3 py-2 text-left font-medium">
+                        マッチ先
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.items.map((item, i) => (
+                      <tr
+                        key={i}
+                        className={
+                          item.status === "unmatched" ? "bg-red-50" : ""
+                        }
+                      >
+                        <td className="px-3 py-1.5 font-mono text-xs">
+                          {item.filename}
+                        </td>
+                        <td className="px-3 py-1.5 text-muted-foreground">
+                          →
+                        </td>
+                        <td className="px-3 py-1.5">
+                          {item.record_id ? (
+                            <span>
+                              <span className="font-mono text-xs text-primary">
+                                {item.record_id}
+                              </span>{" "}
+                              <span className="text-xs">
+                                {item.record_title}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="text-xs text-destructive">
+                              マッチなし
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  className="cursor-pointer"
+                  onClick={reset}
+                >
+                  やり直す
+                </Button>
+                <Button
+                  className="cursor-pointer"
+                  disabled={preview.matched === 0}
+                  onClick={handleUpload}
+                >
+                  {preview.matched} 件をアップロード
+                </Button>
               </div>
             </div>
           )}
 
-          <Button
-            className="w-full cursor-pointer"
-            disabled={files.length === 0 || uploading}
-            onClick={handleUpload}
-          >
-            {uploading ? "アップロード中..." : "アップロード開始"}
-          </Button>
+          {/* Step 3: アップロード中 */}
+          {step === "uploading" && (
+            <div className="py-8 text-center text-muted-foreground">
+              アップロード中...
+            </div>
+          )}
 
-          {result && (
-            <div className="rounded border p-3 text-sm space-y-1">
+          {/* Step 4: 完了 */}
+          {step === "done" && result && (
+            <div className="space-y-3">
               <div className="flex gap-2">
                 <Badge variant="secondary">合計: {result.total}</Badge>
-                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                <Badge
+                  variant="secondary"
+                  className="bg-blue-100 text-blue-800"
+                >
                   マッチ: {result.matched}
                 </Badge>
-                <Badge variant="secondary" className="bg-green-100 text-green-800">
+                <Badge
+                  variant="secondary"
+                  className="bg-green-100 text-green-800"
+                >
                   成功: {result.uploaded}
                 </Badge>
               </div>
               {result.errors.length > 0 && (
-                <div className="mt-2 max-h-32 overflow-y-auto text-xs text-destructive">
+                <div className="max-h-32 overflow-y-auto rounded border p-2 text-xs text-destructive">
                   {result.errors.map((e, i) => (
                     <div key={i}>{e}</div>
                   ))}
                 </div>
               )}
+              <Button
+                className="w-full cursor-pointer"
+                onClick={() => setOpen(false)}
+              >
+                閉じる
+              </Button>
             </div>
           )}
-        </div>
-      </DialogContent>
+        </DialogContent>
       </Dialog>
     </>
   );

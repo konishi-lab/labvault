@@ -20,11 +20,76 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/records/{record_id}/bulk-upload", tags=["bulk"])
 
 
+class MatchPreviewItem(BaseModel):
+    filename: str
+    record_id: str | None
+    record_title: str | None
+    status: str  # "matched" | "unmatched"
+
+
+class MatchPreviewResult(BaseModel):
+    total: int
+    matched: int
+    unmatched: int
+    items: list[MatchPreviewItem]
+
+
 class BulkUploadResult(BaseModel):
     total: int
     matched: int
     uploaded: int
     errors: list[str]
+
+
+@router.post("/preview", response_model=MatchPreviewResult)
+async def preview_matching(
+    record_id: str,
+    filenames: list[str],
+    lab: Lab = Depends(get_lab),
+) -> MatchPreviewResult:
+    """ファイル名とサブレコードのマッチングをプレビューする。"""
+    try:
+        lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    rows = lab._metadata.list_records(
+        lab._team, parent_id=record_id, limit=2000
+    )
+    children = [Record._from_dict(r, lab=lab) for r in rows]
+    children_by_title: dict[str, Record] = {c.title: c for c in children}
+    children_sorted = sorted(children, key=lambda c: c.title)
+
+    items: list[MatchPreviewItem] = []
+    matched = 0
+    for fn in filenames:
+        target = _find_matching_child(fn, children_by_title, children_sorted)
+        if target:
+            items.append(
+                MatchPreviewItem(
+                    filename=fn,
+                    record_id=target.id,
+                    record_title=target.title,
+                    status="matched",
+                )
+            )
+            matched += 1
+        else:
+            items.append(
+                MatchPreviewItem(
+                    filename=fn,
+                    record_id=None,
+                    record_title=None,
+                    status="unmatched",
+                )
+            )
+
+    return MatchPreviewResult(
+        total=len(filenames),
+        matched=matched,
+        unmatched=len(filenames) - matched,
+        items=items,
+    )
 
 
 @router.post("", response_model=BulkUploadResult)
