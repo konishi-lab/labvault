@@ -99,6 +99,9 @@ module = [
     "IPython",
     "nc_py_api",
     "google.cloud",
+    "google.auth",
+    "google.auth.transport",
+    "google.auth.transport.requests",
     "google.cloud.firestore",
     "google.cloud.firestore_v1",
     "google.cloud.firestore_v1.base_query",
@@ -107,3 +110,4 @@ module = [
     "mcp.server.fastmcp",
 ]
 ignore_missing_imports = true
+allow_untyped_decorators = true
