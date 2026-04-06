@@ -24,6 +24,7 @@ class MatchPreviewItem(BaseModel):
     filename: str
     record_id: str | None
     record_title: str | None
+    record_created_at: str | None
     status: str  # "matched" | "unmatched"
 
 
@@ -70,6 +71,7 @@ async def preview_matching(
                     filename=fn,
                     record_id=target.id,
                     record_title=target.title,
+                    record_created_at=target.created_at.isoformat(),
                     status="matched",
                 )
             )
@@ -80,6 +82,7 @@ async def preview_matching(
                     filename=fn,
                     record_id=None,
                     record_title=None,
+                    record_created_at=None,
                     status="unmatched",
                 )
             )

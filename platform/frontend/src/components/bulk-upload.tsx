@@ -17,6 +17,7 @@ interface MatchItem {
   filename: string;
   record_id: string | null;
   record_title: string | null;
+  record_created_at: string | null;
   status: string;
 }
 
@@ -216,7 +217,7 @@ export function BulkUploadButton({
   );
 }
 
-type PreviewSortKey = "filename" | "record_title";
+type PreviewSortKey = "filename" | "record_title" | "created_at";
 type PreviewSortDir = "asc" | "desc";
 
 function PreviewTable({
@@ -237,6 +238,9 @@ function PreviewTable({
     if (sortKey === "filename") {
       va = a.filename;
       vb = b.filename;
+    } else if (sortKey === "created_at") {
+      va = a.record_created_at || "\uffff";
+      vb = b.record_created_at || "\uffff";
     } else {
       va = a.record_title || "\uffff";
       vb = b.record_title || "\uffff";
@@ -293,6 +297,14 @@ function PreviewTable({
             onClick={() => toggleSort("record_title")}
           >
             マッチ先{arrow("record_title")}
+          </Button>
+          <Button
+            variant={sortKey === "created_at" ? "default" : "outline"}
+            size="sm"
+            className="h-7 text-xs cursor-pointer"
+            onClick={() => toggleSort("created_at")}
+          >
+            作成日{arrow("created_at")}
           </Button>
         </div>
       </div>
