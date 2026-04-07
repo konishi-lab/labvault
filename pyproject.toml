@@ -99,6 +99,8 @@ module = [
     "ipykernel.connect",
     "IPython",
     "nc_py_api",
+    "PIL",
+    "PIL.*",
     "google",
     "google.*",
     "mcp",
