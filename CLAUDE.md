@@ -105,7 +105,7 @@ examples/          # すぐ試せるサンプル
 ## 重要な規約
 
 - **パッケージ名**: `labvault`（import: `from labvault import Lab`）
-- **ID**: Crockford's Base32（4文字、大文字のみ。例: "AB3F"）
+- **ID**: Crockford's Base32（6文字、大文字のみ。例: "AB3F7K"）※既存の4文字IDとの互換あり
 - **Backend Protocol**: **全sync**。Notebook event loop競合回避のため async は使わない
 - **ローカルバッファ**: `_persist()` はメタデータバックエンド + SQLite バッファの両方に書く
 - **バックエンド自動選択**: .env / config.toml に設定があれば Firestore/Nextcloud を自動使用、なければ InMemory

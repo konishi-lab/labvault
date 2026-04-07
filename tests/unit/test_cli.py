@@ -58,7 +58,7 @@ class TestNew:
         assert result.exit_code == 0
         assert "XRD測定" in result.output
         parts = result.output.strip().split()
-        assert len(parts[0]) == 4
+        assert len(parts[0]) == 6
 
     def test_new_with_tags(self, runner):
         result = runner.invoke(cli, ["new", "test", "-T", "XRD", "-T", "Fe-Cr"])

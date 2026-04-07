@@ -7,7 +7,7 @@ from labvault.core.id import generate_id, normalize_id
 
 class TestGenerateId:
     def test_length(self) -> None:
-        assert len(generate_id()) == 4
+        assert len(generate_id()) == 6
 
     def test_custom_length(self) -> None:
         assert len(generate_id(8)) == 8
@@ -31,7 +31,7 @@ class TestGenerateId:
 
     def test_uniqueness(self) -> None:
         ids = {generate_id() for _ in range(200)}
-        assert len(ids) >= 199  # 4文字IDで200個なら衝突はほぼ起きない
+        assert len(ids) >= 199  # 6文字IDで200個なら衝突はほぼ起きない
 
 
 class TestNormalizeId:

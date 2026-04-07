@@ -8,14 +8,14 @@ import secrets
 _ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
-def generate_id(length: int = 4) -> str:
+def generate_id(length: int = 6) -> str:
     """ランダムIDを生成する。
 
     Args:
-        length: 文字数。4文字で約100万通り。
+        length: 文字数。6文字で約10億通り。
 
     Returns:
-        大文字の Base32 文字列 (例: "AB3F").
+        大文字の Base32 文字列 (例: "AB3F7K").
     """
     return "".join(secrets.choice(_ALPHABET) for _ in range(length))
 

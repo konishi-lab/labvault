@@ -19,7 +19,7 @@ class TestRecordCreation:
     def test_new_creates_record(self, lab: Lab) -> None:
         rec = lab.new("テスト実験")
         assert isinstance(rec, Record)
-        assert len(rec.id) == 4
+        assert len(rec.id) == 6
         assert rec.title == "テスト実験"
         assert rec.status == Status.RUNNING
         assert rec.team == "test-team"
