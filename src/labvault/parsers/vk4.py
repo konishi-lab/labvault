@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import io
 import struct
+from typing import Any
 
 
-def decode_color_image(data: bytes) -> "numpy.ndarray":  # type: ignore[name-defined]  # noqa: F821
+def decode_color_image(data: bytes) -> Any:
     """VK4 バイトデータから光学画像を numpy 配列として抽出する。"""
     import numpy as np
 
