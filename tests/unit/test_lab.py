@@ -154,6 +154,44 @@ class TestLabSearch:
         assert len(result) == 0
 
 
+class TestLabSearchConditions:
+    """Lab.search の条件フィルタテスト。"""
+
+    def test_search_by_conditions(self, lab: Lab) -> None:
+        lab.new("exp1", auto_log=False, power=20, angle=70)
+        lab.new("exp2", auto_log=False, power=50, angle=80)
+        lab.new("exp3", auto_log=False, power=20, angle=90)
+
+        result = lab.search("exp", conditions={"power": 20})
+        assert len(result) == 2
+        assert all(r.get_conditions()["power"] == 20 for r in result)
+
+    def test_search_by_parent_id(self, lab: Lab) -> None:
+        parent1 = lab.new("parent1", auto_log=False)
+        parent2 = lab.new("parent2", auto_log=False)
+        parent1.sub("child1a")
+        parent1.sub("child1b")
+        parent2.sub("child2a")
+
+        result = lab.search("child", parent_id=parent1.id)
+        assert len(result) == 2
+        assert all(r.parent_id == parent1.id for r in result)
+
+    def test_search_by_conditions_and_parent(self, lab: Lab) -> None:
+        parent = lab.new("parent", auto_log=False)
+        parent.sub("sub1", power=20)
+        parent.sub("sub2", power=50)
+        parent.sub("sub3", power=20)
+
+        result = lab.search("sub", parent_id=parent.id, conditions={"power": 20})
+        assert len(result) == 2
+
+    def test_search_conditions_no_match(self, lab: Lab) -> None:
+        lab.new("exp", auto_log=False, power=20)
+        result = lab.search("exp", conditions={"power": 999})
+        assert len(result) == 0
+
+
 class TestLabDelete:
     """Lab.delete / trash / restore のテスト。"""
 

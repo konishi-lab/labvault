@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import json
+from typing import Any
+
+from fastapi import APIRouter, Depends, Query
 
 from labvault import Lab
 
@@ -18,11 +21,18 @@ def search_records(
     tags: str | None = None,
     status: str | None = None,
     type: str | None = None,
+    parent_id: str | None = None,
+    conditions: str | None = Query(
+        None, description='JSON形式の条件フィルタ (例: {"power":20})'
+    ),
     limit: int = 20,
     lab: Lab = Depends(get_lab),
 ) -> list[RecordSummary]:
     """レコードを検索する。"""
     tag_list = tags.split(",") if tags else None
+    cond_dict: dict[str, Any] | None = None
+    if conditions:
+        cond_dict = json.loads(conditions)
 
     if q:
         records = lab.search(
@@ -30,6 +40,8 @@ def search_records(
             tags=tag_list,
             status=status,
             type=type,
+            parent_id=parent_id,
+            conditions=cond_dict,
             limit=limit,
         )
     else:
@@ -37,8 +49,17 @@ def search_records(
             tags=tag_list,
             status=status,
             type=type,
-            limit=limit,
+            limit=limit * 5 if (parent_id or cond_dict) else limit,
         )
+        if parent_id is not None:
+            records = [r for r in records if r.parent_id == parent_id]
+        if cond_dict:
+            records = [
+                r
+                for r in records
+                if all(r.get_conditions().get(k) == v for k, v in cond_dict.items())
+            ]
+        records = records[:limit]
 
     return [
         RecordSummary(

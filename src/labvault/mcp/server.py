@@ -44,13 +44,16 @@ def create_server(lab: Lab | None = None) -> Any:
         return _lab
 
     @mcp.tool(
-        description="実験レコードを検索する。自然言語クエリまたはタグ・ステータスでフィルタリング。"
+        description="実験レコードを検索する。自然言語クエリ、タグ、ステータス、"
+        "親レコードID、条件 (power=20等) でフィルタリング。",
     )
     def search(
         query: str | None = None,
         tags: list[str] | None = None,
         status: str | None = None,
         record_type: str | None = None,
+        parent_id: str | None = None,
+        conditions: dict[str, Any] | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         lab = _get_lab()
@@ -60,6 +63,8 @@ def create_server(lab: Lab | None = None) -> Any:
                 tags=tags,
                 status=status,
                 type=record_type,
+                parent_id=parent_id,
+                conditions=conditions,
                 limit=limit,
             )
         else:
@@ -69,6 +74,18 @@ def create_server(lab: Lab | None = None) -> Any:
                 type=record_type,
                 limit=limit,
             )
+            # list にも parent_id/conditions フィルタを適用
+            if parent_id is not None:
+                records = [r for r in records if r.parent_id == parent_id]
+            if conditions:
+                records = [
+                    r
+                    for r in records
+                    if all(
+                        r.get_conditions().get(k) == v for k, v in conditions.items()
+                    )
+                ]
+            records = records[:limit]
         return [
             {
                 "id": r.id,

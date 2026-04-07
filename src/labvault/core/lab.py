@@ -181,9 +181,21 @@ class Lab:
         tags: builtins.list[str] | None = None,
         status: str | Status | None = None,
         type: str | RecordType | None = None,
+        parent_id: str | None = None,
+        conditions: dict[str, Any] | None = None,
         limit: int = 20,
     ) -> builtins.list[Record]:
-        """レコードを検索する。Embedding があればセマンティック検索。"""
+        """レコードを検索する。Embedding があればセマンティック検索。
+
+        Args:
+            query: 検索クエリ。
+            tags: タグでフィルタ。
+            status: ステータスでフィルタ。
+            type: レコードタイプでフィルタ。
+            parent_id: 親レコード ID でフィルタ。
+            conditions: 条件でフィルタ (例: {"power": 20})。
+            limit: 最大件数。
+        """
         filters: dict[str, Any] = {}
         if tags:
             filters["tags"] = tags
@@ -200,19 +212,36 @@ class Lab:
             with contextlib.suppress(Exception):
                 query_embedding = self._embedding.embed(query)
 
+        # 条件フィルタは後処理なので多めに取得
+        fetch_limit = limit * 5 if conditions or parent_id else limit
+
         hits = self._search.search(
             self._team,
             query,
             embedding=query_embedding,
             filters=filters if filters else None,
-            limit=limit,
+            limit=fetch_limit,
         )
         results: builtins.list[Record] = []
         for hit in hits:
             rid = hit["record_id"]
             data = self._metadata.get_record(self._team, rid)
             if data and data.get("deleted_at") is None:
-                results.append(Record._from_dict(data, lab=self))
+                rec = Record._from_dict(data, lab=self)
+
+                # parent_id フィルタ
+                if parent_id is not None and rec.parent_id != parent_id:
+                    continue
+
+                # 条件フィルタ
+                if conditions:
+                    rec_cond = rec.get_conditions()
+                    if not all(rec_cond.get(k) == v for k, v in conditions.items()):
+                        continue
+
+                results.append(rec)
+                if len(results) >= limit:
+                    break
         return results
 
     # --- 削除 / 復元 ---
