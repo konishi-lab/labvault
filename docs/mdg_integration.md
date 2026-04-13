@@ -9,175 +9,122 @@
 - GitHub: https://github.com/utokyo-issp-koblab/brokersystem
 - ブローカーURL: `https://mdg2.gigalixirapp.com`
 - 認証: トークンベース (label ごとに発行)
-- ライブラリバージョン: 0.3.2 (ローカルリポからインストール)
+- ライブラリバージョン: 0.3.2
 
-## 利用可能なエージェント一覧 (2026-04-07 調査)
+## Active エージェント一覧 (2026-04-13 調査)
 
-`broker.board()` で取得。30エージェント中、labvault に関連するものを抜粋：
+全35エージェント中、15エージェントが active。主要なもの：
 
-### active (現在利用可能)
+### 実験装置系 (daq)
 
-| ID | 名前 | タイプ | 所有者 | 説明 |
-|---|---|---|---|---|
-| `282bd7d6-...` | 半導体製造業界コンサル | refer | 谷 峻太郎 (東大物性研) | 半導体のことなら何でも。質問→回答+画像 |
-| `ccffcb8a-...` | 半導体製造図版データベース | refer | 谷 峻太郎 (東大物性研) | 半導体の図版検索 |
+| ID | 名前 | 説明 | 状態 |
+|---|---|---|---|
+| `99d47aa1-...` | MDG data taking | レーザー加工のデータ取得 (ABF/ニッケル/銅) | **active** |
+| `591707c3-...` | MDG data taking SLM | SLM レーザー加工 (シリコン/モリブデン/銅) | **active** |
+| `d6f7f292-...` | carbide1 照射前後表面形状評価 | observe/shoot/observe フロー | **active** |
+| `17664db6-...` | carbide1 一括実行 | Cartesian グリッド探索 | **active** |
+| `fdc1c45c-...` | carbide1 一括実行の結果取得 | 完了セッションの結果取得 | **active** |
+| `b086434b-...` | carbide1 結果取得 | 個別トライアルの結果取得 | **active** |
+| `1be80a07-...` | MDG Status Monitor | 装置ステータス監視 | **active** |
 
-### inactive (停止中、施設側で起動が必要)
+### シミュレーション系 (predict)
 
-| ID | 名前 | タイプ | 所有者 | 説明 |
-|---|---|---|---|---|
-| `254a811f-...` | ABF穴あけシミュレータ | predict | 乙津 聡夫 (東大物性研) | レーザー加工のパルス数計算 |
-| `0b76e656-...` | 大容量結果ファイル取得 | refer | OFFICIAL (TACMI) | ページングで大容量ファイルダウンロード |
-| `99d47aa1-...` | **MDG data taking** | **daq** | 中里 智治 (東大物性研) | レーザー加工のデータ取得 (ABF/ニッケル/銅) |
-| `591707c3-...` | **MDG data taking SLM** | **daq** | 中里 智治 (東大物性研) | SLM レーザー加工 (シリコン/モリブデン/銅) |
+| ID | 名前 | 説明 | 状態 |
+|---|---|---|---|
+| `30915ac5-...` | Local Fluence Model | 最適加工レシピ提案 (除去速度モデル) | **active** |
+| `4cf21ae3-...` | ガラス深穴シミュレーター | パルスエネルギー一定の穴あけ (0-250uJ) | **active** |
+| `39d31082-...` | 白色光発生シミュレーション | sech型パルスの白色スペクトル予測 | **active** |
+| `ffc6d7ce-...` | Plot Cosine | cos(a*x+b) のプロット (テスト用) | **active** |
 
-### MDG data taking エージェントの詳細
+### データ取得確認済み (2026-04-13)
 
-研究室のレーザー加工実験に最も関連するエージェント。
+**Local Fluence Model** でデータ取得に成功：
+```python
+result = broker.ask("30915ac5-...", {
+    "spot_size": 50, "material": "copper",
+    "max_pulse_energy": 40, "max_power": 10, "depth": 100
+})
+# → 13パターンの最適加工レシピ (repetition_rate, pulse_energy, depth 等)
+```
 
-**入力パラメータ:**
-| パラメータ | 型 | 単位 | 範囲/選択肢 | デフォルト |
-|---|---|---|---|---|
-| material | choice | - | ABF, ニッケル, 銅 | - |
-| pulse_energy | number | uJ | 0.3〜3.0 | 0.5 |
-| repeat | number | - | 1〜100 | 1 |
-| repetition_rate | number | kHz | 1〜100 | 1 |
-| zpos | number | um | -100〜100 | 0 |
+### carbide1 照射前後表面形状評価
 
-**条件:** wavelength (nm)
+最も データ量が多いエージェント。出力に画像・3D形状データを含む。
+
+**入力 (単体実行):**
+| パラメータ | 型 | 説明 |
+|---|---|---|
+| cassette_id | number | カセット ID |
+| session_name | string | セッション名 |
+| location_id | number | 照射位置 ID |
+| pulseenergy | number | パルスエネルギー |
+| pulsenumber | number | パルス数 |
+| pulseduration | number | パルス幅 |
+| defocus | number | デフォーカス量 |
 
 **出力:**
-| パラメータ | 型 | 単位 |
+| パラメータ | 型 | 説明 |
 |---|---|---|
-| mission_id | string | - |
-| max_detected_depth | number | um |
-| image | image | - |
+| take_image_before | image | 照射前の光学画像 |
+| take_image_after | image | 照射後の光学画像 |
+| take_image_comparison | image | 比較画像 |
+| measure3d_before_plot | image | 照射前の3D形状 |
+| measure3d_after_plot | image | 照射後の3D形状 |
+| measure3d_comparison | image | 3D形状比較 |
+| parameters_json | - | 処理パラメータ |
 
-## brokersystem の使い方
-
-### クライアントとして接続
-
-```python
-from brokersystem import Broker
-
-broker = Broker(
-    broker_url="https://mdg2.gigalixirapp.com",
-    auth="db1cfc13-d02d-40f1-8056-2d4e80c14380",
-)
-
-# エージェント一覧
-board = broker.board()
-for agent in board["agents"]:
-    print(f'{agent["name"]}: active={agent["active"]}')
-```
-
-### データ取得 (ask = negotiate + contract + get_result)
-
-```python
-result = broker.ask(
-    agent_id="99d47aa1-443a-4e85-9e8d-96033c3ad026",  # MDG data taking
-    request={
-        "material": "ABF",
-        "pulse_energy": 0.5,
-        "repeat": 1,
-        "repetition_rate": 1,
-        "zpos": 0,
-    },
-)
-# result["result"]["image"] → 画像ファイル ID
-# result["result"]["max_detected_depth"] → 加工深さ (um)
-# result["result"]["mission_id"] → ミッション ID
-```
-
-### 大容量ファイルのページングダウンロード
-
-```python
-import base64
-
-PAGER_AGENT_ID = "0b76e656-a4ab-458b-b6ed-7014f68c2f38"
-
-response = broker.ask(
-    PAGER_AGENT_ID,
-    {"transfer_id": "f31229f0806129bbfdfb", "page_index": 0},
-)
-result = response["result"]
-data = base64.b64decode(result["page_base64"])
-total_pages = result["total_pages"]
-file_name = result["file_name"]
-```
+**一括実行の結果取得 (session_name で全トライアル取得):**
+- trial_table: 全トライアルの条件・結果テーブル
+- all_png_zip: 全画像の ZIP
+- all_plux_zip: 全 PLUX データの ZIP
 
 ## labvault への統合方針
 
-### 推奨: 段階的統合
+### Phase 1: MCP ツールとして追加 (推奨)
 
-#### Phase 1: インポートスクリプト (最初)
-
-MDG からデータを取得して labvault レコードとして登録するスクリプト。
+Claude から「MDG で実験して」「シミュレーションして」が可能に。
 
 ```python
-# scripts/import_mdg.py
-from brokersystem import Broker
-from labvault import Lab
-
-broker = Broker(broker_url=BROKER_URL, auth=MDG_TOKEN)
-lab = Lab()
-
-# MDG で測定実行
-result = broker.ask(
-    "99d47aa1-...",
-    {"material": "ABF", "pulse_energy": 0.5, ...},
-)
-
-# labvault に登録
-exp = lab.new("MDG laser processing", tags=["MDG", "ABF"])
-exp.conditions(
-    material="ABF",
-    pulse_energy_uJ=0.5,
-    repetition_rate_kHz=1,
-    source="MDG",
-    mdg_mission_id=result["result"]["mission_id"],
-)
-exp.results["max_detected_depth_um"] = result["result"]["max_detected_depth"]
-# 画像を保存 (broker.get_file で取得)
+@mcp.tool(description="MDG エージェントにリクエストを送信する")
+def mdg_request(agent_name: str, params: dict) -> dict:
+    broker = Broker(broker_url=BROKER_URL, auth=MDG_TOKEN)
+    board = broker.board()
+    # agent_name → agent_id のマッピング
+    agent = next(a for a in board["agents"] if a["name"] == agent_name)
+    return broker.ask(agent["id"], params)
 ```
 
-#### Phase 2: MCP ツール (将来)
+### Phase 2: 結果の labvault レコード自動登録
 
-Claude から「MDG でデータを取得して」が可能に。
+MDG の結果を labvault に自動保存：
 
 ```python
-@mcp.tool(description="MDG で実験データを取得して labvault に登録する")
-def mdg_acquire(material: str, pulse_energy: float, ...) -> dict:
-    result = broker.ask(agent_id, request)
-    exp = lab.new(...)
-    return {"record_id": exp.id, "depth": result["max_detected_depth"]}
+result = broker.ask(agent_id, params)
+exp = lab.new("MDG carbide1 照射", tags=["MDG", "carbide1"])
+exp.conditions(**params)
+exp.results["max_detected_depth_um"] = result["result"].get("max_detected_depth")
+# 画像をファイルとして保存
+if "take_image_after" in result["result"]:
+    image_data = broker.get_file(f"files/{result['result']['take_image_after']}")
+    exp.add(image_data.content, name="take_image_after.png")
 ```
 
-#### Phase 3: Web UI 統合 (将来)
+### Phase 3: Web UI に MDG パネル
 
-Web UI に MDG エージェント一覧 + 測定リクエストフォームを追加。
-
-## 調査結果まとめ
-
-### 確認済み
-- ブローカー接続: OK (トークン認証成功)
-- エージェント一覧取得: OK (`broker.board()` で30エージェント)
-- API 構造: negotiate → contract → result の3段階プロトコル
-
-### 現状の制約
-- MDG data taking エージェントは inactive → 施設側で起動が必要
-- 大容量ファイル取得エージェントも inactive
-- active なのはコンサル系エージェント (半導体製造業界) のみ
-
-### 次のステップ
-1. 施設担当者に MDG data taking エージェントの起動を依頼
-2. active なエージェントで ask() の動作確認
-3. インポートスクリプトのプロトタイプ作成
+- エージェント一覧表示
+- パラメータ入力フォーム (エージェントの input schema から自動生成)
+- 結果表示 (画像プレビュー + テーブル)
 
 ## 環境変数
 
 ```bash
-# .env に追加
 MDG_BROKER_URL=https://mdg2.gigalixirapp.com
 MDG_TOKEN=db1cfc13-d02d-40f1-8056-2d4e80c14380
 ```
+
+## 次のステップ
+
+1. ~~施設担当者に MDG data taking エージェントの起動を依頼~~ → **active 確認済み**
+2. carbide1 の既存セッション名を確認して結果取得テスト
+3. MCP ツールとして labvault に統合
+4. 結果の自動レコード登録
