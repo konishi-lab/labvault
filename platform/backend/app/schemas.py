@@ -43,6 +43,8 @@ class RecordSummary(BaseModel):
 
 class RecordDetail(RecordSummary):
     conditions: dict[str, Any] = {}
+    condition_units: dict[str, str] = {}
+    condition_descriptions: dict[str, str] = {}
     results: dict[str, Any] = {}
     notes: list[NoteResponse] = []
     files: list[FileInfo] = []
@@ -86,6 +88,11 @@ class StatusUpdate(BaseModel):
 
 class ConditionsUpdate(BaseModel):
     conditions: dict[str, Any]
+
+
+class ConditionUnitsUpdate(BaseModel):
+    units: dict[str, str]
+    descriptions: dict[str, str] = {}
 
 
 class ResultUpdate(BaseModel):

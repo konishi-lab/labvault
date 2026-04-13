@@ -19,6 +19,7 @@ import { BulkUploadButton } from "@/components/bulk-upload";
 import { SortableRecordTable } from "@/components/sortable-record-table";
 import { TagEditor } from "@/components/tag-editor";
 import { NoteForm } from "@/components/note-form";
+import { ConditionsCard } from "@/components/conditions-card";
 import type { NoteResponse } from "@/lib/api";
 
 const statusColor: Record<string, string> = {
@@ -223,22 +224,19 @@ export default function RecordDetailPage() {
 
         {/* 条件 */}
         {conditions.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">条件</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {conditions.map(([key, value], i) => (
-                <div key={key}>
-                  {i > 0 && <Separator className="mb-2" />}
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">{key}</span>
-                    <span className="font-mono">{String(value)}</span>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+          <ConditionsCard
+            recordId={id}
+            conditions={conditions}
+            units={record.condition_units || {}}
+            descriptions={record.condition_descriptions || {}}
+            onUpdate={(units, descs) =>
+              setRecord({
+                ...record,
+                condition_units: units,
+                condition_descriptions: descs,
+              })
+            }
+          />
         )}
 
         {/* 結果 */}

@@ -32,6 +32,8 @@ export interface FileInfo {
 
 export interface RecordDetail extends RecordSummary {
   conditions: Record<string, unknown>;
+  condition_units: Record<string, string>;
+  condition_descriptions: Record<string, string>;
   results: Record<string, unknown>;
   notes: NoteResponse[];
   files: FileInfo[];
@@ -129,6 +131,20 @@ export async function addTags(
     body: JSON.stringify({ tags }),
   });
   if (!res.ok) throw new Error(`Failed to add tags: ${res.status}`);
+  return res.json();
+}
+
+export async function updateUnits(
+  id: string,
+  units: Record<string, string>,
+  descriptions?: Record<string, string>
+): Promise<RecordDetail> {
+  const res = await fetch(`${API_BASE}/api/records/${id}/units`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ units, descriptions: descriptions || {} }),
+  });
+  if (!res.ok) throw new Error(`Failed to update units: ${res.status}`);
   return res.json();
 }
 

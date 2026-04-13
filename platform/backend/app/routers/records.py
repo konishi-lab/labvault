@@ -17,6 +17,7 @@ from ..schemas import (
     RecordDetail,
     RecordListResponse,
     RecordSummary,
+    ConditionUnitsUpdate,
     ResultUpdate,
     StatusUpdate,
     TagsUpdate,
@@ -51,6 +52,8 @@ def _to_detail(rec: Any) -> RecordDetail:
         updated_at=rec.updated_at,
         parent_id=rec.parent_id,
         conditions=rec.get_conditions(),
+        condition_units=rec.get_condition_units(),
+        condition_descriptions=rec.get_condition_descriptions(),
         results=rec.results.to_dict(),
         notes=[
             {"text": n.text, "created_at": n.created_at, "author": n.author}
@@ -257,6 +260,24 @@ def update_status(
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
     rec.status = body.status
+    return _to_detail(rec)
+
+
+@router.patch("/{record_id}/units", response_model=RecordDetail)
+def update_units(
+    record_id: str,
+    body: ConditionUnitsUpdate,
+    lab: Lab = Depends(get_lab),
+) -> RecordDetail:
+    """条件の単位と説明を更新する。"""
+    try:
+        rec = lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found")
+    rec._condition_units.update(body.units)
+    if body.descriptions:
+        rec._condition_descriptions.update(body.descriptions)
+    rec._persist()
     return _to_detail(rec)
 
 
