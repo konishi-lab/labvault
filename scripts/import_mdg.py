@@ -38,8 +38,10 @@ IMAGE_KEYS = [
 ]
 
 
-def get_valid_location_ids(broker: Broker, session_name: str) -> list[int]:
-    """セッションの有効な location_id リストを取得する。"""
+def get_session_info(
+    broker: Broker, session_name: str
+) -> tuple[int, set[int]]:
+    """セッションの総トライアル数と有効な location_id セットを返す。"""
     result = broker.ask(
         BATCH_AGENT,
         {
@@ -50,9 +52,10 @@ def get_valid_location_ids(broker: Broker, session_name: str) -> list[int]:
         },
     )
     r = result["result"]
+    num_trials = r["num_trials"]
     table = r.get("trial_table", {})
-    ids = table.get("trial_location_id", [])
-    return sorted(int(i) for i in ids)
+    valid_ids = set(int(i) for i in table.get("trial_location_id", []))
+    return num_trials, valid_ids
 
 
 def import_trial(
@@ -123,6 +126,31 @@ def import_trial(
     return stats
 
 
+def record_missing_trial(
+    nc: Nextcloud,
+    session_name: str,
+    location_id: int,
+    base_path: str,
+) -> dict:
+    """欠損トライアルを記録する。"""
+    folder = f"{base_path}/{location_id:04d}"
+
+    # 既に記録済みならスキップ
+    try:
+        if nc.files.by_path(f"{folder}/parameters.json") is not None:
+            return {"skipped": True}
+    except Exception:
+        pass
+
+    nc.files.makedirs(folder, exist_ok=True)
+    info = json.dumps(
+        {"status": "missing", "location_id": location_id, "session_name": session_name},
+        ensure_ascii=False,
+    )
+    nc.files.upload(f"{folder}/parameters.json", info.encode())
+    return {"missing": True}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Import MDG session to Nextcloud")
     parser.add_argument("--session", required=True, help="セッション名")
@@ -141,23 +169,41 @@ def main() -> None:
     session_name = args.session
     base_path = f"large/24UTARIM004/labvault/konishi-lab/mdg/{session_name}"
 
-    # 有効な location_id リストを取得
-    all_ids = get_valid_location_ids(broker, session_name)
-    target_ids = [i for i in all_ids if i >= args.start]
-    if args.end >= 0:
-        target_ids = [i for i in target_ids if i < args.end]
+    # セッション情報取得
+    num_trials, valid_ids = get_session_info(broker, session_name)
+    missing_ids = set(range(num_trials)) - valid_ids
+
+    end = args.end if args.end >= 0 else num_trials
+    target_ids = [i for i in range(args.start, end)]
 
     print(f"Session: {session_name}")
-    print(f"Valid trials: {len(all_ids)}, importing: {len(target_ids)}")
+    print(f"Total: {num_trials}, valid: {len(valid_ids)}, missing: {len(missing_ids)}")
+    print(f"Importing: {len(target_ids)} (from {args.start} to {end - 1})")
     print(f"Nextcloud path: {base_path}")
     print()
 
     imported = 0
     skipped = 0
+    missing_recorded = 0
     errors = 0
     start_time = time.time()
 
     for idx, loc_id in enumerate(target_ids):
+        # 欠損トライアル
+        if loc_id in missing_ids:
+            try:
+                stats = record_missing_trial(nc, session_name, loc_id, base_path)
+                if stats.get("skipped"):
+                    skipped += 1
+                else:
+                    missing_recorded += 1
+                    print(f"  [{loc_id:04d}] MISSING (recorded)  ({idx + 1}/{len(target_ids)})")
+            except Exception as e:
+                print(f"  [{loc_id:04d}] MISSING record failed: {e}")
+                errors += 1
+            continue
+
+        # 正常トライアル
         try:
             stats = import_trial(broker, nc, session_name, loc_id, base_path)
 
@@ -193,6 +239,7 @@ def main() -> None:
     print()
     print(f"Done in {elapsed / 60:.1f} min")
     print(f"  Imported: {imported}")
+    print(f"  Missing recorded: {missing_recorded}")
     print(f"  Skipped: {skipped}")
     print(f"  Errors: {errors}")
 
