@@ -241,6 +241,113 @@ def doctor() -> None:
         click.echo("Some checks failed. See above.")
 
 
+@cli.command()
+@click.argument("record_id")
+def delete(record_id: str) -> None:
+    """レコードを削除する (ソフトデリート)."""
+    lab = _get_lab()
+    try:
+        lab.delete(record_id)
+        click.echo(f"Deleted: {record_id}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from None
+    lab.close()
+
+
+@cli.command()
+@click.argument("record_id")
+def restore(record_id: str) -> None:
+    """削除したレコードを復元する。"""
+    lab = _get_lab()
+    try:
+        rec = lab.restore(record_id)
+        click.echo(f"Restored: {rec.id}  {rec.title}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from None
+    lab.close()
+
+
+@cli.command()
+@click.argument("record_id")
+@click.argument("text")
+def note(record_id: str, text: str) -> None:
+    """レコードにメモを追加する。"""
+    lab = _get_lab()
+    try:
+        rec = lab.get(record_id)
+        rec.note(text)
+        click.echo(f"Note added to {rec.id}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from None
+    lab.close()
+
+
+@cli.command()
+@click.argument("record_id")
+@click.argument("tags", nargs=-1, required=True)
+@click.option("--remove", "-r", is_flag=True, help="タグを削除する")
+def tag(record_id: str, tags: tuple[str, ...], remove: bool) -> None:
+    """レコードのタグを追加/削除する。"""
+    lab = _get_lab()
+    try:
+        rec = lab.get(record_id)
+        if remove:
+            rec.untag(*tags)
+            click.echo(f"Tags removed from {rec.id}: {', '.join(tags)}")
+        else:
+            rec.tag(*tags)
+            click.echo(f"Tags added to {rec.id}: {', '.join(tags)}")
+        click.echo(f"Current tags: {rec.tags}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from None
+    lab.close()
+
+
+@cli.command()
+@click.argument("record_id")
+@click.argument(
+    "new_status",
+    type=click.Choice(["running", "success", "failed", "partial"]),
+)
+def status(record_id: str, new_status: str) -> None:
+    """レコードのステータスを変更する。"""
+    lab = _get_lab()
+    try:
+        rec = lab.get(record_id)
+        rec.status = new_status
+        click.echo(f"{rec.id}: status -> {rec.status}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from None
+    lab.close()
+
+
+@cli.command()
+@click.argument("output_dir", type=click.Path())
+@click.option("--limit", "-n", default=100, help="エクスポート件数")
+def export(output_dir: str, limit: int) -> None:
+    """レコードを JSON ファイルとしてエクスポートする。"""
+    import json
+    from pathlib import Path
+
+    lab = _get_lab()
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    records = lab.list(limit=limit)
+    for rec in records:
+        data = rec._to_dict()
+        path = out / f"{rec.id}.json"
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+
+    click.echo(f"Exported {len(records)} records to {out}/")
+    lab.close()
+
+
 @cli.command("mcp")
 def mcp_cmd() -> None:
     """MCP サーバーを起動する (stdio)."""
