@@ -13,13 +13,16 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchRecord, fetchChildren } from "@/lib/api";
+import { fetchRecord, fetchChildren, fetchChildrenConditions } from "@/lib/api";
 import type { RecordDetail, RecordSummary } from "@/lib/api";
 import { BulkUploadButton } from "@/components/bulk-upload";
 import { SortableRecordTable } from "@/components/sortable-record-table";
 import { TagEditor } from "@/components/tag-editor";
 import { NoteForm } from "@/components/note-form";
 import { ConditionsCard } from "@/components/conditions-card";
+import { ConditionFilterPanel } from "@/components/condition-filter";
+import type { ConditionFilter } from "@/components/condition-filter";
+import { ConditionScatterChart } from "@/components/scatter-chart";
 import type { NoteResponse } from "@/lib/api";
 
 const statusColor: Record<string, string> = {
@@ -354,23 +357,80 @@ function ChildrenSection({
   children: RecordSummary[];
   onRefresh: () => void;
 }) {
+  const [condFilters, setCondFilters] = useState<ConditionFilter[]>([]);
+  const [conditionsMap, setConditionsMap] = useState<
+    Map<string, Record<string, unknown>>
+  >(new Map());
+  const [condLoaded, setCondLoaded] = useState(false);
+
+  // 子レコードの conditions を取得 (散布図用)
+  useEffect(() => {
+    fetchChildrenConditions(recordId)
+      .then((items) => {
+        const map = new Map<string, Record<string, unknown>>();
+        for (const item of items) {
+          map.set(item.id, item.conditions);
+        }
+        setConditionsMap(map);
+        setCondLoaded(true);
+      })
+      .catch(() => {});
+  }, [recordId]);
+
+  // 条件フィルタ適用
+  const filtered =
+    condFilters.length === 0
+      ? children
+      : children.filter((rec) => {
+          const cond = conditionsMap.get(rec.id);
+          if (!cond) return false;
+          return condFilters.every((f) => {
+            const val = cond[f.key];
+            if (val === undefined) return false;
+            // 数値比較
+            const numFilter = Number(f.value);
+            if (!isNaN(numFilter) && typeof val === "number") {
+              return val === numFilter;
+            }
+            return String(val) === f.value;
+          });
+        });
+
   return (
-          <Card className="md:col-span-2">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">
-                  サブレコード ({children.length})
-                </CardTitle>
-                <BulkUploadButton
-                  recordId={recordId}
-                  childCount={children.length}
-                  onComplete={onRefresh}
-                />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <SortableRecordTable records={children} defaultSort="title" />
-            </CardContent>
-          </Card>
+    <>
+      <Card className="md:col-span-2">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">
+              サブレコード ({filtered.length}
+              {condFilters.length > 0 ? ` / ${children.length}` : ""})
+            </CardTitle>
+            <BulkUploadButton
+              recordId={recordId}
+              childCount={children.length}
+              onComplete={onRefresh}
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {condLoaded && (
+            <ConditionFilterPanel
+              filters={condFilters}
+              onChange={setCondFilters}
+            />
+          )}
+          <SortableRecordTable records={filtered} defaultSort="title" />
+        </CardContent>
+      </Card>
+
+      {condLoaded && conditionsMap.size > 0 && (
+        <div className="md:col-span-2">
+          <ConditionScatterChart
+            records={filtered}
+            conditionsMap={conditionsMap}
+          />
+        </div>
+      )}
+    </>
   );
 }

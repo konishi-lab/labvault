@@ -115,6 +115,14 @@ export async function createRecord(data: {
   return res.json();
 }
 
+export async function fetchChildrenConditions(
+  id: string
+): Promise<{ id: string; title: string; conditions: Record<string, unknown> }[]> {
+  const res = await fetch(`${API_BASE}/api/records/${id}/children/conditions`);
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchChildren(id: string): Promise<RecordSummary[]> {
   const res = await fetch(`${API_BASE}/api/records/${id}/children`);
   if (!res.ok) throw new Error(`Failed to fetch children: ${res.status}`);

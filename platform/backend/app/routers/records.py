@@ -200,6 +200,35 @@ def get_children(
     return [_to_summary(c) for c in children]
 
 
+@router.get("/{record_id}/children/conditions")
+def get_children_conditions(
+    record_id: str,
+    limit: int = 2000,
+    lab: Lab = Depends(get_lab),
+) -> list[dict[str, Any]]:
+    """子レコードの ID + conditions を一括取得する。散布図用。"""
+    from labvault.core.record import Record
+
+    try:
+        lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    if hasattr(lab._metadata, "list_records"):
+        rows = lab._metadata.list_records(
+            lab._team, parent_id=record_id, limit=limit
+        )
+        children = [Record._from_dict(r, lab=lab) for r in rows]
+    else:
+        all_records = lab.list(limit=10000)
+        children = [r for r in all_records if r.parent_id == record_id]
+
+    return [
+        {"id": c.id, "title": c.title, "conditions": c.get_conditions()}
+        for c in children
+    ]
+
+
 # --- Record Operations ---
 
 
