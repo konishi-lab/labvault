@@ -15,7 +15,7 @@ import sys
 import time
 
 import requests
-from brokersystem import Broker
+from brokersystem import Broker, BrokerResponseError
 from nc_py_api import Nextcloud
 
 from labvault.core.config import Settings
@@ -85,6 +85,7 @@ def import_trial(
                 "session_name": session_name,
                 "location_id": location_id,
                 "generate_plux_zip": True,
+                "_broker": {"max_duration_minutes": 30},
             },
         )
         r = result.get("result")
@@ -98,6 +99,7 @@ def import_trial(
                 "session_name": session_name,
                 "location_id": location_id,
                 "generate_plux_zip": False,
+                "_broker": {"max_duration_minutes": 30},
             },
         )
         r = result.get("result")
