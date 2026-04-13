@@ -76,15 +76,27 @@ def import_trial(
     except Exception:
         pass
 
-    # MDG からデータ取得
-    result = broker.ask(
-        RESULT_AGENT,
-        {
-            "session_name": session_name,
-            "location_id": location_id,
-            "generate_plux_zip": True,
-        },
-    )
+    # MDG からデータ取得 (PLUX 付きで試行、失敗したら PLUX なし)
+    try:
+        result = broker.ask(
+            RESULT_AGENT,
+            {
+                "session_name": session_name,
+                "location_id": location_id,
+                "generate_plux_zip": True,
+            },
+        )
+    except Exception:
+        # PLUX 取得失敗 → PLUX なしでリトライ
+        result = broker.ask(
+            RESULT_AGENT,
+            {
+                "session_name": session_name,
+                "location_id": location_id,
+                "generate_plux_zip": False,
+            },
+        )
+        stats["errors"].append("plux: fallback to no-plux")
     r = result["result"]
 
     # フォルダ作成
