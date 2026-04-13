@@ -17,6 +17,9 @@ import { fetchRecord, fetchChildren } from "@/lib/api";
 import type { RecordDetail, RecordSummary } from "@/lib/api";
 import { BulkUploadButton } from "@/components/bulk-upload";
 import { SortableRecordTable } from "@/components/sortable-record-table";
+import { TagEditor } from "@/components/tag-editor";
+import { NoteForm } from "@/components/note-form";
+import type { NoteResponse } from "@/lib/api";
 
 const statusColor: Record<string, string> = {
   running: "bg-blue-100 text-blue-800",
@@ -204,21 +207,17 @@ export default function RecordDetailPage() {
               <span className="text-muted-foreground">更新日</span>
               <span>{formatDate(record.updated_at)}</span>
             </div>
-            {record.tags.length > 0 && (
-              <>
-                <Separator />
-                <div className="flex justify-between items-start">
-                  <span className="text-muted-foreground">タグ</span>
-                  <div className="flex flex-wrap gap-1 justify-end">
-                    {record.tags.map((tag) => (
-                      <Badge key={tag} variant="outline" className="text-xs">
-                        {tag}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
+            <Separator />
+            <div className="space-y-1">
+              <span className="text-muted-foreground">タグ</span>
+              <TagEditor
+                recordId={id}
+                tags={record.tags}
+                onUpdate={(newTags) =>
+                  setRecord({ ...record, tags: newTags })
+                }
+              />
+            </div>
           </CardContent>
         </Card>
 
@@ -303,23 +302,33 @@ export default function RecordDetailPage() {
         )}
 
         {/* メモ */}
-        {record.notes.length > 0 && (
-          <Card className="md:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-base">メモ</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              {record.notes.map((note, i) => (
-                <div key={i} className="flex gap-3">
-                  <span className="shrink-0 text-muted-foreground text-xs">
-                    {formatDate(note.created_at)}
-                  </span>
-                  <span>{note.text}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">
+              メモ ({record.notes.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            {record.notes.map((note, i) => (
+              <div key={i} className="flex gap-3">
+                <span className="shrink-0 text-muted-foreground text-xs">
+                  {formatDate(note.created_at)}
+                </span>
+                <span>{note.text}</span>
+              </div>
+            ))}
+            <Separator />
+            <NoteForm
+              recordId={id}
+              onAdded={(note) =>
+                setRecord({
+                  ...record,
+                  notes: [...record.notes, note],
+                })
+              }
+            />
+          </CardContent>
+        </Card>
 
         {/* サブレコード */}
         {children.length > 0 && (

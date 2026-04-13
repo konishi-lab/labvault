@@ -119,6 +119,32 @@ export async function fetchChildren(id: string): Promise<RecordSummary[]> {
   return res.json();
 }
 
+export async function addTags(
+  id: string,
+  tags: string[]
+): Promise<RecordDetail> {
+  const res = await fetch(`${API_BASE}/api/records/${id}/tags`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tags }),
+  });
+  if (!res.ok) throw new Error(`Failed to add tags: ${res.status}`);
+  return res.json();
+}
+
+export async function addNote(
+  id: string,
+  text: string
+): Promise<RecordDetail> {
+  const res = await fetch(`${API_BASE}/api/records/${id}/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) throw new Error(`Failed to add note: ${res.status}`);
+  return res.json();
+}
+
 export async function deleteRecord(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/records/${id}`, {
     method: "DELETE",
