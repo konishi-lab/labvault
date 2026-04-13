@@ -77,6 +77,7 @@ def import_trial(
         pass
 
     # MDG からデータ取得 (PLUX 付きで試行、失敗したら PLUX なし)
+    plux_ok = True
     try:
         result = broker.ask(
             RESULT_AGENT,
@@ -86,8 +87,11 @@ def import_trial(
                 "generate_plux_zip": True,
             },
         )
+        r = result.get("result")
+        if r is None:
+            raise ValueError("No result")
     except Exception:
-        # PLUX 取得失敗 → PLUX なしでリトライ
+        plux_ok = False
         result = broker.ask(
             RESULT_AGENT,
             {
@@ -96,8 +100,10 @@ def import_trial(
                 "generate_plux_zip": False,
             },
         )
+        r = result.get("result")
+        if r is None:
+            raise ValueError("No result even without PLUX")
         stats["errors"].append("plux: fallback to no-plux")
-    r = result["result"]
 
     # フォルダ作成
     nc.files.makedirs(folder, exist_ok=True)
@@ -117,8 +123,8 @@ def import_trial(
             except Exception as e:
                 stats["errors"].append(f"{key}: {e}")
 
-    # PLUX zip (relay_file)
-    plux = r.get("measure3d_plux_zip")
+    # PLUX zip (relay_file) — plux_ok の場合のみ
+    plux = r.get("measure3d_plux_zip") if plux_ok else None
     if plux and isinstance(plux, dict) and "uri" in plux:
         uri = plux["uri"]
         try:
