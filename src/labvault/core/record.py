@@ -118,6 +118,8 @@ class Record:
         self._conditions: dict[str, Any] = (
             dict(conditions_data) if conditions_data else {}
         )
+        self._condition_units: dict[str, str] = {}
+        self._condition_descriptions: dict[str, str] = {}
         self._results = _ResultsProxy(self)
         if results_data:
             self._results._load(results_data)
@@ -226,14 +228,48 @@ class Record:
     # --- ミューテーション (全て self を返す) ---
 
     def conditions(self, **kwargs: Any) -> Record:
-        """実験条件を設定する。"""
-        self._conditions.update(kwargs)
+        """実験条件を設定する。
+
+        値はスカラー、(値, 単位) タプル、(値, 単位, 説明) タプルのいずれか。
+
+        Examples:
+            exp.conditions(pulseenergy=1e-05)
+            exp.conditions(pulseenergy=(1e-05, "J"))
+            exp.conditions(pulseenergy=(1e-05, "J", "パルスエネルギー"))
+        """
+        from labvault.core.units import validate_unit
+
+        for key, val in kwargs.items():
+            if isinstance(val, tuple):
+                if len(val) == 2:
+                    value, unit = val
+                    self._conditions[key] = value
+                    validate_unit(unit)
+                    self._condition_units[key] = unit
+                elif len(val) >= 3:
+                    value, unit, desc = val[0], val[1], val[2]
+                    self._conditions[key] = value
+                    validate_unit(unit)
+                    self._condition_units[key] = unit
+                    self._condition_descriptions[key] = str(desc)
+                else:
+                    self._conditions[key] = val[0]
+            else:
+                self._conditions[key] = val
         self._persist()
         return self
 
     def get_conditions(self) -> dict[str, Any]:
         """実験条件を返す。"""
         return dict(self._conditions)
+
+    def get_condition_units(self) -> dict[str, str]:
+        """条件の単位マップを返す。"""
+        return dict(self._condition_units)
+
+    def get_condition_descriptions(self) -> dict[str, str]:
+        """条件の説明マップを返す。"""
+        return dict(self._condition_descriptions)
 
     def tag(self, *tags: str) -> Record:
         """タグを追加する。"""
@@ -568,6 +604,8 @@ class Record:
                 for e in self._external_refs
             ],
             "conditions": dict(self._conditions),
+            "condition_units": dict(self._condition_units),
+            "condition_descriptions": dict(self._condition_descriptions),
             "results": self._results.to_dict(),
             "events": list(self._events),
             "deleted_at": (self._deleted_at.isoformat() if self._deleted_at else None),
@@ -640,7 +678,7 @@ class Record:
         updated_at_raw = data.get("updated_at")
         deleted_at_raw = data.get("deleted_at")
 
-        return cls(
+        rec = cls(
             id=data["id"],
             team=data.get("team", ""),
             title=data.get("title", ""),
@@ -661,6 +699,9 @@ class Record:
             parent_id=data.get("parent_id"),
             lab=lab,
         )
+        rec._condition_units = dict(data.get("condition_units") or {})
+        rec._condition_descriptions = dict(data.get("condition_descriptions") or {})
+        return rec
 
 
 # --- ヘルパー ---
