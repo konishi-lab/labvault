@@ -38,8 +38,8 @@ IMAGE_KEYS = [
 ]
 
 
-def get_trial_count(broker: Broker, session_name: str) -> int:
-    """セッションのトライアル数を取得する。"""
+def get_valid_location_ids(broker: Broker, session_name: str) -> list[int]:
+    """セッションの有効な location_id リストを取得する。"""
     result = broker.ask(
         BATCH_AGENT,
         {
@@ -49,7 +49,10 @@ def get_trial_count(broker: Broker, session_name: str) -> int:
             "generate_plux_zip": False,
         },
     )
-    return result["result"]["completed_trials"]
+    r = result["result"]
+    table = r.get("trial_table", {})
+    ids = table.get("trial_location_id", [])
+    return sorted(int(i) for i in ids)
 
 
 def import_trial(
@@ -138,11 +141,14 @@ def main() -> None:
     session_name = args.session
     base_path = f"large/24UTARIM004/labvault/konishi-lab/mdg/{session_name}"
 
-    # トライアル数取得
-    total = get_trial_count(broker, session_name)
-    end = args.end if args.end >= 0 else total
+    # 有効な location_id リストを取得
+    all_ids = get_valid_location_ids(broker, session_name)
+    target_ids = [i for i in all_ids if i >= args.start]
+    if args.end >= 0:
+        target_ids = [i for i in target_ids if i < args.end]
+
     print(f"Session: {session_name}")
-    print(f"Total trials: {total}, importing {args.start}-{end - 1}")
+    print(f"Valid trials: {len(all_ids)}, importing: {len(target_ids)}")
     print(f"Nextcloud path: {base_path}")
     print()
 
@@ -151,7 +157,7 @@ def main() -> None:
     errors = 0
     start_time = time.time()
 
-    for loc_id in range(args.start, end):
+    for idx, loc_id in enumerate(target_ids):
         try:
             stats = import_trial(broker, nc, session_name, loc_id, base_path)
 
@@ -162,14 +168,14 @@ def main() -> None:
             imported += 1
             elapsed = time.time() - start_time
             per_trial = elapsed / imported if imported > 0 else 0
-            remaining = per_trial * (end - args.start - imported - skipped)
+            remaining = per_trial * (len(target_ids) - idx - 1)
 
             err_str = f" errors: {stats['errors']}" if stats["errors"] else ""
             print(
-                f"  [{loc_id:04d}/{end - 1:04d}] "
+                f"  [{loc_id:04d}] "
                 f"images={stats['images']} plux={'Y' if stats['plux'] else 'N'}"
                 f"{err_str}"
-                f"  ({imported + skipped}/{end - args.start},"
+                f"  ({idx + 1}/{len(target_ids)},"
                 f" ~{remaining / 60:.0f}min remaining)"
             )
 
