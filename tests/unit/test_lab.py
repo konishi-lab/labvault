@@ -191,6 +191,25 @@ class TestLabSearchConditions:
         result = lab.search("exp", conditions={"power": 999})
         assert len(result) == 0
 
+    def test_search_conditions_range_gte(self, lab: Lab) -> None:
+        lab.new("low", auto_log=False, power=10)
+        lab.new("high", auto_log=False, power=50)
+        result = lab.search("", conditions={"power": {"gte": 30}})
+        assert len(result) == 1
+        assert result[0].get_conditions()["power"] == 50
+
+    def test_search_conditions_range_combined(self, lab: Lab) -> None:
+        for p in [10, 20, 30, 40, 50]:
+            lab.new(f"p{p}", auto_log=False, power=p)
+        result = lab.search("", conditions={"power": {"gte": 20, "lte": 40}})
+        assert len(result) == 3
+
+    def test_search_conditions_exact_still_works(self, lab: Lab) -> None:
+        lab.new("a", auto_log=False, power=20)
+        lab.new("b", auto_log=False, power=30)
+        result = lab.search("", conditions={"power": 20})
+        assert len(result) == 1
+
 
 class TestLabDelete:
     """Lab.delete / trash / restore のテスト。"""

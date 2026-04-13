@@ -724,9 +724,28 @@ results = lab.search("XRD", tags=["Fe-Cr"], status="success")
 
 # typeでフィルタ
 results = lab.search("", type="sample")
+
+# 親レコード配下に限定
+results = lab.search("", parent_id="DE9Z7K")
 ```
 
-### 8.3 一覧のフィルタ
+### 8.3 条件フィルタ
+
+```python
+# 完全一致
+results = lab.search("", conditions={"power": 20})
+
+# 範囲指定 (gt, gte, lt, lte, eq, ne)
+results = lab.search("", conditions={"power": {"gte": 50}})
+
+# 複合範囲
+results = lab.search("", conditions={"power": {"gte": 20, "lte": 40}})
+
+# 親レコード + 条件フィルタ
+results = lab.search("", parent_id="DE9Z7K", conditions={"angle": {"gte": 30}})
+```
+
+### 8.4 一覧のフィルタ
 
 ```python
 # 検索ではなく一覧のフィルタリング
@@ -738,59 +757,89 @@ records = lab.list(created_by="tanaka", type="experiment")
 
 ## 9. CLI
 
+16コマンド: init, new, add, list, show, search, aggregate, overview, delete, restore, note, tag, status, export, doctor, mcp
+
 ### 9.1 セットアップ
 
 ```bash
 # 初期設定（対話形式）
 labvault init
 
-# 管理者から受け取った設定で初期化
-labvault init --config konishi-lab-setup.toml
-
 # 設定の健全性チェック
 labvault doctor
 # ✓ config.toml: OK
 # ✓ GCP認証: OK
 # ✓ Nextcloud接続: OK
-# ✓ チーム "konishi-lab": メンバーとして登録済み
 ```
 
 ### 9.2 レコード操作
 
 ```bash
 # レコード作成
-labvault new "XRD測定" --template XRD --tag XRD --tag Fe-Cr
-# → Created: AB3F "XRD測定"
+labvault new "XRD測定" --tag XRD --tag Fe-Cr
+# → AB3F7K  XRD測定
 
-# ファイル追加（装置PCから）
-labvault add AB3F xrd_data.ras
+# ファイル追加
+labvault add AB3F7K xrd_data.ras
 
 # レコード一覧
 labvault list
 labvault list --tag XRD --status success
 
 # レコード詳細
-labvault show AB3F
+labvault show AB3F7K
 
-# 検索
-labvault search "Fe-Cr 格子定数"
+# 削除 / 復元
+labvault delete AB3F7K
+labvault restore AB3F7K
 
-# Nextcloud URL表示
-labvault url AB3F
+# タグ / メモ / ステータス
+labvault tag AB3F7K Fe-Cr thin-film
+labvault note AB3F7K "良い結晶性が得られた"
+labvault status AB3F7K success
+
+# JSON エクスポート
+labvault export ./output_dir
 ```
 
-### 9.3 チーム管理（管理者のみ）
+### 9.3 検索・分析
 
 ```bash
-# メンバー追加
-labvault team add-member tanaka
-labvault team add-member suzuki --role admin
+# テキスト検索
+labvault search "Fe-Cr 格子定数"
 
-# メンバー一覧
-labvault team members
+# 条件フィルタ + 条件表示
+labvault search -c "power>=50" -C
+labvault search -p DE9Z7K -c "angle>=30" -c "angle<=60" --show-conditions
 
-# 設定テンプレートのエクスポート（新入生に配布用）
-labvault team export-config > konishi-lab-setup.toml
+# 数値キーの統計集計（conditions/results 両対応）
+labvault aggregate power -p DE9Z7K
+labvault aggregate pulse_energy --group-by angle -p DE9Z7K
+# → Key: pulse_energy  (1644 records scanned)
+# → Overall: n=1644  mean=20.5000  std=12.3456  min=5  max=100  median=18.0000
+# →
+# → Group by: angle
+# →   30: n=274  mean=22.1000  ...
+# →   45: n=411  mean=19.8000  ...
+
+# 実験シリーズの概要
+labvault overview DE9Z7K
+# → Parent: DE9Z7K  Children: 1644
+# → Status: running=37, success=1607
+# →
+# → Conditions:
+# →   power: min=5  max=100  mean=32.5000  unique=20
+# →   angle: min=0  max=90  mean=45.0000  unique=19
+# →
+# → Results:
+# →   roughness: n=1200  mean=0.4500  min=0.1  max=2.3
+```
+
+### 9.4 MCP サーバー
+
+```bash
+# Claude Desktop / Claude Code 用 MCP サーバー起動
+labvault mcp
 ```
 
 ---
@@ -1022,7 +1071,7 @@ def test_search(lab):
 | `.new(title, template?, type?, **conditions)` | レコード作成 |
 | `.get(id, auto_log=False)` | ID取得。`auto_log=True` で既存Recordにhooks追記 |
 | `.list(tags?, status?, type?, limit?)` | 一覧 |
-| `.search(query, tags?, status?)` | 検索 |
+| `.search(query, tags?, status?, parent_id?, conditions?)` | 検索（条件範囲フィルタ対応） |
 | `.recent(n)` | 最新n件 |
 | `.today()` | 今日のレコード |
 | `.delete(id)` | ソフトデリート |
@@ -1039,7 +1088,7 @@ def test_search(lab):
 
 | メソッド/プロパティ | 説明 | チェーン |
 |-------------------|------|:------:|
-| `.id` | 4文字ID | - |
+| `.id` | 6文字ID (Crockford's Base32) | - |
 | `.title` | タイトル | - |
 | `.status` | ステータス (get/set) | - |
 | `.results` | 結果 (dict-like) | - |

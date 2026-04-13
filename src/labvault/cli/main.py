@@ -168,17 +168,74 @@ def show(record_id: str) -> None:
 
 
 @cli.command()
-@click.argument("query")
+@click.argument("query", default="")
 @click.option("--limit", "-n", default=20, help="表示件数")
-def search(query: str, limit: int) -> None:
+@click.option("--parent-id", "-p", default=None, help="親レコード ID でフィルタ")
+@click.option("--tags", "-T", multiple=True, help="タグでフィルタ")
+@click.option("--status", "-s", "status_filter", default=None, help="ステータスでフィルタ")
+@click.option("--type", "-t", "type_filter", default=None, help="タイプでフィルタ")
+@click.option(
+    "--conditions", "-c", multiple=True,
+    help="条件フィルタ (例: power=20, power>=50, power<=100)",
+)
+@click.option("--show-conditions", "-C", is_flag=True, help="条件も表示する")
+def search(
+    query: str,
+    limit: int,
+    parent_id: str | None,
+    tags: tuple[str, ...],
+    status_filter: str | None,
+    type_filter: str | None,
+    conditions: tuple[str, ...],
+    show_conditions: bool,
+) -> None:
     """レコードを検索する。"""
     lab = _get_lab()
-    results = lab.search(query, limit=limit)
+
+    cond_dict = _parse_conditions(conditions) if conditions else None
+
+    if query:
+        results = lab.search(
+            query,
+            tags=list(tags) if tags else None,
+            status=status_filter,
+            type=type_filter,
+            parent_id=parent_id,
+            conditions=cond_dict,
+            limit=limit,
+        )
+    else:
+        results = lab.list(
+            tags=list(tags) if tags else None,
+            status=status_filter,
+            type=type_filter,
+            limit=limit * 5 if cond_dict or parent_id else limit,
+        )
+        if parent_id is not None:
+            results = [r for r in results if r.parent_id == parent_id]
+        if cond_dict:
+            from labvault.core.lab import _match_condition
+
+            results = [
+                r for r in results
+                if all(
+                    _match_condition(r.get_conditions().get(k), v)
+                    for k, v in cond_dict.items()
+                )
+            ]
+        results = results[:limit]
+
     if not results:
         click.echo("No results found.")
     else:
         for rec in results:
-            click.echo(f"{rec.id}  {rec.title}  ({rec.status})")
+            line = f"{rec.id}  {rec.title}  ({rec.status})"
+            if show_conditions:
+                cond = rec.get_conditions()
+                if cond:
+                    pairs = [f"{k}={v}" for k, v in cond.items()]
+                    line += f"  [{', '.join(pairs)}]"
+            click.echo(line)
     lab.close()
 
 
@@ -348,6 +405,127 @@ def export(output_dir: str, limit: int) -> None:
     lab.close()
 
 
+@cli.command()
+@click.argument("key")
+@click.option("--group-by", "-g", default=None, help="グループ化キー")
+@click.option("--parent-id", "-p", default=None, help="親レコード ID でフィルタ")
+@click.option("--tags", "-T", multiple=True, help="タグでフィルタ")
+@click.option("--status", "-s", default=None, help="ステータスでフィルタ")
+def aggregate(
+    key: str,
+    group_by: str | None,
+    parent_id: str | None,
+    tags: tuple[str, ...],
+    status: str | None,
+) -> None:
+    """数値キーの統計集計 (conditions/results 両対応)."""
+    import statistics
+
+    lab = _get_lab()
+    records = lab.list(
+        tags=list(tags) if tags else None,
+        status=status,
+        limit=5000,
+    )
+
+    if parent_id is not None:
+        records = [r for r in records if r.parent_id == parent_id]
+
+    values: list[float] = []
+    groups: dict[str, list[float]] = {}
+
+    for rec in records:
+        merged = {**rec.get_conditions(), **rec.results.to_dict()}
+        if key not in merged:
+            continue
+        val = merged[key]
+        if not isinstance(val, (int, float)):
+            continue
+        values.append(float(val))
+        if group_by:
+            gv = str(merged.get(group_by, "unknown"))
+            groups.setdefault(gv, []).append(float(val))
+
+    def _fmt(vals: list[float]) -> str:
+        if not vals:
+            return "no data"
+        mean = statistics.mean(vals)
+        std = statistics.stdev(vals) if len(vals) > 1 else 0.0
+        return (
+            f"n={len(vals)}  mean={mean:.4f}  std={std:.4f}  "
+            f"min={min(vals)}  max={max(vals)}  median={statistics.median(vals):.4f}"
+        )
+
+    click.echo(f"Key: {key}  ({len(records)} records scanned)")
+    click.echo(f"Overall: {_fmt(values)}")
+
+    if group_by and groups:
+        click.echo(f"\nGroup by: {group_by}")
+        for gk in sorted(groups.keys()):
+            click.echo(f"  {gk}: {_fmt(groups[gk])}")
+    lab.close()
+
+
+@cli.command()
+@click.argument("parent_id")
+def overview(parent_id: str) -> None:
+    """実験シリーズの概要を表示する。"""
+    import statistics
+
+    lab = _get_lab()
+    all_records = lab.list(limit=5000)
+    children = [r for r in all_records if r.parent_id == parent_id]
+
+    if not children:
+        click.echo(f"No children found for {parent_id}")
+        lab.close()
+        return
+
+    # ステータス集計
+    status_counts: dict[str, int] = {}
+    condition_keys: dict[str, list[Any]] = {}
+    result_keys: dict[str, list[float]] = {}
+
+    for rec in children:
+        st = str(rec.status)
+        status_counts[st] = status_counts.get(st, 0) + 1
+        for k, v in rec.get_conditions().items():
+            condition_keys.setdefault(k, []).append(v)
+        for k, v in rec.results.to_dict().items():
+            if isinstance(v, (int, float)):
+                result_keys.setdefault(k, []).append(float(v))
+
+    click.echo(f"Parent: {parent_id}  Children: {len(children)}")
+    status_str = ", ".join(f"{k}={v}" for k, v in sorted(status_counts.items()))
+    click.echo(f"Status: {status_str}")
+
+    if condition_keys:
+        click.echo("\nConditions:")
+        for k, vals in sorted(condition_keys.items()):
+            nums = [v for v in vals if isinstance(v, (int, float))]
+            if nums and len(nums) == len(vals):
+                click.echo(
+                    f"  {k}: min={min(nums)}  max={max(nums)}  "
+                    f"mean={statistics.mean(nums):.4f}  unique={len(set(nums))}"
+                )
+            else:
+                unique = sorted(set(str(v) for v in vals))
+                if len(unique) <= 10:
+                    click.echo(f"  {k}: {', '.join(unique)}")
+                else:
+                    click.echo(f"  {k}: {len(unique)} unique values")
+
+    if result_keys:
+        click.echo("\nResults:")
+        for k, vals in sorted(result_keys.items()):
+            mean = statistics.mean(vals)
+            click.echo(
+                f"  {k}: n={len(vals)}  mean={mean:.4f}  "
+                f"min={min(vals)}  max={max(vals)}"
+            )
+    lab.close()
+
+
 @cli.command("mcp")
 def mcp_cmd() -> None:
     """MCP サーバーを起動する (stdio)."""
@@ -365,12 +543,52 @@ def mcp_cmd() -> None:
     print(f"  Team:     {team}", file=sys.stderr)
     print(f"  Metadata: {backend}", file=sys.stderr)
     print(f"  Storage:  {storage}", file=sys.stderr)
-    print("  Tools:    6", file=sys.stderr)
+    print("  Tools:    7", file=sys.stderr)
     print("  Transport: stdio", file=sys.stderr)
     print(file=sys.stderr)
 
     server = create_server()
     server.run(transport="stdio")
+
+
+def _parse_conditions(specs: tuple[str, ...]) -> dict[str, Any]:
+    """CLI 条件指定をパースする。
+
+    Examples:
+        "power=20"   -> {"power": 20}
+        "power>=50"  -> {"power": {"gte": 50}}
+        "power<=100" -> {"power": {"lte": 100}}
+        "power>10"   -> {"power": {"gt": 10}}
+        "power<100"  -> {"power": {"lt": 100}}
+    """
+    import re
+
+    result: dict[str, Any] = {}
+    for spec in specs:
+        m = re.match(r"^(\w+)(>=|<=|>|<|!=|=)(.+)$", spec)
+        if not m:
+            click.echo(f"Warning: invalid condition format: {spec}", err=True)
+            continue
+        key, op, val_str = m.groups()
+
+        # 数値変換を試みる
+        try:
+            val: Any = int(val_str)
+        except ValueError:
+            try:
+                val = float(val_str)
+            except ValueError:
+                val = val_str
+
+        op_map = {">=": "gte", "<=": "lte", ">": "gt", "<": "lt", "!=": "ne"}
+        if op == "=":
+            result[key] = val
+        else:
+            result.setdefault(key, {})
+            if not isinstance(result[key], dict):
+                result[key] = {}
+            result[key][op_map[op]] = val
+    return result
 
 
 def _get_lab() -> Any:

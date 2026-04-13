@@ -362,6 +362,7 @@ function ChildrenSection({
     Map<string, Record<string, unknown>>
   >(new Map());
   const [condLoaded, setCondLoaded] = useState(false);
+  const [condCols, setCondCols] = useState<string[]>([]);
 
   // 子レコードの conditions を取得 (散布図用)
   useEffect(() => {
@@ -376,6 +377,15 @@ function ChildrenSection({
       })
       .catch(() => {});
   }, [recordId]);
+
+  // 利用可能な条件キーを収集
+  const availableConditionKeys = (() => {
+    const keys = new Set<string>();
+    conditionsMap.forEach((cond) => {
+      Object.keys(cond).forEach((k) => keys.add(k));
+    });
+    return Array.from(keys).sort();
+  })();
 
   // 条件フィルタ適用
   const filtered =
@@ -419,7 +429,14 @@ function ChildrenSection({
               onChange={setCondFilters}
             />
           )}
-          <SortableRecordTable records={filtered} defaultSort="title" />
+          <SortableRecordTable
+            records={filtered}
+            defaultSort="title"
+            conditionsMap={conditionsMap}
+            conditionColumns={condCols}
+            availableConditionKeys={availableConditionKeys}
+            onColumnsChange={setCondCols}
+          />
         </CardContent>
       </Card>
 

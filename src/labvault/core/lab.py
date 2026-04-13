@@ -19,6 +19,29 @@ from labvault.core.record import Record
 from labvault.core.types import RecordType, Status
 
 
+def _match_condition(actual: Any, spec: Any) -> bool:
+    """条件の一致判定。スカラーは完全一致、dict は範囲演算子。
+
+    Examples:
+        _match_condition(20, 20)  # True (完全一致)
+        _match_condition(20, {"gte": 10, "lte": 30})  # True (範囲)
+        _match_condition(5, {"gt": 10})  # False
+    """
+    if not isinstance(spec, dict):
+        return actual == spec
+    ops = {"gte": "__ge__", "gt": "__gt__", "lte": "__le__", "lt": "__lt__", "eq": "__eq__", "ne": "__ne__"}
+    for op, method in ops.items():
+        if op in spec:
+            if actual is None:
+                return False
+            try:
+                if not getattr(actual, method)(spec[op]):
+                    return False
+            except TypeError:
+                return False
+    return True
+
+
 class Lab:
     """チームデータベース。Record の生成・取得・検索を行う。"""
 
@@ -236,7 +259,7 @@ class Lab:
                 # 条件フィルタ
                 if conditions:
                     rec_cond = rec.get_conditions()
-                    if not all(rec_cond.get(k) == v for k, v in conditions.items()):
+                    if not all(_match_condition(rec_cond.get(k), v) for k, v in conditions.items()):
                         continue
 
                 results.append(rec)

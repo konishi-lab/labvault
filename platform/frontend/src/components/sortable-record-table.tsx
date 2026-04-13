@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -33,18 +34,29 @@ function naturalSortKey(s: string): string {
   return s.replace(/(\d+)/g, (m) => m.padStart(10, "0")).toLowerCase();
 }
 
-type SortKey = "id" | "title" | "type" | "status" | "created_at";
 type SortDir = "asc" | "desc";
 
 export function SortableRecordTable({
   records,
   defaultSort = "title",
+  conditionsMap,
+  conditionColumns,
+  availableConditionKeys,
+  onColumnsChange,
 }: {
   records: RecordSummary[];
-  defaultSort?: SortKey;
+  defaultSort?: string;
+  conditionsMap?: Map<string, Record<string, unknown>>;
+  conditionColumns?: string[];
+  availableConditionKeys?: string[];
+  onColumnsChange?: (cols: string[]) => void;
 }) {
-  const [sortKey, setSortKey] = useState<SortKey>(defaultSort);
+  const [sortKey, setSortKey] = useState(defaultSort);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
+
+  const cols = conditionColumns || [];
+  const available = availableConditionKeys || [];
 
   if (records.length === 0) {
     return (
@@ -54,10 +66,21 @@ export function SortableRecordTable({
     );
   }
 
+  const getCondValue = (recId: string, key: string): unknown => {
+    return conditionsMap?.get(recId)?.[key];
+  };
+
   const sorted = [...records].sort((a, b) => {
-    let va: string;
-    let vb: string;
-    if (sortKey === "title") {
+    let va: string | number;
+    let vb: string | number;
+
+    if (cols.includes(sortKey)) {
+      // 条件カラムでソート
+      const rawA = getCondValue(a.id, sortKey);
+      const rawB = getCondValue(b.id, sortKey);
+      va = typeof rawA === "number" ? rawA : String(rawA ?? "");
+      vb = typeof rawB === "number" ? rawB : String(rawB ?? "");
+    } else if (sortKey === "title") {
       va = naturalSortKey(a.title);
       vb = naturalSortKey(b.title);
     } else if (sortKey === "id") {
@@ -77,7 +100,7 @@ export function SortableRecordTable({
     return sortDir === "asc" ? cmp : -cmp;
   });
 
-  const toggle = (key: SortKey) => {
+  const toggle = (key: string) => {
     if (sortKey === key) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
     } else {
@@ -86,71 +109,134 @@ export function SortableRecordTable({
     }
   };
 
-  const arrow = (key: SortKey) =>
+  const arrow = (key: string) =>
     sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
 
   const headClass =
     "cursor-pointer hover:text-foreground select-none transition-colors";
 
+  const toggleColumn = (key: string) => {
+    if (!onColumnsChange) return;
+    if (cols.includes(key)) {
+      onColumnsChange(cols.filter((c) => c !== key));
+    } else {
+      onColumnsChange([...cols, key]);
+    }
+  };
+
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className={`w-20 ${headClass}`} onClick={() => toggle("id")}>
-            ID{arrow("id")}
-          </TableHead>
-          <TableHead className={headClass} onClick={() => toggle("title")}>
-            タイトル{arrow("title")}
-          </TableHead>
-          <TableHead className={`w-28 ${headClass}`} onClick={() => toggle("type")}>
-            タイプ{arrow("type")}
-          </TableHead>
-          <TableHead className={`w-24 ${headClass}`} onClick={() => toggle("status")}>
-            ステータス{arrow("status")}
-          </TableHead>
-          <TableHead>タグ</TableHead>
-          <TableHead className={`w-36 ${headClass}`} onClick={() => toggle("created_at")}>
-            作成日{arrow("created_at")}
-          </TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {sorted.map((rec) => (
-          <TableRow key={rec.id} className="cursor-pointer hover:bg-muted/50">
-            <TableCell className="font-mono font-semibold">
-              <Link
-                href={`/records/${rec.id}`}
-                className="text-primary hover:underline"
+    <div className="space-y-2">
+      {/* カラム選択 */}
+      {available.length > 0 && onColumnsChange && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs cursor-pointer"
+            onClick={() => setShowColumnPicker(!showColumnPicker)}
+          >
+            条件カラム {cols.length > 0 ? `(${cols.length})` : ""}
+          </Button>
+          {showColumnPicker && (
+            <div className="flex flex-wrap gap-1">
+              {available.map((key) => (
+                <Badge
+                  key={key}
+                  variant={cols.includes(key) ? "default" : "outline"}
+                  className="text-xs cursor-pointer"
+                  onClick={() => toggleColumn(key)}
+                >
+                  {key}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead
+                className={`w-20 ${headClass}`}
+                onClick={() => toggle("id")}
               >
-                {rec.id}
-              </Link>
-            </TableCell>
-            <TableCell>
-              <Link href={`/records/${rec.id}`} className="hover:underline">
-                {rec.title}
-              </Link>
-            </TableCell>
-            <TableCell className="text-muted-foreground">{rec.type}</TableCell>
-            <TableCell>
-              <Badge variant="secondary" className={statusColor[rec.status]}>
-                {rec.status}
-              </Badge>
-            </TableCell>
-            <TableCell>
-              <div className="flex flex-wrap gap-1">
-                {rec.tags.map((tag) => (
-                  <Badge key={tag} variant="outline" className="text-xs">
-                    {tag}
+                ID{arrow("id")}
+              </TableHead>
+              <TableHead className={headClass} onClick={() => toggle("title")}>
+                タイトル{arrow("title")}
+              </TableHead>
+              {cols.map((key) => (
+                <TableHead
+                  key={key}
+                  className={`${headClass} text-right`}
+                  onClick={() => toggle(key)}
+                >
+                  {key}
+                  {arrow(key)}
+                </TableHead>
+              ))}
+              <TableHead
+                className={`w-24 ${headClass}`}
+                onClick={() => toggle("status")}
+              >
+                ステータス{arrow("status")}
+              </TableHead>
+              <TableHead
+                className={`w-36 ${headClass}`}
+                onClick={() => toggle("created_at")}
+              >
+                作成日{arrow("created_at")}
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sorted.map((rec) => (
+              <TableRow
+                key={rec.id}
+                className="cursor-pointer hover:bg-muted/50"
+              >
+                <TableCell className="font-mono font-semibold">
+                  <Link
+                    href={`/records/${rec.id}`}
+                    className="text-primary hover:underline"
+                  >
+                    {rec.id}
+                  </Link>
+                </TableCell>
+                <TableCell>
+                  <Link href={`/records/${rec.id}`} className="hover:underline">
+                    {rec.title}
+                  </Link>
+                </TableCell>
+                {cols.map((key) => {
+                  const val = getCondValue(rec.id, key);
+                  return (
+                    <TableCell
+                      key={key}
+                      className="font-mono text-xs text-right"
+                    >
+                      {val !== undefined ? String(val) : "-"}
+                    </TableCell>
+                  );
+                })}
+                <TableCell>
+                  <Badge
+                    variant="secondary"
+                    className={statusColor[rec.status]}
+                  >
+                    {rec.status}
                   </Badge>
-                ))}
-              </div>
-            </TableCell>
-            <TableCell className="text-muted-foreground text-sm">
-              {formatDate(rec.created_at)}
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+                </TableCell>
+                <TableCell className="text-muted-foreground text-sm">
+                  {formatDate(rec.created_at)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
   );
 }

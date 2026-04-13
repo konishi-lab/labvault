@@ -120,6 +120,54 @@ class TestDataPreview:
         assert result["content"]["key"] == "value"
 
 
+class TestSearchIncludeConditions:
+    def test_include_conditions_true(self, lab, tools):
+        lab.new("exp1", auto_log=False, power=20, angle=45)
+        result = tools["search"](include_conditions=True)
+        assert len(result) == 1
+        assert "conditions" in result[0]
+        assert result[0]["conditions"]["power"] == 20
+
+    def test_include_conditions_default_false(self, lab, tools):
+        lab.new("exp1", auto_log=False, power=20)
+        result = tools["search"]()
+        assert "conditions" not in result[0]
+
+
+class TestConditionRangeFilter:
+    def test_gte(self, lab, tools):
+        lab.new("low", auto_log=False, power=10)
+        lab.new("high", auto_log=False, power=50)
+        result = tools["search"](conditions={"power": {"gte": 30}})
+        assert len(result) == 1
+        assert result[0]["title"] == "high"
+
+    def test_range(self, lab, tools):
+        for p in [10, 20, 30, 40, 50]:
+            lab.new(f"p{p}", auto_log=False, power=p)
+        result = tools["search"](
+            conditions={"power": {"gte": 20, "lte": 40}},
+            include_conditions=True,
+        )
+        assert len(result) == 3
+        powers = [r["conditions"]["power"] for r in result]
+        assert sorted(powers) == [20, 30, 40]
+
+    def test_exact_match_backward_compat(self, lab, tools):
+        lab.new("match", auto_log=False, power=20)
+        lab.new("no", auto_log=False, power=30)
+        result = tools["search"](conditions={"power": 20})
+        assert len(result) == 1
+        assert result[0]["title"] == "match"
+
+    def test_range_with_query(self, lab, tools):
+        lab.new("laser low", auto_log=False, power=10)
+        lab.new("laser high", auto_log=False, power=50)
+        result = tools["search"](query="laser", conditions={"power": {"gt": 20}})
+        assert len(result) == 1
+        assert result[0]["title"] == "laser high"
+
+
 class TestAggregate:
     def test_aggregate_basic(self, lab, tools):
         for i in range(5):
@@ -127,7 +175,7 @@ class TestAggregate:
             r.results["thickness"] = 100 + i * 10
             r.status = "success"
 
-        result = tools["aggregate"](result_key="thickness")
+        result = tools["aggregate"](key="thickness")
         assert result["overall"]["count"] == 5
         assert result["overall"]["mean"] == 120.0
         assert result["overall"]["min"] == 100
@@ -139,10 +187,61 @@ class TestAggregate:
             r.results["thickness"] = temp / 4
             r.status = "success"
 
-        result = tools["aggregate"](result_key="thickness", group_by="temperature_C")
+        result = tools["aggregate"](key="thickness", group_by="temperature_C")
         assert "groups" in result
         assert "400" in result["groups"]
         assert "500" in result["groups"]
+
+    def test_aggregate_condition_key(self, lab, tools):
+        """conditions のキーでも集計できる。"""
+        for p in [10, 20, 30]:
+            lab.new(f"exp_p{p}", auto_log=False, power=p)
+        result = tools["aggregate"](key="power")
+        assert result["overall"]["count"] == 3
+        assert result["overall"]["mean"] == 20.0
+
+    def test_aggregate_with_parent_id(self, lab, tools):
+        parent = lab.new("series", auto_log=False)
+        for p in [10, 20, 30]:
+            c = parent.sub(f"sub_p{p}")
+            c.conditions(power=p)
+        lab.new("other", auto_log=False, power=999)
+
+        result = tools["aggregate"](key="power", parent_id=parent.id)
+        assert result["overall"]["count"] == 3
+        assert result["overall"]["mean"] == 20.0
+
+
+class TestGetOverview:
+    def test_overview_basic(self, lab, tools):
+        parent = lab.new("series", auto_log=False)
+        for p in [10, 20, 30]:
+            c = parent.sub(f"sub_p{p}")
+            c.conditions(power=p, material="Fe")
+
+        result = tools["get_overview"](parent_id=parent.id)
+        assert result["child_count"] == 3
+        assert result["conditions"]["power"]["type"] == "numeric"
+        assert result["conditions"]["power"]["min"] == 10
+        assert result["conditions"]["power"]["max"] == 30
+        assert result["conditions"]["material"]["type"] == "categorical"
+        assert "Fe" in result["conditions"]["material"]["unique_values"]
+
+    def test_overview_no_children(self, lab, tools):
+        parent = lab.new("empty", auto_log=False)
+        result = tools["get_overview"](parent_id=parent.id)
+        assert result["child_count"] == 0
+        assert result["conditions"] == {}
+
+    def test_overview_with_results(self, lab, tools):
+        parent = lab.new("series", auto_log=False)
+        for i in range(3):
+            c = parent.sub(f"sub{i}")
+            c.results["roughness"] = 0.1 * (i + 1)
+
+        result = tools["get_overview"](parent_id=parent.id)
+        assert "roughness" in result["results"]
+        assert result["results"]["roughness"]["count"] == 3
 
 
 class TestGetTimeline:

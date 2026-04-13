@@ -22,11 +22,17 @@ labvault MCP サーバー: 実験データの検索・閲覧・比較ツール�
 2. compare(record_ids=[ID群]) → 横断比較
 
 ### 統計型 (「○○の傾向を見せて」)
-1. aggregate(result_key=キー名) → 統計
+1. aggregate(key=キー名) → 統計 (conditions/results 両対応)
+
+### 概要型 (「この実験シリーズは何を調べた？」)
+1. get_overview(parent_id=ID) → 条件・結果のサマリ
 
 ### データ確認型 (「ファイルの中身を見せて」)
 1. get_detail(record_id=ID) → ファイル一覧
 2. data_preview(record_id=ID, filename=名前) → プレビュー
+
+### 範囲検索 (「power が 50W 以上の実験は？」)
+1. search(conditions={"power": {"gte": 50}}) → 該当レコード
 """
 
 
@@ -45,7 +51,11 @@ def create_server(lab: Lab | None = None) -> Any:
 
     @mcp.tool(
         description="実験レコードを検索する。自然言語クエリ、タグ、ステータス、"
-        "親レコードID、条件 (power=20等) でフィルタリング。",
+        "親レコードID、条件でフィルタリング。"
+        "conditions は完全一致 ({\"power\": 20}) または範囲指定 "
+        "({\"power\": {\"gte\": 10, \"lte\": 30}}) が可能。"
+        "演算子: gt, gte, lt, lte, eq, ne。"
+        "include_conditions=True で各レコードの条件も返す。",
     )
     def search(
         query: str | None = None,
@@ -54,8 +64,11 @@ def create_server(lab: Lab | None = None) -> Any:
         record_type: str | None = None,
         parent_id: str | None = None,
         conditions: dict[str, Any] | None = None,
+        include_conditions: bool = False,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
+        from labvault.core.lab import _match_condition
+
         lab = _get_lab()
         if query:
             records = lab.search(
@@ -72,9 +85,8 @@ def create_server(lab: Lab | None = None) -> Any:
                 tags=tags,
                 status=status,
                 type=record_type,
-                limit=limit,
+                limit=limit * 5 if conditions or parent_id else limit,
             )
-            # list にも parent_id/conditions フィルタを適用
             if parent_id is not None:
                 records = [r for r in records if r.parent_id == parent_id]
             if conditions:
@@ -82,12 +94,14 @@ def create_server(lab: Lab | None = None) -> Any:
                     r
                     for r in records
                     if all(
-                        r.get_conditions().get(k) == v for k, v in conditions.items()
+                        _match_condition(r.get_conditions().get(k), v)
+                        for k, v in conditions.items()
                     )
                 ]
             records = records[:limit]
-        return [
-            {
+        result = []
+        for r in records:
+            item: dict[str, Any] = {
                 "id": r.id,
                 "title": r.title,
                 "type": r.type,
@@ -95,8 +109,10 @@ def create_server(lab: Lab | None = None) -> Any:
                 "tags": r.tags,
                 "created_at": r.created_at.isoformat(),
             }
-            for r in records
-        ]
+            if include_conditions:
+                item["conditions"] = r.get_conditions()
+            result.append(item)
+        return result
 
     @mcp.tool(
         description="レコードの詳細を表示する。条件、結果、メモ、ファイル一覧を含む。"
@@ -224,56 +240,125 @@ def create_server(lab: Lab | None = None) -> Any:
 
         return result
 
+    def _stats(vals: list[float]) -> dict[str, Any]:
+        if not vals:
+            return {}
+        return {
+            "count": len(vals),
+            "mean": round(statistics.mean(vals), 4),
+            "std": (round(statistics.stdev(vals), 4) if len(vals) > 1 else 0.0),
+            "min": min(vals),
+            "max": max(vals),
+            "median": round(statistics.median(vals), 4),
+        }
+
     @mcp.tool(
-        description="数値結果の統計集計。"
-        "平均、標準偏差、最小、最大を計算。group_by で条件別集計。",
+        description="数値キーの統計集計。results と conditions の両方から指定キーを集計する。"
+        "group_by で別のキーでグループ化。parent_id で親レコード配下に限定可能。",
     )
     def aggregate(
-        result_key: str,
+        key: str,
         group_by: str | None = None,
         tags: list[str] | None = None,
-        status: str = "success",
+        status: str | None = None,
+        parent_id: str | None = None,
     ) -> dict[str, Any]:
         lab = _get_lab()
-        records = lab.list(tags=tags, status=status, limit=1000)
+        records = lab.list(
+            tags=tags,
+            status=status if status else None,
+            limit=5000,
+        )
+
+        if parent_id is not None:
+            records = [r for r in records if r.parent_id == parent_id]
 
         values: list[float] = []
         groups: dict[str, list[float]] = {}
 
         for rec in records:
+            cond = rec.get_conditions()
             res = rec.results.to_dict()
-            if result_key not in res:
+            merged = {**cond, **res}
+
+            if key not in merged:
                 continue
-            val = res[result_key]
+            val = merged[key]
             if not isinstance(val, (int, float)):
                 continue
             values.append(float(val))
 
             if group_by:
-                cond = rec.get_conditions()
-                group_val = str(cond.get(group_by, "unknown"))
+                group_val = str(merged.get(group_by, "unknown"))
                 groups.setdefault(group_val, []).append(float(val))
 
-        def _stats(vals: list[float]) -> dict[str, Any]:
-            if not vals:
-                return {}
-            return {
-                "count": len(vals),
-                "mean": round(statistics.mean(vals), 4),
-                "std": (round(statistics.stdev(vals), 4) if len(vals) > 1 else 0.0),
-                "min": min(vals),
-                "max": max(vals),
-                "median": round(statistics.median(vals), 4),
-            }
-
         result: dict[str, Any] = {
-            "result_key": result_key,
+            "key": key,
+            "record_count": len(records),
             "overall": _stats(values),
         }
         if group_by and groups:
             result["group_by"] = group_by
             result["groups"] = {k: _stats(v) for k, v in sorted(groups.items())}
         return result
+
+    @mcp.tool(
+        description="実験シリーズの概要を1回で取得する。"
+        "子レコード数、条件のユニーク値/統計、結果の統計を返す。"
+        "「この実験は何を調べたか」をワンショットで把握できる。",
+    )
+    def get_overview(
+        parent_id: str,
+    ) -> dict[str, Any]:
+        lab = _get_lab()
+        all_records = lab.list(limit=5000)
+        children = [r for r in all_records if r.parent_id == parent_id]
+
+        condition_keys: dict[str, list[Any]] = {}
+        result_keys: dict[str, list[float]] = {}
+        status_counts: dict[str, int] = {}
+
+        for rec in children:
+            st = str(rec.status)
+            status_counts[st] = status_counts.get(st, 0) + 1
+
+            cond = rec.get_conditions()
+            for k, v in cond.items():
+                condition_keys.setdefault(k, []).append(v)
+
+            res = rec.results.to_dict()
+            for k, v in res.items():
+                if isinstance(v, (int, float)):
+                    result_keys.setdefault(k, []).append(float(v))
+
+        conditions_summary: dict[str, Any] = {}
+        for k, vals in condition_keys.items():
+            numeric_vals = [v for v in vals if isinstance(v, (int, float))]
+            if numeric_vals and len(numeric_vals) == len(vals):
+                conditions_summary[k] = {
+                    "type": "numeric",
+                    "unique_count": len(set(numeric_vals)),
+                    "min": min(numeric_vals),
+                    "max": max(numeric_vals),
+                    "mean": round(statistics.mean(numeric_vals), 4),
+                }
+            else:
+                unique = sorted(set(str(v) for v in vals))
+                conditions_summary[k] = {
+                    "type": "categorical",
+                    "unique_values": unique[:50],
+                    "unique_count": len(unique),
+                }
+
+        results_summary = {k: _stats(v) for k, v in result_keys.items()}
+
+        return {
+            "parent_id": parent_id,
+            "child_count": len(children),
+            "status_counts": status_counts,
+            "conditions": conditions_summary,
+            "results": results_summary,
+        }
 
     @mcp.tool(description="レコードの時系列履歴。作成順にイベントを一覧表示。")
     def get_timeline(
