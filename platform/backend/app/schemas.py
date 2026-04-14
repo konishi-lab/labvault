@@ -46,6 +46,7 @@ class RecordDetail(RecordSummary):
     condition_units: dict[str, str] = {}
     condition_descriptions: dict[str, str] = {}
     results: dict[str, Any] = {}
+    result_units: dict[str, str] = {}
     notes: list[NoteResponse] = []
     files: list[FileInfo] = []
     links: list[LinkResponse] = []

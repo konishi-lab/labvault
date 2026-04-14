@@ -35,6 +35,7 @@ export interface RecordDetail extends RecordSummary {
   condition_units: Record<string, string>;
   condition_descriptions: Record<string, string>;
   results: Record<string, unknown>;
+  result_units: Record<string, string>;
   notes: NoteResponse[];
   files: FileInfo[];
   links: LinkResponse[];

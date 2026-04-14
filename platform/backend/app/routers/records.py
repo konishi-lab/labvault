@@ -55,6 +55,7 @@ def _to_detail(rec: Any) -> RecordDetail:
         condition_units=rec.get_condition_units(),
         condition_descriptions=rec.get_condition_descriptions(),
         results=rec.results.to_dict(),
+        result_units=rec.get_result_units(),
         notes=[
             {"text": n.text, "created_at": n.created_at, "author": n.author}
             for n in rec.notes

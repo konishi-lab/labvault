@@ -20,6 +20,7 @@ import { SortableRecordTable } from "@/components/sortable-record-table";
 import { TagEditor } from "@/components/tag-editor";
 import { NoteForm } from "@/components/note-form";
 import { ConditionsCard } from "@/components/conditions-card";
+import { ResultsCard } from "@/components/results-card";
 import { ConditionFilterPanel } from "@/components/condition-filter";
 import type { ConditionFilter } from "@/components/condition-filter";
 import { ConditionScatterChart } from "@/components/scatter-chart";
@@ -81,41 +82,169 @@ function previewType(name: string): "vk4" | "image" | null {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-function ImagePreview({
+function imageUrl(recordId: string, filename: string): string {
+  const ptype = previewType(filename);
+  return ptype === "vk4"
+    ? `${API_BASE}/api/records/${recordId}/preview/${encodeURIComponent(filename)}`
+    : `${API_BASE}/api/records/${recordId}/files/${encodeURIComponent(filename)}`;
+}
+
+function ImageThumbnail({
   recordId,
   filename,
+  label,
+  onClickExpand,
 }: {
   recordId: string;
   filename: string;
+  label?: string;
+  onClickExpand?: () => void;
 }) {
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(
     "loading"
   );
-  const ptype = previewType(filename);
-  const url =
-    ptype === "vk4"
-      ? `${API_BASE}/api/records/${recordId}/preview/${encodeURIComponent(filename)}`
-      : `${API_BASE}/api/records/${recordId}/files/${encodeURIComponent(filename)}`;
+  const url = imageUrl(recordId, filename);
 
   return (
-    <div className="rounded-lg border bg-muted/30 p-2">
-      {status === "loading" && (
-        <Skeleton className="h-48 w-full rounded" />
-      )}
+    <div
+      className="relative rounded-lg border bg-muted/30 p-1 cursor-pointer hover:ring-2 hover:ring-primary/30 transition-all"
+      onClick={onClickExpand}
+    >
+      {status === "loading" && <Skeleton className="h-40 w-full rounded" />}
       {status === "error" && (
-        <p className="py-4 text-center text-xs text-muted-foreground">
-          プレビューを読み込めません
+        <p className="h-40 flex items-center justify-center text-xs text-muted-foreground">
+          読み込めません
         </p>
       )}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={url}
         alt={filename}
-        className={`max-h-96 rounded ${status !== "loaded" ? "hidden" : ""}`}
+        className={`w-full h-40 object-contain rounded ${status === "loaded" ? "" : "absolute opacity-0 pointer-events-none"}`}
         onLoad={() => setStatus("loaded")}
         onError={() => setStatus("error")}
       />
+      {label && (
+        <p className="text-xs text-center text-muted-foreground mt-1 truncate">
+          {label}
+        </p>
+      )}
     </div>
+  );
+}
+
+function ImageModal({
+  recordId,
+  filename,
+  onClose,
+}: {
+  recordId: string;
+  filename: string;
+  onClose: () => void;
+}) {
+  const url = imageUrl(recordId, filename);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+      onClick={onClose}
+    >
+      <div className="relative max-w-[90vw] max-h-[90vh]">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt={filename} className="max-w-full max-h-[90vh] rounded-lg" />
+        <p className="absolute bottom-2 left-2 text-xs text-white/80 bg-black/50 px-2 py-1 rounded">
+          {filename}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function FileSection({
+  recordId,
+  files,
+}: {
+  recordId: string;
+  files: { name: string; content_type: string; size_bytes: number }[];
+}) {
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
+
+  const imageFiles = files.filter((f) => previewType(f.name) !== null);
+  const dataFiles = files.filter((f) => previewType(f.name) === null);
+
+  return (
+    <>
+      {expandedImage && (
+        <ImageModal
+          recordId={recordId}
+          filename={expandedImage}
+          onClose={() => setExpandedImage(null)}
+        />
+      )}
+
+      {imageFiles.length > 0 && (
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">
+              画像 ({imageFiles.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {imageFiles.map((file) => (
+                <ImageThumbnail
+                  key={file.name}
+                  recordId={recordId}
+                  filename={file.name}
+                  label={file.name}
+                  onClickExpand={() => setExpandedImage(file.name)}
+                />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {dataFiles.length > 0 && (
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">
+              データファイル ({dataFiles.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {dataFiles.map((file, i) => (
+              <div key={file.name}>
+                {i > 0 && <Separator className="mb-2" />}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="shrink-0">{fileIcon(file.name)}</span>
+                    <span className="font-mono truncate">{file.name}</span>
+                    <Badge
+                      variant="outline"
+                      className={`shrink-0 text-xs ${fileTypeBadge(file.name)}`}
+                    >
+                      {fileExt(file.name)}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-muted-foreground">
+                      {file.size_bytes > 0 ? formatBytes(file.size_bytes) : "-"}
+                    </span>
+                    <a
+                      href={`${API_BASE}/api/records/${recordId}/files/${encodeURIComponent(file.name)}?download=1`}
+                      download={file.name}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      DL
+                    </a>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+    </>
   );
 }
 
@@ -174,7 +303,9 @@ export default function RecordDetailPage() {
   }
 
   const conditions = Object.entries(record.conditions);
-  const results = Object.entries(record.results);
+  const results = Object.entries(record.results).filter(
+    ([key]) => !key.endsWith("__analysis_id")
+  );
 
   return (
     <div className="space-y-6">
@@ -254,71 +385,16 @@ export default function RecordDetailPage() {
 
         {/* 結果 */}
         {results.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">結果</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {results.map(([key, value], i) => (
-                <div key={key}>
-                  {i > 0 && <Separator className="mb-2" />}
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">{key}</span>
-                    <span className="font-mono">{String(value)}</span>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+          <ResultsCard
+            results={results}
+            units={record.result_units || {}}
+            allResults={record.results}
+          />
         )}
 
         {/* ファイル */}
         {record.files.length > 0 && (
-          <Card className="md:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-base">
-                ファイル ({record.files.length})
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              {record.files.map((file, i) => (
-                <div key={file.name}>
-                  {i > 0 && <Separator className="mb-3" />}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="shrink-0">{fileIcon(file.name)}</span>
-                      <span className="font-mono truncate">{file.name}</span>
-                      <Badge
-                        variant="outline"
-                        className={`shrink-0 text-xs ${fileTypeBadge(file.name)}`}
-                      >
-                        {fileExt(file.name)}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-muted-foreground">
-                        {file.size_bytes > 0
-                          ? formatBytes(file.size_bytes)
-                          : "-"}
-                      </span>
-                      <a
-                        href={`${API_BASE}/api/records/${id}/files/${encodeURIComponent(file.name)}?download=1`}
-                        download={file.name}
-                        className="text-xs text-primary hover:underline"
-                      >
-                        DL
-                      </a>
-                    </div>
-                  </div>
-                  {previewType(file.name) && (
-                    <div className="mt-2">
-                      <ImagePreview recordId={id} filename={file.name} />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+          <FileSection recordId={id} files={record.files} />
         )}
 
         {/* メモ */}
