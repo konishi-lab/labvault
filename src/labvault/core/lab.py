@@ -28,7 +28,7 @@ def _match_condition(actual: Any, spec: Any) -> bool:
         _match_condition(5, {"gt": 10})  # False
     """
     if not isinstance(spec, dict):
-        return actual == spec
+        return bool(actual == spec)
     ops = {
         "gte": "__ge__",
         "gt": "__gt__",
@@ -42,7 +42,7 @@ def _match_condition(actual: Any, spec: Any) -> bool:
             if actual is None:
                 return False
             try:
-                if not getattr(actual, method)(spec[op]):
+                if not bool(getattr(actual, method)(spec[op])):
                     return False
             except TypeError:
                 return False

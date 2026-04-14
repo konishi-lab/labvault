@@ -105,5 +105,14 @@ module = [
     "google.*",
     "mcp",
     "mcp.*",
+    "scipy",
+    "scipy.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "labvault.parsers.*",
+]
+disallow_any_generics = false
+warn_return_any = false

@@ -87,7 +87,7 @@ def get_pixel_size_um(data: bytes) -> float:
     """PLUX バイトデータからピクセルサイズ (µm/pixel) を返す。"""
     meta = parse_index(data)
     # FOV は mm 単位
-    return meta["fov_x_mm"] * 1000.0 / meta["width"]
+    return float(meta["fov_x_mm"]) * 1000.0 / int(meta["width"])
 
 
 def to_surface_data(data: bytes) -> Any:
@@ -114,7 +114,7 @@ def to_preview_png(data: bytes, *, max_size: int = 512) -> bytes:
     img = Image.fromarray(image_array)
 
     if max(img.size) > max_size:
-        img.thumbnail((max_size, max_size), Image.LANCZOS)
+        img.thumbnail((max_size, max_size), Image.LANCZOS)  # type: ignore[attr-defined]
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
