@@ -10,10 +10,10 @@ import io
 import struct
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # 低レベルデコーダー
 # ---------------------------------------------------------------------------
+
 
 def _read_block_header(data: bytes, offset: int) -> tuple[int, int, int]:
     """データブロックのヘッダから width, height, total_bytes を読む。"""
@@ -60,6 +60,7 @@ def _decode_intensity_block(data: bytes, header_offset_pos: int) -> Any:
 # 公開 API
 # ---------------------------------------------------------------------------
 
+
 def decode_color_image(data: bytes) -> Any:
     """VK4 バイトデータから光学画像を numpy 配列として抽出する。
 
@@ -101,7 +102,7 @@ def decode_height_map(data: bytes) -> Any:
     Returns
     -------
     numpy.ndarray
-        (H, W) float64, 単位: カウント値 (× Z_scale_nm で nm)
+        (H, W) float64, 単位: カウント値 (x Z_scale_nm で nm)
     """
     return _decode_intensity_block(data, header_offset_pos=36)
 

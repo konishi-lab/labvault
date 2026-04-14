@@ -91,7 +91,7 @@ def detect_crater(
     ----------
     height_map:
         傾き補正済みの高さマップ (µm)。差分マップでも単体マップでもよい。
-        クレーターは負の値（凹み）として検出される。
+        クレーターは負の値 (凹み) として検出される。
     pixel_size_um:
         ピクセルサイズ (µm/pixel)。
     threshold_um:
@@ -179,12 +179,14 @@ def compute_volume(
         return float(np.sum(diff) * pixel_size_um**2)
 
     # マスクなし: エッジ平均を基準 (klab-device-library の extract_volume 方式)
-    edges = np.concatenate([
-        height_map[0, :],
-        height_map[1:, -1],
-        height_map[-1, :-1],
-        height_map[1:-1, 0],
-    ])
+    edges = np.concatenate(
+        [
+            height_map[0, :],
+            height_map[1:, -1],
+            height_map[-1, :-1],
+            height_map[1:-1, 0],
+        ]
+    )
     level = float(np.nanmean(edges))
     diff = level - height_map
     diff = diff[diff > 0]

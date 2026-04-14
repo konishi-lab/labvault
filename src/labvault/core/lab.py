@@ -29,7 +29,14 @@ def _match_condition(actual: Any, spec: Any) -> bool:
     """
     if not isinstance(spec, dict):
         return actual == spec
-    ops = {"gte": "__ge__", "gt": "__gt__", "lte": "__le__", "lt": "__lt__", "eq": "__eq__", "ne": "__ne__"}
+    ops = {
+        "gte": "__ge__",
+        "gt": "__gt__",
+        "lte": "__le__",
+        "lt": "__lt__",
+        "eq": "__eq__",
+        "ne": "__ne__",
+    }
     for op, method in ops.items():
         if op in spec:
             if actual is None:
@@ -259,7 +266,10 @@ class Lab:
                 # 条件フィルタ
                 if conditions:
                     rec_cond = rec.get_conditions()
-                    if not all(_match_condition(rec_cond.get(k), v) for k, v in conditions.items()):
+                    if not all(
+                        _match_condition(rec_cond.get(k), v)
+                        for k, v in conditions.items()
+                    ):
                         continue
 
                 results.append(rec)

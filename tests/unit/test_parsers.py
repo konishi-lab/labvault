@@ -23,7 +23,6 @@ from labvault.parsers._analysis import (  # noqa: E402
     detect_crater,
 )
 
-
 # ---------------------------------------------------------------------------
 # fixtures
 # ---------------------------------------------------------------------------
@@ -117,9 +116,12 @@ class TestCorrectTilt:
 class TestDetectCrater:
     def test_detects_single_crater(self) -> None:
         hmap = _make_crater_height_map(
-            width=100, height=100,
-            crater_x=50, crater_y=50,
-            crater_radius=10, crater_depth=1.0,
+            width=100,
+            height=100,
+            crater_x=50,
+            crater_y=50,
+            crater_radius=10,
+            crater_depth=1.0,
         )
         pixel_size = 0.1  # µm/pixel
         result = detect_crater(hmap, pixel_size, threshold_um=0.1)
@@ -138,9 +140,12 @@ class TestDetectCrater:
 
     def test_center_position(self) -> None:
         hmap = _make_crater_height_map(
-            width=200, height=200,
-            crater_x=150, crater_y=100,
-            crater_radius=15, crater_depth=2.0,
+            width=200,
+            height=200,
+            crater_x=150,
+            crater_y=100,
+            crater_radius=15,
+            crater_depth=2.0,
         )
         pixel_size = 0.05
         result = detect_crater(hmap, pixel_size, threshold_um=0.1)
@@ -316,13 +321,26 @@ class TestPluxAnalysisPipeline:
         before_hmap = np.zeros((h, w), dtype=np.float32)
         # after: 中央にクレーター
         after_hmap = _make_crater_height_map(
-            width=w, height=h,
-            crater_x=50, crater_y=50,
-            crater_radius=8, crater_depth=0.5,
+            width=w,
+            height=h,
+            crater_x=50,
+            crater_y=50,
+            crater_radius=8,
+            crater_depth=0.5,
         )
 
-        before_data = _make_plux_bytes(w, h, fov_x_mm=pixel_size_mm, height_map=before_hmap)
-        after_data = _make_plux_bytes(w, h, fov_x_mm=pixel_size_mm, height_map=after_hmap)
+        before_data = _make_plux_bytes(
+            w,
+            h,
+            fov_x_mm=pixel_size_mm,
+            height_map=before_hmap,
+        )
+        after_data = _make_plux_bytes(
+            w,
+            h,
+            fov_x_mm=pixel_size_mm,
+            height_map=after_hmap,
+        )
 
         diff, pixel_size = diff_height_maps(before_data, after_data)
         assert pixel_size == pytest.approx(1.0)

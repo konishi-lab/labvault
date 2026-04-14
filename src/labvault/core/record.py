@@ -494,7 +494,7 @@ class Record:
         else:
             # コード文字列の場合は exec で実行
             local_ns: dict[str, Any] = {}
-            exec(source_code, {}, local_ns)  # noqa: S102
+            exec(source_code, {}, local_ns)
             analyze_fn = local_ns.get("analyze")
             if analyze_fn is None:
                 msg = "Code string must define an 'analyze' function"

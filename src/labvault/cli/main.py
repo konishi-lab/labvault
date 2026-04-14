@@ -172,10 +172,12 @@ def show(record_id: str) -> None:
 @click.option("--limit", "-n", default=20, help="表示件数")
 @click.option("--parent-id", "-p", default=None, help="親レコード ID でフィルタ")
 @click.option("--tags", "-T", multiple=True, help="タグでフィルタ")
-@click.option("--status", "-s", "status_filter", default=None, help="ステータスでフィルタ")
+@click.option("--status", "-s", "status_filter", default=None, help="ステータス")
 @click.option("--type", "-t", "type_filter", default=None, help="タイプでフィルタ")
 @click.option(
-    "--conditions", "-c", multiple=True,
+    "--conditions",
+    "-c",
+    multiple=True,
     help="条件フィルタ (例: power=20, power>=50, power<=100)",
 )
 @click.option("--show-conditions", "-C", is_flag=True, help="条件も表示する")
@@ -217,7 +219,8 @@ def search(
             from labvault.core.lab import _match_condition
 
             results = [
-                r for r in results
+                r
+                for r in results
                 if all(
                     _match_condition(r.get_conditions().get(k), v)
                     for k, v in cond_dict.items()

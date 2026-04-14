@@ -28,7 +28,9 @@ def parse_index(data: bytes) -> dict[str, Any]:
     height = int(general.findtext("IMAGE_SIZE_Y", "0"))
 
     instrument = root.find("Instrument")
-    manufacturer = instrument.findtext("Manufacturer", "") if instrument is not None else ""
+    manufacturer = (
+        instrument.findtext("Manufacturer", "") if instrument is not None else ""
+    )
     model = instrument.findtext("Model", "") if instrument is not None else ""
 
     probing = root.find("ProbingSystem")
