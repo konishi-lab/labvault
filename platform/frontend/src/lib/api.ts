@@ -123,8 +123,14 @@ export async function fetchChildrenConditions(
   return res.json();
 }
 
-export async function fetchChildren(id: string): Promise<RecordSummary[]> {
-  const res = await fetch(`${API_BASE}/api/records/${id}/children`);
+export async function fetchChildren(
+  id: string,
+  params?: { limit?: number; offset?: number }
+): Promise<RecordListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.offset) searchParams.set("offset", String(params.offset));
+  const res = await fetch(`${API_BASE}/api/records/${id}/children?${searchParams}`);
   if (!res.ok) throw new Error(`Failed to fetch children: ${res.status}`);
   return res.json();
 }

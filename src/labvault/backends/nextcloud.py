@@ -44,6 +44,8 @@ class NextcloudStorage:
 
     def _full_path(self, path: str) -> str:
         """SDK パスを Nextcloud フルパスに変換する。"""
+        if path.startswith(self._base_path):
+            return path
         return f"{self._base_path}/{path}"
 
     def upload(self, path: str, data: bytes, content_type: str = "") -> str:

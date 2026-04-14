@@ -43,6 +43,7 @@ export function SortableRecordTable({
   conditionColumns,
   availableConditionKeys,
   onColumnsChange,
+  pageSize,
 }: {
   records: RecordSummary[];
   defaultSort?: string;
@@ -50,10 +51,12 @@ export function SortableRecordTable({
   conditionColumns?: string[];
   availableConditionKeys?: string[];
   onColumnsChange?: (cols: string[]) => void;
+  pageSize?: number;
 }) {
   const [sortKey, setSortKey] = useState(defaultSort);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [showColumnPicker, setShowColumnPicker] = useState(false);
+  const [page, setPage] = useState(0);
 
   const cols = conditionColumns || [];
   const available = availableConditionKeys || [];
@@ -75,7 +78,6 @@ export function SortableRecordTable({
     let vb: string | number;
 
     if (cols.includes(sortKey)) {
-      // 条件カラムでソート
       const rawA = getCondValue(a.id, sortKey);
       const rawB = getCondValue(b.id, sortKey);
       va = typeof rawA === "number" ? rawA : String(rawA ?? "");
@@ -100,6 +102,14 @@ export function SortableRecordTable({
     return sortDir === "asc" ? cmp : -cmp;
   });
 
+  // ページネーション（ソート後に適用）
+  const usePaging = pageSize && sorted.length > pageSize;
+  const totalPages = usePaging ? Math.ceil(sorted.length / pageSize) : 1;
+  const safePage = Math.min(page, totalPages - 1);
+  const paged = usePaging
+    ? sorted.slice(safePage * pageSize, (safePage + 1) * pageSize)
+    : sorted;
+
   const toggle = (key: string) => {
     if (sortKey === key) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
@@ -107,6 +117,7 @@ export function SortableRecordTable({
       setSortKey(key);
       setSortDir("asc");
     }
+    setPage(0);
   };
 
   const arrow = (key: string) =>
@@ -192,7 +203,7 @@ export function SortableRecordTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sorted.map((rec) => (
+            {paged.map((rec) => (
               <TableRow
                 key={rec.id}
                 className="cursor-pointer hover:bg-muted/50"
@@ -237,6 +248,37 @@ export function SortableRecordTable({
           </TableBody>
         </Table>
       </div>
+
+      {/* ページネーション */}
+      {usePaging && (
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">
+            {safePage * pageSize + 1}-
+            {Math.min((safePage + 1) * pageSize, sorted.length)} /{" "}
+            {sorted.length}
+          </span>
+          <div className="flex gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs cursor-pointer"
+              disabled={safePage === 0}
+              onClick={() => setPage(safePage - 1)}
+            >
+              前へ
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs cursor-pointer"
+              disabled={safePage >= totalPages - 1}
+              onClick={() => setPage(safePage + 1)}
+            >
+              次へ
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

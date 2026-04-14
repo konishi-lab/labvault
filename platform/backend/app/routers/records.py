@@ -170,13 +170,14 @@ def restore_record(
     return _to_detail(rec)
 
 
-@router.get("/{record_id}/children", response_model=list[RecordSummary])
+@router.get("/{record_id}/children", response_model=RecordListResponse)
 def get_children(
     record_id: str,
-    limit: int = 500,
+    limit: int = 100,
+    offset: int = 0,
     lab: Lab = Depends(get_lab),
-) -> list[RecordSummary]:
-    """子レコード一覧を取得する。Firestore の parent_id インデックスを使用。"""
+) -> RecordListResponse:
+    """子レコード一覧を取得する（ページネーション対応）。"""
     from labvault.core.record import Record
 
     try:
@@ -184,20 +185,26 @@ def get_children(
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
 
-    # Firestore に直接 parent_id フィルタで問い合わせ
     if hasattr(lab._metadata, "list_records"):
-        rows = lab._metadata.list_records(
+        # total カウント用に大きめに取得
+        all_rows = lab._metadata.list_records(
             lab._team,
             parent_id=record_id,
-            limit=limit,
+            limit=10000,
         )
+        total = len(all_rows)
+        rows = all_rows[offset : offset + limit]
         children = [Record._from_dict(r, lab=lab) for r in rows]
     else:
-        # InMemory fallback
         all_records = lab.list(limit=10000)
-        children = [r for r in all_records if r.parent_id == record_id]
+        all_children = [r for r in all_records if r.parent_id == record_id]
+        total = len(all_children)
+        children = all_children[offset : offset + limit]
 
-    return [_to_summary(c) for c in children]
+    return RecordListResponse(
+        items=[_to_summary(c) for c in children],
+        total=total,
+    )
 
 
 @router.get("/{record_id}/children/conditions")

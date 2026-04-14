@@ -72,13 +72,16 @@ function fileTypeBadge(name: string): string {
   return styles[ext] || "";
 }
 
-function isPreviewable(name: string): boolean {
-  return name.toLowerCase().endsWith(".vk4");
+function previewType(name: string): "vk4" | "image" | null {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".vk4")) return "vk4";
+  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image";
+  return null;
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-function Vk4Preview({
+function ImagePreview({
   recordId,
   filename,
 }: {
@@ -88,7 +91,11 @@ function Vk4Preview({
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(
     "loading"
   );
-  const url = `${API_BASE}/api/records/${recordId}/preview/${encodeURIComponent(filename)}`;
+  const ptype = previewType(filename);
+  const url =
+    ptype === "vk4"
+      ? `${API_BASE}/api/records/${recordId}/preview/${encodeURIComponent(filename)}`
+      : `${API_BASE}/api/records/${recordId}/files/${encodeURIComponent(filename)}`;
 
   return (
     <div className="rounded-lg border bg-muted/30 p-2">
@@ -129,11 +136,14 @@ export default function RecordDetailPage() {
   useEffect(() => {
     Promise.all([
       fetchRecord(id),
-      fetchChildren(id).catch(() => []),
+      fetchChildren(id, { limit: 10000 }).catch(() => ({
+        items: [],
+        total: 0,
+      })),
     ])
       .then(([rec, kids]) => {
         setRecord(rec);
-        setChildren(kids);
+        setChildren(kids.items);
       })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
@@ -285,15 +295,24 @@ export default function RecordDetailPage() {
                         {fileExt(file.name)}
                       </Badge>
                     </div>
-                    <span className="shrink-0 text-muted-foreground">
-                      {file.size_bytes > 0
-                        ? formatBytes(file.size_bytes)
-                        : ""}
-                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-muted-foreground">
+                        {file.size_bytes > 0
+                          ? formatBytes(file.size_bytes)
+                          : "-"}
+                      </span>
+                      <a
+                        href={`${API_BASE}/api/records/${id}/files/${encodeURIComponent(file.name)}?download=1`}
+                        download={file.name}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        DL
+                      </a>
+                    </div>
                   </div>
-                  {isPreviewable(file.name) && (
+                  {previewType(file.name) && (
                     <div className="mt-2">
-                      <Vk4Preview recordId={id} filename={file.name} />
+                      <ImagePreview recordId={id} filename={file.name} />
                     </div>
                   )}
                 </div>
@@ -337,8 +356,8 @@ export default function RecordDetailPage() {
             recordId={id}
             children={children}
             onRefresh={() => {
-              fetchChildren(id)
-                .then(setChildren)
+              fetchChildren(id, { limit: 10000 })
+                .then((res) => setChildren(res.items))
                 .catch(() => {});
             }}
           />
@@ -436,6 +455,7 @@ function ChildrenSection({
             conditionColumns={condCols}
             availableConditionKeys={availableConditionKeys}
             onColumnsChange={setCondCols}
+            pageSize={100}
           />
         </CardContent>
       </Card>

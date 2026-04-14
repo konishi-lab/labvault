@@ -76,10 +76,10 @@ export function BulkUploadButton({
 
   useEffect(() => {
     if (open) {
-      fetchChildren(recordId)
-        .then((kids) =>
+      fetchChildren(recordId, { limit: 5000 })
+        .then((res) =>
           setChildren(
-            [...kids].sort((a, b) =>
+            [...res.items].sort((a, b) =>
               naturalSortKey(a.title).localeCompare(naturalSortKey(b.title))
             )
           )

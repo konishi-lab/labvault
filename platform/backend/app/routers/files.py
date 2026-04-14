@@ -57,9 +57,10 @@ async def upload_file(
 def download_file(
     record_id: str,
     filename: str,
+    download: bool = False,
     lab: Lab = Depends(get_lab),
 ) -> Response:
-    """ファイルをダウンロードする。"""
+    """ファイルをダウンロード/表示する。?download=1 で強制ダウンロード。"""
     try:
         rec = lab.get(record_id)
     except RecordNotFoundError:
@@ -76,8 +77,15 @@ def download_file(
             content_type = ref.content_type or content_type
             break
 
+    if download:
+        disposition = "attachment"
+    elif content_type.startswith("image/"):
+        disposition = "inline"
+    else:
+        disposition = "attachment"
+
     return Response(
         content=data,
         media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
     )
