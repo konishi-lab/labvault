@@ -443,6 +443,56 @@ export default function RecordDetailPage() {
   );
 }
 
+function ColumnPicker({
+  label,
+  keys,
+  selected,
+  onChange,
+}: {
+  label: string;
+  keys: string[];
+  selected: string[];
+  onChange: (cols: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (keys.length === 0) return null;
+
+  const toggle = (key: string) => {
+    if (selected.includes(key)) {
+      onChange(selected.filter((c) => c !== key));
+    } else {
+      onChange([...selected, key]);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 text-xs cursor-pointer"
+        onClick={() => setOpen(!open)}
+      >
+        {label} {selected.length > 0 ? `(${selected.length})` : ""}
+      </Button>
+      {open && (
+        <div className="flex flex-wrap gap-1">
+          {keys.map((key) => (
+            <Badge
+              key={key}
+              variant={selected.includes(key) ? "default" : "outline"}
+              className="text-xs cursor-pointer"
+              onClick={() => toggle(key)}
+            >
+              {key}
+            </Badge>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChildrenSection({
   recordId,
   children,
@@ -460,6 +510,7 @@ function ChildrenSection({
   const [resultKeys, setResultKeys] = useState<string[]>([]);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [condCols, setCondCols] = useState<string[]>([]);
+  const [resCols, setResCols] = useState<string[]>([]);
 
   // 子レコードの conditions + results を取得
   useEffect(() => {
@@ -505,6 +556,15 @@ function ChildrenSection({
 
   return (
     <>
+      {dataLoaded && fieldsMap.size > 0 && (
+        <div className="md:col-span-2">
+          <ConditionScatterChart
+            records={filtered}
+            conditionsMap={fieldsMap}
+          />
+        </div>
+      )}
+
       <Card className="md:col-span-2">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
@@ -526,26 +586,31 @@ function ChildrenSection({
               onChange={setCondFilters}
             />
           )}
+          {dataLoaded && (
+            <ColumnPicker
+              label="条件カラム"
+              keys={conditionKeys}
+              selected={condCols}
+              onChange={setCondCols}
+            />
+          )}
+          {dataLoaded && resultKeys.length > 0 && (
+            <ColumnPicker
+              label="結果カラム"
+              keys={resultKeys}
+              selected={resCols}
+              onChange={setResCols}
+            />
+          )}
           <SortableRecordTable
             records={filtered}
             defaultSort="title"
             conditionsMap={fieldsMap}
-            conditionColumns={condCols}
-            availableConditionKeys={availableKeys}
-            onColumnsChange={setCondCols}
+            conditionColumns={[...condCols, ...resCols]}
             pageSize={100}
           />
         </CardContent>
       </Card>
-
-      {dataLoaded && fieldsMap.size > 0 && (
-        <div className="md:col-span-2">
-          <ConditionScatterChart
-            records={filtered}
-            conditionsMap={fieldsMap}
-          />
-        </div>
-      )}
     </>
   );
 }

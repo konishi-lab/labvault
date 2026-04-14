@@ -126,45 +126,8 @@ export function SortableRecordTable({
   const headClass =
     "cursor-pointer hover:text-foreground select-none transition-colors";
 
-  const toggleColumn = (key: string) => {
-    if (!onColumnsChange) return;
-    if (cols.includes(key)) {
-      onColumnsChange(cols.filter((c) => c !== key));
-    } else {
-      onColumnsChange([...cols, key]);
-    }
-  };
-
   return (
     <div className="space-y-2">
-      {/* カラム選択 */}
-      {available.length > 0 && onColumnsChange && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs cursor-pointer"
-            onClick={() => setShowColumnPicker(!showColumnPicker)}
-          >
-            条件カラム {cols.length > 0 ? `(${cols.length})` : ""}
-          </Button>
-          {showColumnPicker && (
-            <div className="flex flex-wrap gap-1">
-              {available.map((key) => (
-                <Badge
-                  key={key}
-                  variant={cols.includes(key) ? "default" : "outline"}
-                  className="text-xs cursor-pointer"
-                  onClick={() => toggleColumn(key)}
-                >
-                  {key}
-                </Badge>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>

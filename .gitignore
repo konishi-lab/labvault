@@ -16,3 +16,4 @@ htmlcov/
 .ipynb_checkpoints/
 *.egg
 data_sample/
+.next/
