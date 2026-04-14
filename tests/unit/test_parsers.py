@@ -10,12 +10,10 @@ import struct
 import xml.etree.ElementTree as ET
 import zipfile
 
+import numpy as np
 import pytest
 
-np = pytest.importorskip("numpy", reason="numpy not installed")
-pytest.importorskip("scipy", reason="scipy not installed")
-
-from labvault.parsers._analysis import (  # noqa: E402
+from labvault.parsers._analysis import (
     CraterMetrics,
     SurfaceData,
     compute_volume,
