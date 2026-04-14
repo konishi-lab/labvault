@@ -453,46 +453,48 @@ function ChildrenSection({
   onRefresh: () => void;
 }) {
   const [condFilters, setCondFilters] = useState<ConditionFilter[]>([]);
-  const [conditionsMap, setConditionsMap] = useState<
+  const [fieldsMap, setFieldsMap] = useState<
     Map<string, Record<string, unknown>>
   >(new Map());
-  const [condLoaded, setCondLoaded] = useState(false);
+  const [conditionKeys, setConditionKeys] = useState<string[]>([]);
+  const [resultKeys, setResultKeys] = useState<string[]>([]);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [condCols, setCondCols] = useState<string[]>([]);
 
-  // 子レコードの conditions を取得 (散布図用)
+  // 子レコードの conditions + results を取得
   useEffect(() => {
     fetchChildrenConditions(recordId)
       .then((items) => {
         const map = new Map<string, Record<string, unknown>>();
+        const cKeys = new Set<string>();
+        const rKeys = new Set<string>();
         for (const item of items) {
-          map.set(item.id, item.conditions);
+          // conditions と results をマージ
+          map.set(item.id, { ...item.conditions, ...item.results });
+          Object.keys(item.conditions).forEach((k) => cKeys.add(k));
+          Object.keys(item.results).forEach((k) => rKeys.add(k));
         }
-        setConditionsMap(map);
-        setCondLoaded(true);
+        setFieldsMap(map);
+        setConditionKeys(Array.from(cKeys).sort());
+        setResultKeys(Array.from(rKeys).sort());
+        setDataLoaded(true);
       })
       .catch(() => {});
   }, [recordId]);
 
-  // 利用可能な条件キーを収集
-  const availableConditionKeys = (() => {
-    const keys = new Set<string>();
-    conditionsMap.forEach((cond) => {
-      Object.keys(cond).forEach((k) => keys.add(k));
-    });
-    return Array.from(keys).sort();
-  })();
+  // 利用可能なキー (conditions + results)
+  const availableKeys = [...conditionKeys, ...resultKeys];
 
-  // 条件フィルタ適用
+  // フィルタ適用
   const filtered =
     condFilters.length === 0
       ? children
       : children.filter((rec) => {
-          const cond = conditionsMap.get(rec.id);
-          if (!cond) return false;
+          const fields = fieldsMap.get(rec.id);
+          if (!fields) return false;
           return condFilters.every((f) => {
-            const val = cond[f.key];
+            const val = fields[f.key];
             if (val === undefined) return false;
-            // 数値比較
             const numFilter = Number(f.value);
             if (!isNaN(numFilter) && typeof val === "number") {
               return val === numFilter;
@@ -518,7 +520,7 @@ function ChildrenSection({
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          {condLoaded && (
+          {dataLoaded && (
             <ConditionFilterPanel
               filters={condFilters}
               onChange={setCondFilters}
@@ -527,20 +529,20 @@ function ChildrenSection({
           <SortableRecordTable
             records={filtered}
             defaultSort="title"
-            conditionsMap={conditionsMap}
+            conditionsMap={fieldsMap}
             conditionColumns={condCols}
-            availableConditionKeys={availableConditionKeys}
+            availableConditionKeys={availableKeys}
             onColumnsChange={setCondCols}
             pageSize={100}
           />
         </CardContent>
       </Card>
 
-      {condLoaded && conditionsMap.size > 0 && (
+      {dataLoaded && fieldsMap.size > 0 && (
         <div className="md:col-span-2">
           <ConditionScatterChart
             records={filtered}
-            conditionsMap={conditionsMap}
+            conditionsMap={fieldsMap}
           />
         </div>
       )}

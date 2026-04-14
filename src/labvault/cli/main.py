@@ -414,12 +414,14 @@ def export(output_dir: str, limit: int) -> None:
 @click.option("--parent-id", "-p", default=None, help="親レコード ID でフィルタ")
 @click.option("--tags", "-T", multiple=True, help="タグでフィルタ")
 @click.option("--status", "-s", default=None, help="ステータスでフィルタ")
+@click.option("--type", "-t", "record_type", default=None, help="タイプでフィルタ")
 def aggregate(
     key: str,
     group_by: str | None,
     parent_id: str | None,
     tags: tuple[str, ...],
     status: str | None,
+    record_type: str | None,
 ) -> None:
     """数値キーの統計集計 (conditions/results 両対応)."""
     import statistics
@@ -428,6 +430,7 @@ def aggregate(
     records = lab.list(
         tags=list(tags) if tags else None,
         status=status,
+        type=record_type,
         limit=5000,
     )
 

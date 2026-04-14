@@ -211,10 +211,10 @@ def get_children(
 @router.get("/{record_id}/children/conditions")
 def get_children_conditions(
     record_id: str,
-    limit: int = 2000,
+    limit: int = 5000,
     lab: Lab = Depends(get_lab),
 ) -> list[dict[str, Any]]:
-    """子レコードの ID + conditions を一括取得する。散布図用。"""
+    """子レコードの ID + conditions + results を一括取得する。"""
     from labvault.core.record import Record
 
     try:
@@ -231,10 +231,21 @@ def get_children_conditions(
         all_records = lab.list(limit=10000)
         children = [r for r in all_records if r.parent_id == record_id]
 
-    return [
-        {"id": c.id, "title": c.title, "conditions": c.get_conditions()}
-        for c in children
-    ]
+    items = []
+    for c in children:
+        results_raw = c.results.to_dict()
+        # __analysis_id を除外
+        results = {
+            k: v for k, v in results_raw.items()
+            if not k.endswith("__analysis_id")
+        }
+        items.append({
+            "id": c.id,
+            "title": c.title,
+            "conditions": c.get_conditions(),
+            "results": results,
+        })
+    return items
 
 
 # --- Record Operations ---

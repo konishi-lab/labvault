@@ -116,9 +116,16 @@ export async function createRecord(data: {
   return res.json();
 }
 
+export interface ChildConditions {
+  id: string;
+  title: string;
+  conditions: Record<string, unknown>;
+  results: Record<string, unknown>;
+}
+
 export async function fetchChildrenConditions(
   id: string
-): Promise<{ id: string; title: string; conditions: Record<string, unknown> }[]> {
+): Promise<ChildConditions[]> {
   const res = await fetch(`${API_BASE}/api/records/${id}/children/conditions`);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   return res.json();

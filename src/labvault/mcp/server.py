@@ -257,7 +257,9 @@ def create_server(lab: Lab | None = None) -> Any:
     @mcp.tool(
         description="数値キーの統計集計。"
         "results/conditions 両対応。group_by でグループ化。"
-        "parent_id で親レコード配下に限定可能。",
+        "parent_id で親レコード配下に限定可能。"
+        "record_type でレコードタイプを絞り込み "
+        "(例: 'measurement' で解析 Record を除外)。",
     )
     def aggregate(
         key: str,
@@ -265,11 +267,13 @@ def create_server(lab: Lab | None = None) -> Any:
         tags: list[str] | None = None,
         status: str | None = None,
         parent_id: str | None = None,
+        record_type: str | None = None,
     ) -> dict[str, Any]:
         lab = _get_lab()
         records = lab.list(
             tags=tags,
             status=status if status else None,
+            type=record_type,
             limit=5000,
         )
 
@@ -312,9 +316,10 @@ def create_server(lab: Lab | None = None) -> Any:
     )
     def get_overview(
         parent_id: str,
+        record_type: str | None = None,
     ) -> dict[str, Any]:
         lab = _get_lab()
-        all_records = lab.list(limit=5000)
+        all_records = lab.list(type=record_type, limit=5000)
         children = [r for r in all_records if r.parent_id == parent_id]
 
         condition_keys: dict[str, list[Any]] = {}
