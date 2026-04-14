@@ -246,6 +246,102 @@ class TestLabDelete:
             lab.restore("ZZZZ")
 
 
+class TestRunAnalysis:
+    """Record.run_analysis のテスト。"""
+
+    def test_basic(self, lab: Lab) -> None:
+        """解析関数の実行と結果の記録。"""
+        rec = lab.new("measurement", auto_log=False)
+        rec.add(b"dummy data", name="data.bin")
+
+        def my_analysis(data: bytes, *, scale: float = 1.0) -> dict:
+            return {
+                "results": {"depth": 0.5 * scale, "roughness": 0.12},
+                "units": {"depth": "um", "roughness": "um"},
+                "files": {"output.csv": b"x,y\n1,2\n"},
+            }
+
+        ana = rec.run_analysis(my_analysis, "data.bin", params={"scale": 2.0})
+
+        # 解析 Record が作成されている
+        assert ana.type == "analysis"
+        assert ana.parent_id == rec.id
+        assert ana.status == "success"
+
+        # 解析 Record の conditions
+        cond = ana.get_conditions()
+        assert cond["method"] == "my_analysis"
+        assert cond["analyzer_type"] == "python"
+        assert cond["source_file"] == "data.bin"
+        assert cond["scale"] == 2.0
+
+        # 解析 Record の results + units
+        assert ana.results["depth"] == 1.0
+        assert ana.results["roughness"] == 0.12
+        assert ana.get_result_units() == {"depth": "um", "roughness": "um"}
+
+        # 解析 Record にコードが保存されている
+        code = ana.get_data("analyzer.py")
+        assert b"my_analysis" in code
+
+        # 解析 Record に出力ファイルが保存されている
+        csv = ana.get_data("output.csv")
+        assert csv == b"x,y\n1,2\n"
+
+        # 測定 Record に書き戻されている (値 + units + __analysis_id)
+        assert rec.results["depth"] == 1.0
+        assert rec.results["roughness"] == 0.12
+        assert rec.results["depth__analysis_id"] == ana.id
+        assert rec.get_result_units()["depth"] == "um"
+
+    def test_results_only(self, lab: Lab) -> None:
+        """files なしの解析。"""
+        rec = lab.new("measurement", auto_log=False)
+        rec.add(b"test", name="input.txt")
+
+        def simple(data: bytes) -> dict:
+            return {"results": {"length": len(data)}}
+
+        ana = rec.run_analysis(simple, "input.txt")
+        assert ana.results["length"] == 4
+        assert rec.results["length"] == 4
+
+    def test_code_string(self, lab: Lab) -> None:
+        """コード文字列を渡す場合。"""
+        rec = lab.new("measurement", auto_log=False)
+        rec.add(b"hello", name="input.txt")
+
+        code = """
+def analyze(data):
+    return {"results": {"size": len(data)}}
+"""
+        ana = rec.run_analysis(code, "input.txt")
+        assert ana.results["size"] == 5
+        assert rec.results["size"] == 5
+
+    def test_overwrites_previous(self, lab: Lab) -> None:
+        """再解析で測定 Record のキャッシュが更新される。"""
+        rec = lab.new("measurement", auto_log=False)
+        rec.add(b"data", name="input.bin")
+
+        def v1(data: bytes) -> dict:
+            return {"results": {"depth": 0.5}}
+
+        def v2(data: bytes) -> dict:
+            return {"results": {"depth": 0.6}}
+
+        ana1 = rec.run_analysis(v1, "input.bin")
+        assert rec.results["depth"] == 0.5
+        assert rec.results["depth__analysis_id"] == ana1.id
+
+        ana2 = rec.run_analysis(v2, "input.bin")
+        assert rec.results["depth"] == 0.6
+        assert rec.results["depth__analysis_id"] == ana2.id
+
+        # 旧解析 Record の値はそのまま残っている
+        assert ana1.results["depth"] == 0.5
+
+
 class TestLabContextManager:
     """Lab コンテキストマネージャのテスト。"""
 

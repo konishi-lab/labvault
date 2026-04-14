@@ -120,6 +120,7 @@ class Record:
         )
         self._condition_units: dict[str, str] = {}
         self._condition_descriptions: dict[str, str] = {}
+        self._result_units: dict[str, str] = {}
         self._results = _ResultsProxy(self)
         if results_data:
             self._results._load(results_data)
@@ -271,6 +272,10 @@ class Record:
         """条件の説明マップを返す。"""
         return dict(self._condition_descriptions)
 
+    def get_result_units(self) -> dict[str, str]:
+        """結果の単位マップを返す。"""
+        return dict(self._result_units)
+
     def tag(self, *tags: str) -> Record:
         """タグを追加する。"""
         for t in tags:
@@ -421,6 +426,122 @@ class Record:
             return []
         all_records = self._lab.list(limit=1000)
         return [r for r in all_records if r.parent_id == self._id]
+
+    # --- 解析 ---
+
+    def run_analysis(
+        self,
+        fn: Any,
+        source_file: str,
+        *,
+        params: dict[str, Any] | None = None,
+        title: str | None = None,
+    ) -> Record:
+        """解析関数を実行し、結果を解析 Record として保存する。
+
+        解析関数の返り値規約::
+
+            def my_analysis(data: bytes, **params) -> dict:
+                return {
+                    "results": {"depth": 0.5},           # 必須
+                    "files": {"plot.png": png_bytes},     # 任意
+                }
+
+        解析 Record (type=analysis) が子として作成され、コード・結果・
+        出力ファイルが保存される。測定 Record の results にもキャッシュ
+        として書き戻し、``{key}__analysis_id`` で出自を追跡する。
+
+        Args:
+            fn: 解析関数 (callable) またはコード文字列 (str)。
+            source_file: 入力ファイル名 (self のファイル)。
+            params: 解析パラメータ (関数のキーワード引数として渡される)。
+            title: 解析 Record のタイトル。省略時は自動生成。
+
+        Returns:
+            作成された解析 Record。
+        """
+        import inspect
+
+        if self._lab is None:
+            msg = "Cannot run analysis without a Lab instance"
+            raise RuntimeError(msg)
+
+        params = params or {}
+
+        # コード取得
+        if callable(fn):
+            fn_name = fn.__name__
+            try:
+                source_code = inspect.getsource(fn)
+            except (OSError, TypeError):
+                source_code = f"# Could not retrieve source for {fn_name}"
+        elif isinstance(fn, str):
+            fn_name = "custom"
+            source_code = fn
+        else:
+            msg = f"fn must be callable or str, got {type(fn)}"
+            raise TypeError(msg)
+
+        # 入力データ取得
+        data = self.get_data(source_file)
+
+        # source_fingerprint (先頭 64KB sha256 + size)
+        fingerprint = hashlib.sha256(data[:65536]).hexdigest()[:16] + f":{len(data)}"
+
+        # 関数実行
+        if callable(fn):
+            output = fn(data, **params)
+        else:
+            # コード文字列の場合は exec で実行
+            local_ns: dict[str, Any] = {}
+            exec(source_code, {}, local_ns)  # noqa: S102
+            analyze_fn = local_ns.get("analyze")
+            if analyze_fn is None:
+                msg = "Code string must define an 'analyze' function"
+                raise ValueError(msg)
+            output = analyze_fn(data, **params)
+
+        if not isinstance(output, dict) or "results" not in output:
+            msg = "Analysis function must return dict with 'results' key"
+            raise ValueError(msg)
+
+        result_values: dict[str, Any] = output["results"]
+        result_units: dict[str, str] = output.get("units", {})
+        output_files: dict[str, bytes] = output.get("files", {})
+
+        # 解析 Record 作成
+        ana_title = title or f"analysis:{fn_name}"
+        ana = self.sub(ana_title, type="analysis")
+        ana.conditions(
+            method=fn_name,
+            analyzer_type="python",
+            source_file=source_file,
+            source_fingerprint=fingerprint,
+            **params,
+        )
+
+        # コードを保存
+        ana.add(source_code.encode(), name="analyzer.py", content_type="text/x-python")
+
+        # 結果を解析 Record に保存
+        for k, v in result_values.items():
+            ana.results[k] = v
+        ana._result_units.update(result_units)
+
+        # 出力ファイルを解析 Record に保存
+        for fname, fdata in output_files.items():
+            ana.add(fdata, name=fname)
+
+        ana.status = "success"
+
+        # 測定 Record に書き戻し (キャッシュ + __analysis_id + units)
+        for k, v in result_values.items():
+            self.results._data[k] = v
+            self.results._data[f"{k}__analysis_id"] = ana.id
+        self._result_units.update(result_units)
+        self._persist()
+
+        return ana
 
     # --- ファイル操作 ---
 
@@ -607,6 +728,7 @@ class Record:
             "condition_units": dict(self._condition_units),
             "condition_descriptions": dict(self._condition_descriptions),
             "results": self._results.to_dict(),
+            "result_units": dict(self._result_units),
             "events": list(self._events),
             "deleted_at": (self._deleted_at.isoformat() if self._deleted_at else None),
             "parent_id": self._parent_id,
@@ -701,6 +823,7 @@ class Record:
         )
         rec._condition_units = dict(data.get("condition_units") or {})
         rec._condition_descriptions = dict(data.get("condition_descriptions") or {})
+        rec._result_units = dict(data.get("result_units") or {})
         return rec
 
 

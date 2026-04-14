@@ -130,7 +130,9 @@ def create_server(lab: Lab | None = None) -> Any:
             "updated_at": rec.updated_at.isoformat(),
             "tags": rec.tags,
             "conditions": rec.get_conditions(),
+            "condition_units": rec.get_condition_units(),
             "results": rec.results.to_dict(),
+            "result_units": rec.get_result_units(),
             "notes": [
                 {"text": n.text, "created_at": n.created_at.isoformat()}
                 for n in rec.notes
