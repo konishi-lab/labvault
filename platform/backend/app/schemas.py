@@ -36,6 +36,7 @@ class RecordSummary(BaseModel):
     tags: list[str] = []
     created_by: str = ""
     created_at: datetime
+    updated_by: str = ""
     updated_at: datetime
     parent_id: str | None = None
 

@@ -15,6 +15,7 @@ from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 from labvault.core.record import Record
 
+from ..auth import User, current_user
 from ..dependencies import get_lab
 
 logger = logging.getLogger(__name__)
@@ -157,12 +158,13 @@ async def bulk_upload(
     start_position: str = "top-left",
     direction: str = "row-first",
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> StreamingResponse:
     """SSE で進捗を返しながらアップロードする。"""
     try:
         lab.get(record_id)
     except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
+        raise HTTPException(status_code=404, detail="Record not found") from None
 
     if rows == 0 or cols == 0:
         raise HTTPException(status_code=400, detail="rows and cols required")
@@ -252,6 +254,7 @@ async def bulk_upload(
                         size_bytes=len(data),
                     )
                 )
+                target.updated_by = user.email
                 target._persist()
                 uploaded += 1
 

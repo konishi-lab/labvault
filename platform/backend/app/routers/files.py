@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
+from ..auth import User, current_user
 from ..dependencies import get_lab
 from ..schemas import FileInfo, RecordDetail
 
@@ -39,6 +40,7 @@ async def upload_file(
     record_id: str,
     file: UploadFile,
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> RecordDetail:
     """ファイルをアップロードする。"""
     from ..routers.records import _to_detail
@@ -46,8 +48,9 @@ async def upload_file(
     try:
         rec = lab.get(record_id)
     except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
+        raise HTTPException(status_code=404, detail="Record not found") from None
 
+    rec.updated_by = user.email
     data = await file.read()
     rec.add(data, name=file.filename or "untitled")
     return _to_detail(rec)

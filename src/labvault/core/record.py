@@ -86,6 +86,7 @@ class Record:
         status: str = Status.RUNNING,
         created_by: str = "",
         created_at: datetime | None = None,
+        updated_by: str = "",
         updated_at: datetime | None = None,
         tags: list[str] | None = None,
         notes: list[Note] | None = None,
@@ -105,6 +106,7 @@ class Record:
         self._type = record_type
         self._status = Status(status) if status else Status.RUNNING
         self._created_by = created_by
+        self._updated_by = updated_by or created_by
         now = datetime.now(_dt.UTC)
         self._created_at = created_at or now
         self._updated_at = updated_at or now
@@ -180,6 +182,16 @@ class Record:
     def updated_at(self) -> datetime:
         """更新日時。"""
         return self._updated_at
+
+    @property
+    def updated_by(self) -> str:
+        """最終更新者。書き込み前に setter で刻印する。"""
+        return self._updated_by
+
+    @updated_by.setter
+    def updated_by(self, value: str) -> None:
+        # _persist は呼ばない。次の mutation 時にまとめて書かれる
+        self._updated_by = value
 
     @property
     def tags(self) -> list[str]:
@@ -686,6 +698,7 @@ class Record:
             "status": str(self._status),
             "created_by": self._created_by,
             "created_at": self._created_at.isoformat(),
+            "updated_by": self._updated_by,
             "updated_at": self._updated_at.isoformat(),
             "tags": list(self._tags),
             "notes": [
@@ -808,6 +821,7 @@ class Record:
             status=data.get("status", "running"),
             created_by=data.get("created_by", ""),
             created_at=(_parse_dt(created_at_raw) if created_at_raw else None),
+            updated_by=data.get("updated_by", ""),
             updated_at=(_parse_dt(updated_at_raw) if updated_at_raw else None),
             tags=data.get("tags"),
             notes=notes,

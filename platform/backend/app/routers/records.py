@@ -36,6 +36,7 @@ def _to_summary(rec: Any) -> RecordSummary:
         tags=rec.tags,
         created_by=rec.created_by,
         created_at=rec.created_at,
+        updated_by=rec.updated_by,
         updated_at=rec.updated_at,
         parent_id=rec.parent_id,
     )
@@ -50,6 +51,7 @@ def _to_detail(rec: Any) -> RecordDetail:
         tags=rec.tags,
         created_by=rec.created_by,
         created_at=rec.created_at,
+        updated_by=rec.updated_by,
         updated_at=rec.updated_at,
         parent_id=rec.parent_id,
         conditions=rec.get_conditions(),
@@ -253,17 +255,25 @@ def get_children_conditions(
 # --- Record Operations ---
 
 
+def _get_and_stamp(lab: Lab, record_id: str, user: User) -> Any:
+    """レコード取得 + 更新者刻印。mutator 呼び出し前に使う。"""
+    try:
+        rec = lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found") from None
+    rec.updated_by = user.email
+    return rec
+
+
 @router.patch("/{record_id}/conditions", response_model=RecordDetail)
 def update_conditions(
     record_id: str,
     body: ConditionsUpdate,
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> RecordDetail:
     """実験条件を更新する。"""
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
+    rec = _get_and_stamp(lab, record_id, user)
     rec.conditions(**body.conditions)
     return _to_detail(rec)
 
@@ -273,12 +283,10 @@ def add_tags(
     record_id: str,
     body: TagsUpdate,
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> RecordDetail:
     """タグを追加する。"""
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
+    rec = _get_and_stamp(lab, record_id, user)
     rec.tag(*body.tags)
     return _to_detail(rec)
 
@@ -288,13 +296,11 @@ def add_note(
     record_id: str,
     body: NoteCreate,
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> RecordDetail:
-    """メモを追加する。"""
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
-    rec.note(body.text)
+    """メモを追加する。author も認証済 email を刻印。"""
+    rec = _get_and_stamp(lab, record_id, user)
+    rec.note(body.text, author=user.email)
     return _to_detail(rec)
 
 
@@ -303,12 +309,10 @@ def update_status(
     record_id: str,
     body: StatusUpdate,
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> RecordDetail:
     """ステータスを更新する。"""
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
+    rec = _get_and_stamp(lab, record_id, user)
     rec.status = body.status
     return _to_detail(rec)
 
@@ -318,12 +322,10 @@ def update_units(
     record_id: str,
     body: ConditionUnitsUpdate,
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> RecordDetail:
     """条件の単位と説明を更新する。"""
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
+    rec = _get_and_stamp(lab, record_id, user)
     rec._condition_units.update(body.units)
     if body.descriptions:
         rec._condition_descriptions.update(body.descriptions)
@@ -336,11 +338,9 @@ def add_result(
     record_id: str,
     body: ResultUpdate,
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> RecordDetail:
     """結果を追加する。"""
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
+    rec = _get_and_stamp(lab, record_id, user)
     rec.results[body.key] = body.value
     return _to_detail(rec)
