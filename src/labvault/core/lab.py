@@ -67,7 +67,7 @@ class Lab:
         self._user = user or settings.user or ""
         self._metadata = metadata_backend or _auto_metadata(settings)
         self._storage = storage_backend or _auto_storage(settings)
-        self._search = search_backend or InMemorySearchBackend()
+        self._search = search_backend or _auto_search(settings)
         self._embedding = embedding_client or _auto_embedding(settings)
         self._settings = settings
         self._active_tracker: Any | None = None
@@ -465,3 +465,18 @@ def _auto_embedding(settings: Settings) -> Any | None:
         except Exception:
             return None
     return None
+
+
+def _auto_search(settings: Settings) -> Any:
+    """設定に応じて検索バックエンドを自動選択する。
+
+    Firestore が構成されていれば Vector Search、なければ InMemory。
+    """
+    if settings.gcp_project:
+        from labvault.backends.firestore_search import FirestoreSearchBackend
+
+        return FirestoreSearchBackend(
+            project=settings.gcp_project,
+            database=settings.firestore_database,
+        )
+    return InMemorySearchBackend()
