@@ -1,0 +1,65 @@
+name: Deploy frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "platform/frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: klab-laser-process
+  REGION: asia-northeast1
+  SERVICE: labvault-web
+  IMAGE: asia-northeast1-docker.pkg.dev/klab-laser-process/labvault/web
+  RUNTIME_SA: labvault-api@klab-laser-process.iam.gserviceaccount.com
+  API_URL: https://labvault-api-355809880738.asia-northeast1.run.app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build & push
+        run: |
+          TAG=${GITHUB_SHA::8}
+          docker buildx build --platform linux/amd64 \
+            -f platform/frontend/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL=${{ env.API_URL }} \
+            --build-arg NEXT_PUBLIC_FIREBASE_API_KEY=${{ vars.FIREBASE_API_KEY }} \
+            --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${{ vars.FIREBASE_AUTH_DOMAIN }} \
+            --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID=${{ vars.FIREBASE_PROJECT_ID }} \
+            --build-arg NEXT_PUBLIC_FIREBASE_APP_ID=${{ vars.FIREBASE_APP_ID }} \
+            --build-arg NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${{ vars.FIREBASE_MESSAGING_SENDER_ID }} \
+            -t ${{ env.IMAGE }}:$TAG \
+            -t ${{ env.IMAGE }}:latest \
+            --push platform/frontend
+
+      - name: Deploy to Cloud Run
+        run: |
+          TAG=${GITHUB_SHA::8}
+          gcloud run deploy ${{ env.SERVICE }} \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --image=${{ env.IMAGE }}:$TAG \
+            --service-account=${{ env.RUNTIME_SA }} \
+            --port=8080 --memory=512Mi --cpu=1 \
+            --min-instances=0 --max-instances=3 \
+            --allow-unauthenticated \
+            --quiet

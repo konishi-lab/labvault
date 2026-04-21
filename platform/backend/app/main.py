@@ -35,9 +35,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_default_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://labvault-web-355809880738.asia-northeast1.run.app",
+]
+_extra = os.environ.get("LABVAULT_CORS_ORIGINS", "").strip()
+if _extra:
+    _default_origins.extend(o.strip() for o in _extra.split(",") if o.strip())
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_default_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
