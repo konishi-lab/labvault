@@ -9,10 +9,13 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastapi import HTTPException
+
 from .auth import User, current_user, init_firebase_admin
 from .dependencies import close_lab, get_lab
 from .routers import bulk_upload, files, preview, records, search
 from .schemas import HealthResponse
+from .secrets_util import get_secret
 
 
 @asynccontextmanager
@@ -69,4 +72,32 @@ def auth_me(user: User = Depends(current_user)) -> dict[str, str]:
         "email": user.email,
         "display_name": user.display_name,
         "role": user.role,
+    }
+
+
+@app.get("/api/auth/nextcloud-credentials")
+def nextcloud_credentials(user: User = Depends(current_user)) -> dict[str, str]:
+    """Nextcloud 接続情報を返す。認証済ユーザーのみアクセス可。
+
+    SDK/装置PC が直接 Nextcloud にアクセスするための共有 app password を
+    Secret Manager から取得して配布する。ユーザーを allowed_users から外すと
+    このエンドポイントが 403 を返すようになる。
+
+    注: 配布済 password はクライアント側にローカル保存される可能性があるため、
+    完全な revoke は Nextcloud Web UI でパスワードをローテーションする必要がある。
+    """
+    from labvault.core.config import Settings
+
+    password = get_secret("nextcloud-master-password")
+    if not password:
+        raise HTTPException(
+            status_code=500,
+            detail="nextcloud-master-password secret is not configured",
+        )
+    s = Settings()
+    return {
+        "url": s.nextcloud_url,
+        "username": s.nextcloud_user,
+        "password": password,
+        "group_folder": s.nextcloud_group_folder,
     }

@@ -2,3 +2,4 @@ fastapi>=0.115
 uvicorn>=0.34
 python-multipart>=0.0.9
 firebase-admin>=6.5
+google-cloud-secret-manager>=2.20
