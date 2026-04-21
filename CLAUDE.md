@@ -92,7 +92,7 @@ examples/          # すぐ試せるサンプル
 |---|---|
 | **M0** 基盤 (CI, pyproject.toml) | 完了 |
 | **M1** SDK Core (Lab/Record, バッファ, ファイル操作) | 完了 |
-| **M2a** Firestore バックエンド | 完了 (klab-proto 確認済) |
+| **M2a** Firestore バックエンド | 完了 (klab-laser-process / labvault DB) |
 | **M2b** Nextcloud バックエンド | 完了 (ARIM MDX 確認済) |
 | **M2c** SyncManager (自動同期) | 完了 |
 | **M2d** IPython hooks (セル自動記録) | 完了 |
@@ -125,7 +125,8 @@ examples/          # すぐ試せるサンプル
 # .env (カレントディレクトリ) または ~/.labvault/config.toml で設定
 LABVAULT_TEAM=konishi-lab
 LABVAULT_USER=your-name
-LABVAULT_GCP_PROJECT=klab-proto
+LABVAULT_GCP_PROJECT=klab-laser-process
+LABVAULT_FIRESTORE_DATABASE=labvault
 LABVAULT_NEXTCLOUD_URL=https://arim.mdx.jp/nextcloud
 LABVAULT_NEXTCLOUD_USER=arim00065
 LABVAULT_NEXTCLOUD_PASSWORD=...

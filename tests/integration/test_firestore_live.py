@@ -1,7 +1,8 @@
 """Firestore 結合テスト (実サーバー接続)。
 
 実行方法:
-    LABVAULT_GCP_PROJECT=klab-proto \
+    LABVAULT_GCP_PROJECT=klab-laser-process \
+    LABVAULT_FIRESTORE_DATABASE=labvault \
     pytest tests/integration/test_firestore_live.py -v -m integration
 """
 

@@ -67,13 +67,13 @@ gcloud auth login
 gcloud auth application-default login
 
 # 3. プロジェクト設定
-gcloud config set project klab-proto
+gcloud config set project klab-laser-process
 ```
 
 ### 管理者がメンバーに権限を付与
 
 ```bash
-gcloud projects add-iam-policy-binding klab-proto \
+gcloud projects add-iam-policy-binding klab-laser-process \
   --member="user:member@example.com" \
   --role="roles/datastore.user"
 ```
@@ -87,12 +87,12 @@ gcloud projects add-iam-policy-binding klab-proto \
 gcloud iam service-accounts create labvault-instrument \
   --display-name="labvault instrument PC"
 
-gcloud projects add-iam-policy-binding klab-proto \
-  --member="serviceAccount:labvault-instrument@klab-proto.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding klab-laser-process \
+  --member="serviceAccount:labvault-instrument@klab-laser-process.iam.gserviceaccount.com" \
   --role="roles/datastore.user"
 
 gcloud iam service-accounts keys create key.json \
-  --iam-account=labvault-instrument@klab-proto.iam.gserviceaccount.com
+  --iam-account=labvault-instrument@klab-laser-process.iam.gserviceaccount.com
 
 # 装置 PC に配置
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json

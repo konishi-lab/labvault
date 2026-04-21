@@ -1,7 +1,7 @@
 """Vertex AI Embedding 結合テスト。
 
 実行方法:
-    LABVAULT_GCP_PROJECT=klab-proto \
+    LABVAULT_GCP_PROJECT=klab-laser-process \
     pytest tests/integration/test_embedding_live.py -v -m integration
 """
 
