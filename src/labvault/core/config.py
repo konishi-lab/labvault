@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     nextcloud_user: str = ""
     nextcloud_password: str = ""
     nextcloud_group_folder: str = ""
+    platform_url: str = ""
     buffer_dir: Path = Field(
         default_factory=lambda: Path.home() / ".labvault" / "buffer"
     )

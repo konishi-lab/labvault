@@ -438,7 +438,33 @@ def _auto_metadata(settings: Settings) -> Any:
 
 
 def _auto_storage(settings: Settings) -> Any:
-    """設定に応じてストレージバックエンドを自動選択する。"""
+    """設定に応じてストレージバックエンドを自動選択する。
+
+    優先順位:
+    1. LABVAULT_PLATFORM_URL がある場合 → platform 経由で credentials 取得
+    2. LABVAULT_NEXTCLOUD_PASSWORD が .env にある場合 → 直接接続 (開発用/後方互換)
+    3. どちらも無ければ InMemory
+    """
+    if settings.platform_url:
+        try:
+            from labvault.backends.nextcloud import NextcloudStorage
+            from labvault.backends.platform_client import PlatformClient
+
+            creds = PlatformClient(settings.platform_url).get_nextcloud_credentials()
+            return NextcloudStorage(
+                url=creds.get("url") or settings.nextcloud_url,
+                user=creds.get("username") or settings.nextcloud_user,
+                password=creds["password"],
+                group_folder=creds.get("group_folder")
+                or settings.nextcloud_group_folder,
+            )
+        except Exception as e:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "platform credentials fetch failed: %s; falling back", e
+            )
+
     if (
         settings.nextcloud_url
         and settings.nextcloud_user

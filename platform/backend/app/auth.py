@@ -68,6 +68,35 @@ def _dev_skip() -> bool:
     return os.environ.get("LABVAULT_DEV_SKIP_AUTH") == "1"
 
 
+def _verify_google_access_token(token: str) -> dict[str, Any] | None:
+    """Google OAuth access token を userinfo で検証する。
+
+    SDK/CLI の ADC 由来 access token を受け入れるための fallback。
+    成功時は {"email", "sub", "name", "email_verified", ...} を返す。
+    service account の access token は email_verified が False だが、
+    allowed_users に SA email が登録されていれば通す (後段の判定)。
+    """
+    import httpx
+
+    try:
+        resp = httpx.get(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5.0,
+        )
+    except Exception:
+        return None
+    if resp.status_code != 200:
+        return None
+    data: dict[str, Any] = resp.json()
+    if not data.get("email"):
+        return None
+    # Service account token には email_verified が無い (or False)。
+    # allowed_users に SA email が登録済みであれば信頼する、という運用にする。
+    data.setdefault("email_verified", True)
+    return data
+
+
 def current_user(
     authorization: str | None = Header(default=None),
 ) -> User:
@@ -93,21 +122,28 @@ def current_user(
 
     init_firebase_admin()
     token = authorization.removeprefix("Bearer ").strip()
+
+    # 1) Firebase ID token として検証 (Web UI)
+    # 2) 失敗したら Google OAuth access token として検証 (SDK/CLI の ADC)
     try:
         decoded = fb_auth.verify_id_token(token)
-    except fb_auth.InvalidIdTokenError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}") from e
-    except fb_auth.ExpiredIdTokenError as e:
-        raise HTTPException(status_code=401, detail="Token expired") from e
-    except Exception as e:
-        logger.warning("token verification failed: %s", e)
-        raise HTTPException(status_code=401, detail="Token verification failed") from e
+        email = decoded.get("email")
+        uid = decoded["uid"]
+        name = decoded.get("name") or email or uid
+        email_verified = decoded.get("email_verified", False)
+    except Exception as fb_err:
+        info = _verify_google_access_token(token)
+        if info is None:
+            logger.warning("token verification failed: firebase=%s", fb_err)
+            raise HTTPException(
+                status_code=401, detail="Token verification failed"
+            ) from fb_err
+        email = info["email"]
+        uid = info["sub"]
+        name = info.get("name") or email or uid
+        email_verified = info.get("email_verified", False)
 
-    email = decoded.get("email")
-    uid = decoded["uid"]
-    name = decoded.get("name") or email or uid
-
-    if not email or not decoded.get("email_verified", False):
+    if not email or not email_verified:
         raise HTTPException(status_code=403, detail="Email not verified")
 
     # allowed_users 照合（email を doc id に使用）
