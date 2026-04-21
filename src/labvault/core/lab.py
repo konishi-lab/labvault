@@ -88,6 +88,7 @@ class Lab:
         tags: list[str] | None = None,
         sample: str | None = None,
         auto_log: bool = True,
+        created_by: str | None = None,
         **conditions: Any,
     ) -> Record:
         """新しいレコードを作成する。
@@ -99,6 +100,7 @@ class Lab:
             tags: 初期タグ。
             sample: サンプルレコード ID (link 自動追加)。
             auto_log: IPython hooks 有効化 (M2 以降)。
+            created_by: 作成者識別子。省略時は Settings の user を使用。
             **conditions: 実験条件。
         """
         record_id = self._generate_unique_id()
@@ -110,7 +112,7 @@ class Lab:
             title=title,
             record_type=record_type,
             status=Status.RUNNING,
-            created_by=self._user,
+            created_by=created_by if created_by is not None else self._user,
             tags=tags,
             conditions_data=conditions if conditions else None,
             lab=self,

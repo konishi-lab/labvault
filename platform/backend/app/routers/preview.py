@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -15,9 +14,7 @@ from ..dependencies import get_lab
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    prefix="/api/records/{record_id}/preview", tags=["preview"]
-)
+router = APIRouter(prefix="/api/records/{record_id}/preview", tags=["preview"])
 
 
 def _nc_download(lab: Lab, nc_path: str) -> bytes | None:
@@ -103,9 +100,7 @@ def preview_file(
         png_data = to_preview_png(vk4_data, max_size=512)
     except Exception as e:
         logger.exception("Failed to decode VK4: %s", e)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to decode VK4: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to decode VK4: {e}")
 
     # キャッシュ保存
     _nc_upload(lab, preview_nc_path, png_data)

@@ -9,15 +9,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
+from ..auth import User, current_user
 from ..dependencies import get_lab
 from ..schemas import (
     ConditionsUpdate,
+    ConditionUnitsUpdate,
     NoteCreate,
     RecordCreate,
     RecordDetail,
     RecordListResponse,
     RecordSummary,
-    ConditionUnitsUpdate,
     ResultUpdate,
     StatusUpdate,
     TagsUpdate,
@@ -121,13 +122,15 @@ def list_records(
 def create_record(
     body: RecordCreate,
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> RecordDetail:
-    """レコードを作成する。"""
+    """レコードを作成する。created_by は認証済 email を刻印。"""
     rec = lab.new(
         body.title,
         type=body.type,
         tags=body.tags if body.tags else None,
         auto_log=False,
+        created_by=user.email,
         **body.conditions,
     )
     return _to_detail(rec)
@@ -223,9 +226,7 @@ def get_children_conditions(
         raise HTTPException(status_code=404, detail="Record not found")
 
     if hasattr(lab._metadata, "list_records"):
-        rows = lab._metadata.list_records(
-            lab._team, parent_id=record_id, limit=limit
-        )
+        rows = lab._metadata.list_records(lab._team, parent_id=record_id, limit=limit)
         children = [Record._from_dict(r, lab=lab) for r in rows]
     else:
         all_records = lab.list(limit=10000)
@@ -236,15 +237,16 @@ def get_children_conditions(
         results_raw = c.results.to_dict()
         # __analysis_id を除外
         results = {
-            k: v for k, v in results_raw.items()
-            if not k.endswith("__analysis_id")
+            k: v for k, v in results_raw.items() if not k.endswith("__analysis_id")
         }
-        items.append({
-            "id": c.id,
-            "title": c.title,
-            "conditions": c.get_conditions(),
-            "results": results,
-        })
+        items.append(
+            {
+                "id": c.id,
+                "title": c.title,
+                "conditions": c.get_conditions(),
+                "results": results,
+            }
+        )
     return items
 
 

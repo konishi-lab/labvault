@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
+import { AuthProvider } from "@/lib/auth";
+import { AuthGate } from "@/components/auth-gate";
+import { UserMenu } from "@/components/user-menu";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,24 +32,29 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-slate-50">
-        <header className="sticky top-0 z-40 border-b bg-white/80 backdrop-blur-sm">
-          <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4">
-            <Link href="/" className="font-semibold text-lg tracking-tight">
-              labvault
-            </Link>
-            <nav className="flex gap-4 text-sm text-muted-foreground">
-              <Link
-                href="/"
-                className="transition-colors hover:text-foreground"
-              >
-                レコード
+        <AuthProvider>
+          <header className="sticky top-0 z-40 border-b bg-white/80 backdrop-blur-sm">
+            <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4">
+              <Link href="/" className="font-semibold text-lg tracking-tight">
+                labvault
               </Link>
-            </nav>
-          </div>
-        </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">
-          {children}
-        </main>
+              <nav className="flex gap-4 text-sm text-muted-foreground">
+                <Link
+                  href="/"
+                  className="transition-colors hover:text-foreground"
+                >
+                  レコード
+                </Link>
+              </nav>
+              <div className="ml-auto">
+                <UserMenu />
+              </div>
+            </div>
+          </header>
+          <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">
+            <AuthGate>{children}</AuthGate>
+          </main>
+        </AuthProvider>
       </body>
     </html>
   );

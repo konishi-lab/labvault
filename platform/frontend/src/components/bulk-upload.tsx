@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { fetchChildren } from "@/lib/api";
+import { authFetch, fetchChildren } from "@/lib/api";
 import type { RecordSummary } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -113,7 +113,7 @@ export function BulkUploadButton({
   const handlePreview = async () => {
     setLoading(true);
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/api/records/${recordId}/bulk-upload/preview`,
         {
           method: "POST",
@@ -151,7 +151,7 @@ export function BulkUploadButton({
     });
 
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE}/api/records/${recordId}/bulk-upload?${params}`,
         { method: "POST", body: formData }
       );

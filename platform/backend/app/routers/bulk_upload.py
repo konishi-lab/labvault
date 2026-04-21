@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -78,9 +79,7 @@ def generate_grid_mapping(
 
 
 def _get_children_sorted(lab: Lab, record_id: str) -> list[Record]:
-    rows = lab._metadata.list_records(
-        lab._team, parent_id=record_id, limit=2000
-    )
+    rows = lab._metadata.list_records(lab._team, parent_id=record_id, limit=2000)
     children = [Record._from_dict(r, lab=lab) for r in rows]
     return sorted(children, key=lambda c: _natural_sort_key(c.title))
 
@@ -101,9 +100,7 @@ async def preview_matching(
         raise HTTPException(status_code=404, detail="Record not found")
 
     children = _get_children_sorted(lab, record_id)
-    basenames = [
-        fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] for fn in filenames
-    ]
+    basenames = [fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] for fn in filenames]
     sorted_files = sorted(basenames, key=_natural_sort_key)
     positions = generate_grid_mapping(
         grid.rows, grid.cols, grid.start_position, grid.direction
@@ -177,9 +174,7 @@ async def bulk_upload(
         name = f.filename or "untitled"
         return name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
 
-    sorted_files = sorted(
-        files, key=lambda f: _natural_sort_key(_basename(f))
-    )
+    sorted_files = sorted(files, key=lambda f: _natural_sort_key(_basename(f)))
 
     # ファイルデータを先に全部読む (SSE generator 内で await できないため)
     file_data: list[tuple[str, bytes]] = []
@@ -249,9 +244,7 @@ async def bulk_upload(
 
                 from labvault.core.types import DataRef
 
-                target._data_refs = [
-                    r for r in target._data_refs if r.name != filename
-                ]
+                target._data_refs = [r for r in target._data_refs if r.name != filename]
                 target._data_refs.append(
                     DataRef(
                         name=filename,

@@ -1,5 +1,22 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// --- auth token plumbing ---
+let _getToken: () => Promise<string | null> = async () => null;
+
+export function setTokenProvider(fn: () => Promise<string | null>) {
+  _getToken = fn;
+}
+
+export async function authFetch(
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const token = await _getToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  return fetch(url, { ...init, headers });
+}
+
 export interface RecordSummary {
   id: string;
   title: string;
@@ -68,13 +85,13 @@ export async function fetchRecords(params?: {
   if (params?.limit) searchParams.set("limit", String(params.limit));
   if (params?.offset) searchParams.set("offset", String(params.offset));
 
-  const res = await fetch(`${API_BASE}/api/records?${searchParams}`);
+  const res = await authFetch(`${API_BASE}/api/records?${searchParams}`);
   if (!res.ok) throw new Error(`Failed to fetch records: ${res.status}`);
   return res.json();
 }
 
 export async function fetchRecord(id: string): Promise<RecordDetail> {
-  const res = await fetch(`${API_BASE}/api/records/${id}`);
+  const res = await authFetch(`${API_BASE}/api/records/${id}`);
   if (!res.ok) throw new Error(`Failed to fetch record: ${res.status}`);
   return res.json();
 }
@@ -90,13 +107,13 @@ export async function searchRecords(
   if (params?.type) searchParams.set("type", params.type);
   if (params?.limit) searchParams.set("limit", String(params.limit));
 
-  const res = await fetch(`${API_BASE}/api/search?${searchParams}`);
+  const res = await authFetch(`${API_BASE}/api/search?${searchParams}`);
   if (!res.ok) throw new Error(`Failed to search: ${res.status}`);
   return res.json();
 }
 
 export async function fetchHealth(): Promise<HealthResponse> {
-  const res = await fetch(`${API_BASE}/api/health`);
+  const res = await authFetch(`${API_BASE}/api/health`);
   if (!res.ok) throw new Error(`Failed to fetch health: ${res.status}`);
   return res.json();
 }
@@ -107,7 +124,7 @@ export async function createRecord(data: {
   tags?: string[];
   conditions?: Record<string, unknown>;
 }): Promise<RecordDetail> {
-  const res = await fetch(`${API_BASE}/api/records`, {
+  const res = await authFetch(`${API_BASE}/api/records`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -126,7 +143,7 @@ export interface ChildConditions {
 export async function fetchChildrenConditions(
   id: string
 ): Promise<ChildConditions[]> {
-  const res = await fetch(`${API_BASE}/api/records/${id}/children/conditions`);
+  const res = await authFetch(`${API_BASE}/api/records/${id}/children/conditions`);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   return res.json();
 }
@@ -138,7 +155,7 @@ export async function fetchChildren(
   const searchParams = new URLSearchParams();
   if (params?.limit) searchParams.set("limit", String(params.limit));
   if (params?.offset) searchParams.set("offset", String(params.offset));
-  const res = await fetch(`${API_BASE}/api/records/${id}/children?${searchParams}`);
+  const res = await authFetch(`${API_BASE}/api/records/${id}/children?${searchParams}`);
   if (!res.ok) throw new Error(`Failed to fetch children: ${res.status}`);
   return res.json();
 }
@@ -147,7 +164,7 @@ export async function addTags(
   id: string,
   tags: string[]
 ): Promise<RecordDetail> {
-  const res = await fetch(`${API_BASE}/api/records/${id}/tags`, {
+  const res = await authFetch(`${API_BASE}/api/records/${id}/tags`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tags }),
@@ -161,7 +178,7 @@ export async function updateUnits(
   units: Record<string, string>,
   descriptions?: Record<string, string>
 ): Promise<RecordDetail> {
-  const res = await fetch(`${API_BASE}/api/records/${id}/units`, {
+  const res = await authFetch(`${API_BASE}/api/records/${id}/units`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ units, descriptions: descriptions || {} }),
@@ -174,7 +191,7 @@ export async function addNote(
   id: string,
   text: string
 ): Promise<RecordDetail> {
-  const res = await fetch(`${API_BASE}/api/records/${id}/notes`, {
+  const res = await authFetch(`${API_BASE}/api/records/${id}/notes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
@@ -184,7 +201,7 @@ export async function addNote(
 }
 
 export async function deleteRecord(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/records/${id}`, {
+  const res = await authFetch(`${API_BASE}/api/records/${id}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`Failed to delete record: ${res.status}`);
