@@ -182,6 +182,19 @@ CLI はプレーンテキスト出力のため、LLM が Bash 経由で使う場
 - デプロイ先: Cloud Run (asia-northeast1, 無料枠内 $0/月)
 - 機能: レコード閲覧・詳細、条件カラム表示、散布図、条件フィルタ、一括アップロード(NxMグリッド)、タグ/メモ/単位編集
 
+## リリース運用 (private PyPI)
+
+- 配布先: Artifact Registry `asia-northeast1 / klab-laser-process / labvault-pypi`
+- Semantic Versioning (`MAJOR.MINOR.PATCH`)。SDK API or backend API の breaking change は MAJOR
+- リリース手順:
+  1. `pyproject.toml` の `version` を上げる
+  2. (任意) `CHANGELOG.md` に変更点を追記
+  3. commit, push to main
+  4. `git tag v<version> && git push origin v<version>`
+  5. `.github/workflows/publish-pypi.yml` がタグと pyproject.toml の version 一致を検証 → wheel + sdist を AR に upload
+- 同一 version の再 publish は AR が拒否する (失敗で気付く設計)。やり直したい場合は version を上げる
+- `v*` タグの強制更新は禁止 (publish 履歴と乖離する)
+
 ## インストール済みスキル
 
 - **python-testing-patterns** — pytestのパターン・ベストプラクティス
