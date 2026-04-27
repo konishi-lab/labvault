@@ -8,8 +8,7 @@ from fastapi.responses import Response
 from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
-from ..auth import User, current_user
-from ..dependencies import get_lab
+from ..auth import User, current_user, get_lab
 from ..schemas import FileInfo, RecordDetail
 
 router = APIRouter(prefix="/api/records/{record_id}/files", tags=["files"])

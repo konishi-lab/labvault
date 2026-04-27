@@ -5,14 +5,13 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from fastapi import HTTPException
-
-from .auth import User, current_user, init_firebase_admin
-from .dependencies import close_lab, get_lab
+from .auth import User, current_team, current_user, init_firebase_admin
+from .dependencies import close_lab, get_team_meta
 from .routers import bulk_upload, files, preview, records, search
 from .schemas import HealthResponse
 from .secrets_util import get_secret
@@ -63,34 +62,37 @@ app.include_router(search.router, dependencies=_auth_deps)
 
 @app.get("/api/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    """ヘルスチェック (認証不要)。"""
-    lab = get_lab()
+    """ヘルスチェック (認証不要)。team 横断のため lab には触らない。"""
     return HealthResponse(
         status="ok",
-        team=lab._team,
-        metadata_backend=type(lab._metadata).__name__,
-        storage_backend=type(lab._storage).__name__,
+        team="",
+        metadata_backend="FirestoreMetadataBackend",
+        storage_backend="NextcloudStorage",
     )
 
 
 @app.get("/api/auth/me")
-def auth_me(user: User = Depends(current_user)) -> dict[str, str]:
+def auth_me(user: User = Depends(current_user)) -> dict[str, Any]:
     """現在のユーザー情報を返す。フロントで表示用。"""
     return {
         "uid": user.uid,
         "email": user.email,
         "display_name": user.display_name,
         "role": user.role,
+        "teams": [{"team_id": t, "role": r} for t, r in user.teams],
+        "default_team": user.default_team,
     }
 
 
 @app.get("/api/auth/nextcloud-credentials")
-def nextcloud_credentials(user: User = Depends(current_user)) -> dict[str, str]:
-    """Nextcloud 接続情報を返す。認証済ユーザーのみアクセス可。
+def nextcloud_credentials(
+    user: User = Depends(current_user),
+    team: str = Depends(current_team),
+) -> dict[str, str]:
+    """Nextcloud 接続情報を返す。認証済ユーザー & 所属 team のみアクセス可。
 
-    SDK/装置PC が直接 Nextcloud にアクセスするための共有 app password を
-    Secret Manager から取得して配布する。ユーザーを allowed_users から外すと
-    このエンドポイントが 403 を返すようになる。
+    group_folder は teams/{team_id}.nextcloud_group_folder から取得。
+    SDK 側は Settings.team を X-Labvault-Team header に乗せて呼ぶ。
 
     注: 配布済 password はクライアント側にローカル保存される可能性があるため、
     完全な revoke は Nextcloud Web UI でパスワードをローテーションする必要がある。
@@ -104,9 +106,16 @@ def nextcloud_credentials(user: User = Depends(current_user)) -> dict[str, str]:
             detail="nextcloud-master-password secret is not configured",
         )
     s = Settings()
+    meta = get_team_meta(team)
+    group_folder = meta.get("nextcloud_group_folder") or s.nextcloud_group_folder
+    if not group_folder:
+        raise HTTPException(
+            status_code=500,
+            detail=f"team {team!r} has no nextcloud_group_folder",
+        )
     return {
         "url": s.nextcloud_url,
         "username": s.nextcloud_user,
         "password": password,
-        "group_folder": s.nextcloud_group_folder,
+        "group_folder": group_folder,
     }

@@ -9,8 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
-from ..auth import User, current_user
-from ..dependencies import get_lab
+from ..auth import User, current_user, get_lab
 from ..schemas import (
     ConditionsUpdate,
     ConditionUnitsUpdate,

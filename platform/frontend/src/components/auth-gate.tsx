@@ -3,15 +3,19 @@
 import { useEffect, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
-import { setTokenProvider } from "@/lib/api";
+import { setTeamProvider, setTokenProvider } from "@/lib/api";
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { user, loading, signIn, getIdToken } = useAuth();
+  const { user, loading, signIn, getIdToken, currentTeam } = useAuth();
 
-  // api.ts 側に token 取得関数を渡す。user 切替時に最新の getIdToken を反映。
+  // api.ts 側に token / team 取得関数を渡す。user 切替時に最新を反映。
   useEffect(() => {
     setTokenProvider(getIdToken);
   }, [getIdToken]);
+
+  useEffect(() => {
+    setTeamProvider(() => currentTeam);
+  }, [currentTeam]);
 
   if (loading) {
     return (

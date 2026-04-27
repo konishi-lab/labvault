@@ -10,7 +10,7 @@ from fastapi.responses import Response
 from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
-from ..dependencies import get_lab
+from ..auth import get_lab
 
 logger = logging.getLogger(__name__)
 

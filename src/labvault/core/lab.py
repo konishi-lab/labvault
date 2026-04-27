@@ -450,7 +450,9 @@ def _auto_storage(settings: Settings) -> Any:
             from labvault.backends.nextcloud import NextcloudStorage
             from labvault.backends.platform_client import PlatformClient
 
-            creds = PlatformClient(settings.platform_url).get_nextcloud_credentials()
+            creds = PlatformClient(settings.platform_url).get_nextcloud_credentials(
+                team=settings.team,
+            )
             return NextcloudStorage(
                 url=creds.get("url") or settings.nextcloud_url,
                 user=creds.get("username") or settings.nextcloud_user,

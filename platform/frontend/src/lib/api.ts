@@ -2,9 +2,14 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // --- auth token plumbing ---
 let _getToken: () => Promise<string | null> = async () => null;
+let _getTeam: () => string | null = () => null;
 
 export function setTokenProvider(fn: () => Promise<string | null>) {
   _getToken = fn;
+}
+
+export function setTeamProvider(fn: () => string | null) {
+  _getTeam = fn;
 }
 
 export async function authFetch(
@@ -12,8 +17,10 @@ export async function authFetch(
   init: RequestInit = {},
 ): Promise<Response> {
   const token = await _getToken();
+  const team = _getTeam();
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (team) headers.set("X-Labvault-Team", team);
   return fetch(url, { ...init, headers });
 }
 

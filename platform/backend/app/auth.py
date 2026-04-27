@@ -47,21 +47,39 @@ def init_firebase_admin() -> None:
 
 @dataclass(frozen=True)
 class User:
-    """認証済ユーザー。handler では Depends(current_user) で受け取る。"""
+    """認証済ユーザー。handler では Depends(current_user) で受け取る。
+
+    teams: ((team_id, role), ...) のタプル。default_team は header 未指定時の既定。
+    role は legacy (allowed_users.role)、teams[].role が新しい team 単位 role。
+    """
 
     uid: str
     email: str
     display_name: str
-    role: str  # admin | member | viewer
+    role: str  # legacy admin | member | viewer (post-migration は teams[].role を使う)
+    teams: tuple[tuple[str, str], ...] = ()
+    default_team: str = ""
+
+    def has_team(self, team_id: str) -> bool:
+        return any(t == team_id for t, _ in self.teams)
+
+    def role_in(self, team_id: str) -> str | None:
+        for t, r in self.teams:
+            if t == team_id:
+                return r
+        return None
 
 
-def _allowed_users_ref(lab: Any) -> Any:
-    """Firestore の allowed_users コレクション参照を返す。
+def _firestore_db() -> Any:
+    """Firestore client を取得する。allowed_users / teams の参照に使う。"""
+    from .dependencies import get_firestore_db
 
-    lab._metadata が FirestoreMetadataBackend の場合のみ動作。
-    """
-    db = lab._metadata._get_db()
-    return db.collection("allowed_users")
+    return get_firestore_db()
+
+
+def _allowed_users_ref() -> Any:
+    """allowed_users コレクション参照。"""
+    return _firestore_db().collection("allowed_users")
 
 
 def _dev_skip() -> bool:
@@ -111,6 +129,8 @@ def current_user(
             email="dev@local",
             display_name="dev",
             role="admin",
+            teams=(("konishi-lab", "admin"),),
+            default_team="konishi-lab",
         )
 
     if not authorization or not authorization.startswith("Bearer "):
@@ -147,10 +167,7 @@ def current_user(
         raise HTTPException(status_code=403, detail="Email not verified")
 
     # allowed_users 照合（email を doc id に使用）
-    from .dependencies import get_lab
-
-    lab = get_lab()
-    doc = _allowed_users_ref(lab).document(email).get()
+    doc = _allowed_users_ref().document(email).get()
     if not doc.exists:
         raise HTTPException(status_code=403, detail=f"{email} is not allowed")
 
@@ -159,6 +176,21 @@ def current_user(
         raise HTTPException(status_code=403, detail=f"{email} is deactivated")
 
     role = data.get("role", "member")
+    teams_raw = data.get("teams") or []
+    teams_tuple: tuple[tuple[str, str], ...] = tuple(
+        (t["team_id"], t.get("role", "member"))
+        for t in teams_raw
+        if isinstance(t, dict) and t.get("team_id")
+    )
+    default_team = data.get("default_team") or ""
+    if not teams_tuple:
+        # マイグレーション前 / 整合性が崩れた場合のフォールバック。
+        raise HTTPException(
+            status_code=403,
+            detail=f"{email} has no team assignment",
+        )
+    if not default_team:
+        default_team = teams_tuple[0][0]
 
     # 初回ログインの uid / last_login_at を補完
     patch: dict[str, Any] = {"last_login_at": dt.datetime.now(dt.UTC)}
@@ -166,9 +198,47 @@ def current_user(
         patch["uid"] = uid
     if not data.get("display_name"):
         patch["display_name"] = name
-    _allowed_users_ref(lab).document(email).set(patch, merge=True)
+    _allowed_users_ref().document(email).set(patch, merge=True)
 
-    return User(uid=uid, email=email, display_name=name, role=role)
+    return User(
+        uid=uid,
+        email=email,
+        display_name=name,
+        role=role,
+        teams=teams_tuple,
+        default_team=default_team,
+    )
+
+
+def current_team(
+    user: User = Depends(current_user),
+    x_labvault_team: str | None = Header(default=None, alias="X-Labvault-Team"),
+) -> str:
+    """リクエストの team context を解決する。
+
+    優先順位: X-Labvault-Team header → user.default_team。
+    user.teams に含まれない team は 403。
+    """
+    requested = (x_labvault_team or user.default_team or "").strip()
+    if not requested:
+        raise HTTPException(status_code=400, detail="team is required")
+    if not user.has_team(requested):
+        raise HTTPException(
+            status_code=403,
+            detail=f"user has no access to team {requested!r}",
+        )
+    return requested
+
+
+def get_lab(team: str = Depends(current_team)) -> Any:
+    """FastAPI dep: 現在のリクエストの team で Lab を返す。
+
+    handler では `lab: Lab = Depends(get_lab)` と書く。
+    Lab は team 単位でキャッシュされる。
+    """
+    from .dependencies import get_lab_for_team
+
+    return get_lab_for_team(team)
 
 
 def require_role(*allowed_roles: str) -> Any:

@@ -55,24 +55,35 @@ class PlatformClient:
             assert self._token is not None
             return self._token
 
-    def _get(self, path: str) -> dict[str, Any]:
+    def _get(
+        self,
+        path: str,
+        *,
+        team: str = "",
+    ) -> dict[str, Any]:
         import httpx
 
         token = self._get_access_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        if team:
+            headers["X-Labvault-Team"] = team
         resp = httpx.get(
             f"{self._url}{path}",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
             timeout=30.0,
         )
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
 
-    def get_nextcloud_credentials(self) -> dict[str, str]:
+    def get_nextcloud_credentials(self, team: str = "") -> dict[str, str]:
         """platform から Nextcloud 接続情報を取得する。
+
+        team を指定すると X-Labvault-Team header を載せる。未指定なら
+        platform 側で user.default_team が使われる。
 
         返却: {"url", "username", "password", "group_folder"}
         """
-        return self._get("/api/auth/nextcloud-credentials")
+        return self._get("/api/auth/nextcloud-credentials", team=team)
 
     def ping(self) -> dict[str, Any]:
         """疎通確認 (認証不要の /api/health)."""

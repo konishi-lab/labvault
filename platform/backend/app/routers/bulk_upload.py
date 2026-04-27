@@ -15,8 +15,7 @@ from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 from labvault.core.record import Record
 
-from ..auth import User, current_user
-from ..dependencies import get_lab
+from ..auth import User, current_user, get_lab
 
 logger = logging.getLogger(__name__)
 

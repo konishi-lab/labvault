@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 
 from labvault import Lab
 
-from ..dependencies import get_lab
+from ..auth import get_lab
 from ..schemas import RecordSummary
 
 router = APIRouter(prefix="/api/search", tags=["search"])
