@@ -100,15 +100,32 @@ labvault overview DE9Z7K
 
 ## インストール
 
+labvault は研究室管理の Artifact Registry (private) で配布しています。
+GCP アカウント (`hirosuke@example.com` 等) に reader 権限が付与されている必要があります。
+
 ```bash
-pip install labvault
+# 1. ADC ログイン (初回のみ)
+gcloud auth application-default login
 
-# GCPバックエンド付き
-pip install labvault[gcp,nextcloud]
+# 2. AR 用 keyring backend
+pip install keyring keyrings.google-artifactregistry-auth
 
-# 全部入り
-pip install labvault[all]
+# 3. labvault インストール
+pip install \
+  --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
+  labvault[gcp,nextcloud]
 ```
+
+更新は `pip install -U labvault` で可能。エクストラ:
+
+| 名前 | 内容 |
+|---|---|
+| `gcp` | Firestore メタデータ + Vertex AI Embedding |
+| `nextcloud` | Nextcloud ストレージ |
+| `mcp` | MCP サーバー |
+| `all` | 全部入り |
+
+権限がない / 申請したい場合は web UI (`https://labvault-web-...run.app`) からログイン → admin 承認をリクエストしてください。
 
 ## セットアップ
 
@@ -132,12 +149,18 @@ cp .env.example .env
 ```bash
 LABVAULT_TEAM=konishi-lab
 LABVAULT_USER=your-name
-LABVAULT_NEXTCLOUD_URL=https://arim.mdx.jp/nextcloud
-LABVAULT_NEXTCLOUD_USER=your-nextcloud-user
-LABVAULT_NEXTCLOUD_PASSWORD=your-app-password
-LABVAULT_NEXTCLOUD_GROUP_FOLDER=24UTARIM004
-LABVAULT_GCP_PROJECT=your-gcp-project
-LABVAULT_FIRESTORE_DATABASE=(default)
+LABVAULT_GCP_PROJECT=klab-laser-process
+LABVAULT_FIRESTORE_DATABASE=labvault
+
+# 推奨: Nextcloud credentials を platform 経由で取得 (ADC 認証)。
+# ローカルに Nextcloud password を置く必要なし。
+LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+
+# 開発用: platform を経由せず直接 Nextcloud に繋ぐ場合のみ設定
+# LABVAULT_NEXTCLOUD_URL=https://arim.mdx.jp/nextcloud
+# LABVAULT_NEXTCLOUD_USER=arim00065
+# LABVAULT_NEXTCLOUD_PASSWORD=...
+# LABVAULT_NEXTCLOUD_GROUP_FOLDER=large/24UTARIM004
 ```
 
 ### 3. GCP (Firestore) セットアップ
