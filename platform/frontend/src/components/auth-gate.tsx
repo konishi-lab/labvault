@@ -4,9 +4,12 @@ import { useEffect, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { setTeamProvider, setTokenProvider } from "@/lib/api";
+import { RequestAccessForm } from "@/components/request-access-form";
+import { PendingStatus } from "@/components/pending-status";
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { user, loading, signIn, getIdToken, currentTeam, teams } = useAuth();
+  const { user, loading, signIn, getIdToken, currentTeam, authStatus } =
+    useAuth();
 
   // api.ts 側に token / team 取得関数を渡す。user 切替時に最新を反映。
   useEffect(() => {
@@ -37,17 +40,24 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  // /api/auth/me 応答待ち。currentTeam が決まらないと最初の fetch は default team で走り、
-  // その後 key 変更で remount され二重 fetch になるため、確定するまで待つ。
-  if (currentTeam == null && teams.length === 0) {
+  // /api/auth/me 応答待ち。
+  if (authStatus === "loading") {
     return (
       <div className="flex min-h-[50vh] items-center justify-center text-muted-foreground">
-        チーム情報を読み込み中...
+        認可状態を確認中...
       </div>
     );
   }
 
-  // team 切替時は子コンポーネントを remount して全 fetch を再発火させる。
+  if (authStatus === "unregistered") {
+    return <RequestAccessForm />;
+  }
+
+  if (authStatus === "pending") {
+    return <PendingStatus />;
+  }
+
+  // authorized — team 切替時は子コンポーネントを remount して全 fetch を再発火させる。
   return (
     <div key={currentTeam ?? "no-team"} className="contents">
       {children}

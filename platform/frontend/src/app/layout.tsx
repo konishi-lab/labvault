@@ -5,6 +5,7 @@ import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
 import { AuthGate } from "@/components/auth-gate";
 import { UserMenu } from "@/components/user-menu";
+import { AdminNav } from "@/components/admin-nav";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -45,6 +46,7 @@ export default function RootLayout({
                 >
                   レコード
                 </Link>
+                <AdminNav />
               </nav>
               <div className="ml-auto">
                 <UserMenu />

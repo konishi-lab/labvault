@@ -46,8 +46,21 @@ def init_firebase_admin() -> None:
 
 
 @dataclass(frozen=True)
+class AuthenticatedUser:
+    """Firebase / Google OAuth トークン検証のみ通った状態のユーザー。
+
+    allowed_users 照合は未実施。サインアップ申請 (`/api/auth/request-access`) のように
+    「ログインはしたがまだ認可されていない」ユーザーを受けるエンドポイント用。
+    """
+
+    uid: str
+    email: str
+    display_name: str
+
+
+@dataclass(frozen=True)
 class User:
-    """認証済ユーザー。handler では Depends(current_user) で受け取る。
+    """認証 + 認可済ユーザー。handler では Depends(current_user) で受け取る。
 
     teams: ((team_id, role), ...) のタプル。default_team は header 未指定時の既定。
     role は legacy (allowed_users.role)、teams[].role が新しい team 単位 role。
@@ -77,9 +90,14 @@ def _firestore_db() -> Any:
     return get_firestore_db()
 
 
-def _allowed_users_ref() -> Any:
+def allowed_users_ref() -> Any:
     """allowed_users コレクション参照。"""
     return _firestore_db().collection("allowed_users")
+
+
+def pending_users_ref() -> Any:
+    """pending_users コレクション参照。サインアップ申請の保管場所。"""
+    return _firestore_db().collection("pending_users")
 
 
 def _dev_skip() -> bool:
@@ -115,22 +133,19 @@ def _verify_google_access_token(token: str) -> dict[str, Any] | None:
     return data
 
 
-def current_user(
+def current_authenticated_user(
     authorization: str | None = Header(default=None),
-) -> User:
-    """Authorization: Bearer <id_token> を検証して User を返す。
+) -> AuthenticatedUser:
+    """Firebase / Google OAuth トークンのみ検証する (allowed_users は見ない)。
 
-    FastAPI の Depends から使う。
+    サインアップ申請のように、まだ allowed_users に登録されていないユーザーを
+    受けるエンドポイント用。通常の handler は `current_user` を使うこと。
     """
-    # 開発用スキップ
     if _dev_skip():
-        return User(
+        return AuthenticatedUser(
             uid="dev",
             email="dev@local",
             display_name="dev",
-            role="admin",
-            teams=(("konishi-lab", "admin"),),
-            default_team="konishi-lab",
         )
 
     if not authorization or not authorization.startswith("Bearer "):
@@ -166,8 +181,33 @@ def current_user(
     if not email or not email_verified:
         raise HTTPException(status_code=403, detail="Email not verified")
 
+    return AuthenticatedUser(uid=uid, email=email, display_name=name)
+
+
+def current_user(
+    auth_user: AuthenticatedUser = Depends(current_authenticated_user),
+) -> User:
+    """Firebase token + allowed_users 照合を通した User を返す。
+
+    通常の handler はこれを使う。allowed_users 未登録なら 403。
+    """
+    # 開発用スキップ
+    if _dev_skip():
+        return User(
+            uid="dev",
+            email="dev@local",
+            display_name="dev",
+            role="admin",
+            teams=(("konishi-lab", "admin"),),
+            default_team="konishi-lab",
+        )
+
+    email = auth_user.email
+    uid = auth_user.uid
+    name = auth_user.display_name
+
     # allowed_users 照合（email を doc id に使用）
-    doc = _allowed_users_ref().document(email).get()
+    doc = allowed_users_ref().document(email).get()
     if not doc.exists:
         raise HTTPException(status_code=403, detail=f"{email} is not allowed")
 
@@ -198,7 +238,7 @@ def current_user(
         patch["uid"] = uid
     if not data.get("display_name"):
         patch["display_name"] = name
-    _allowed_users_ref().document(email).set(patch, merge=True)
+    allowed_users_ref().document(email).set(patch, merge=True)
 
     return User(
         uid=uid,
@@ -208,6 +248,20 @@ def current_user(
         teams=teams_tuple,
         default_team=default_team,
     )
+
+
+def require_super_admin(user: User = Depends(current_user)) -> User:
+    """super-admin (allowed_users.role == 'admin') のみ通す。
+
+    将来 team-scoped admin (teams[].role == 'admin') を導入する場合は
+    `require_team_admin(team_id)` を別途追加する想定。
+    """
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="super-admin role required",
+        )
+    return user
 
 
 def current_team(

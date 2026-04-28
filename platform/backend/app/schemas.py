@@ -99,3 +99,49 @@ class ConditionUnitsUpdate(BaseModel):
 class ResultUpdate(BaseModel):
     key: str
     value: Any
+
+
+# --- Auth / signup ---
+
+
+class RequestAccessRequest(BaseModel):
+    requested_team_name: str
+    note: str = ""
+
+
+class RequestAccessResponse(BaseModel):
+    status: str  # "pending" | "already_allowed"
+    email: str
+    requested_team_name: str = ""
+
+
+class PendingUser(BaseModel):
+    email: str
+    display_name: str = ""
+    requested_team_name: str = ""
+    note: str = ""
+    created_at: datetime | None = None
+
+
+class PendingListResponse(BaseModel):
+    items: list[PendingUser]
+
+
+class NewTeamSpec(BaseModel):
+    team_id: str
+    name: str
+    nextcloud_group_folder: str
+
+
+class ApproveRequest(BaseModel):
+    email: str
+    action: str  # "create_team" | "assign"
+    role: str = "member"  # member | admin | viewer (team 単位 role)
+    team_id: str = ""  # action == "assign" の場合に必要
+    new_team: NewTeamSpec | None = None  # action == "create_team" の場合に必要
+
+
+class ApproveResponse(BaseModel):
+    status: str  # "ok"
+    email: str
+    team_id: str

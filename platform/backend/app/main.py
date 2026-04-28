@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -10,10 +11,28 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .auth import User, current_team, current_user, init_firebase_admin
+from .auth import (
+    AuthenticatedUser,
+    User,
+    allowed_users_ref,
+    current_authenticated_user,
+    current_team,
+    current_user,
+    init_firebase_admin,
+    pending_users_ref,
+    require_super_admin,
+)
 from .dependencies import close_lab, get_firestore_db, get_team_meta
 from .routers import bulk_upload, files, preview, records, search
-from .schemas import HealthResponse
+from .schemas import (
+    ApproveRequest,
+    ApproveResponse,
+    HealthResponse,
+    PendingListResponse,
+    PendingUser,
+    RequestAccessRequest,
+    RequestAccessResponse,
+)
 from .secrets_util import get_secret
 
 
@@ -72,30 +91,109 @@ def health() -> HealthResponse:
 
 
 @app.get("/api/auth/me")
-def auth_me(user: User = Depends(current_user)) -> dict[str, Any]:
-    """現在のユーザー情報を返す。フロントで表示用。
+def auth_me(
+    auth_user: AuthenticatedUser = Depends(current_authenticated_user),
+) -> dict[str, Any]:
+    """現在のユーザーの認可状態を返す。
 
-    teams[].name は teams/{team_id}.name から解決する。doc が無い場合は team_id。
+    認証 (Firebase) のみ通れば 200 を返す。レスポンスの `status` で 3 状態を返す:
+      - "authorized": allowed_users 登録済み (teams / default_team を返す)
+      - "pending": pending_users にいる (申請中)
+      - "unregistered": どちらにもいない (申請フォームへ誘導)
+
+    AuthGate がこれで分岐できる。teams[].name は teams/{team_id}.name から解決。
     """
+    email = auth_user.email
     db = get_firestore_db()
-    team_names: dict[str, str] = {}
-    for team_id, _ in user.teams:
-        snap = db.collection("teams").document(team_id).get()
-        if snap.exists:
-            team_names[team_id] = (snap.to_dict() or {}).get("name") or team_id
-        else:
-            team_names[team_id] = team_id
+
+    allowed_snap = allowed_users_ref().document(email).get()
+    if allowed_snap.exists:
+        data = allowed_snap.to_dict() or {}
+        if data.get("active", True):
+            teams_raw = data.get("teams") or []
+            teams_list: list[dict[str, str]] = []
+            for t in teams_raw:
+                if not isinstance(t, dict) or not t.get("team_id"):
+                    continue
+                team_id = t["team_id"]
+                role = t.get("role", "member")
+                snap = db.collection("teams").document(team_id).get()
+                name = (
+                    (snap.to_dict() or {}).get("name") or team_id
+                    if snap.exists
+                    else team_id
+                )
+                teams_list.append(
+                    {"team_id": team_id, "role": role, "name": name}
+                )
+            default_team = data.get("default_team") or (
+                teams_list[0]["team_id"] if teams_list else ""
+            )
+            return {
+                "status": "authorized",
+                "uid": data.get("uid", auth_user.uid),
+                "email": email,
+                "display_name": data.get("display_name") or auth_user.display_name,
+                "role": data.get("role", "member"),
+                "teams": teams_list,
+                "default_team": default_team,
+            }
+
+    pending_snap = pending_users_ref().document(email).get()
+    if pending_snap.exists:
+        d = pending_snap.to_dict() or {}
+        return {
+            "status": "pending",
+            "email": email,
+            "display_name": auth_user.display_name,
+            "requested_team_name": d.get("requested_team_name", ""),
+        }
+
     return {
-        "uid": user.uid,
-        "email": user.email,
-        "display_name": user.display_name,
-        "role": user.role,
-        "teams": [
-            {"team_id": t, "role": r, "name": team_names[t]}
-            for t, r in user.teams
-        ],
-        "default_team": user.default_team,
+        "status": "unregistered",
+        "email": email,
+        "display_name": auth_user.display_name,
     }
+
+
+@app.post("/api/auth/request-access", response_model=RequestAccessResponse)
+def request_access(
+    body: RequestAccessRequest,
+    auth_user: AuthenticatedUser = Depends(current_authenticated_user),
+) -> RequestAccessResponse:
+    """サインアップ申請。
+
+    Firebase 認証は通っているが allowed_users 未登録のユーザーが叩く。
+    既存ユーザー (allowed_users 登録済み) が叩いた場合は no-op で
+    `already_allowed` を返す。pending_users/{email} に doc を upsert。
+    """
+    email = auth_user.email
+    if not email:
+        raise HTTPException(status_code=400, detail="email required")
+
+    requested_name = body.requested_team_name.strip()
+    if not requested_name:
+        raise HTTPException(
+            status_code=400, detail="requested_team_name is required"
+        )
+
+    # 既に allowed_users にいる場合は申請不要
+    existing = allowed_users_ref().document(email).get()
+    if existing.exists and (existing.to_dict() or {}).get("active", True):
+        return RequestAccessResponse(status="already_allowed", email=email)
+
+    payload: dict[str, Any] = {
+        "email": email,
+        "display_name": auth_user.display_name,
+        "requester_uid": auth_user.uid,
+        "requested_team_name": requested_name,
+        "note": body.note.strip(),
+        "created_at": dt.datetime.now(dt.UTC),
+    }
+    pending_users_ref().document(email).set(payload, merge=True)
+    return RequestAccessResponse(
+        status="pending", email=email, requested_team_name=requested_name
+    )
 
 
 @app.get("/api/auth/nextcloud-credentials")
@@ -133,3 +231,118 @@ def nextcloud_credentials(
         "password": password,
         "group_folder": group_folder,
     }
+
+
+@app.get("/api/admin/pending", response_model=PendingListResponse)
+def admin_pending(
+    _admin: User = Depends(require_super_admin),
+) -> PendingListResponse:
+    """サインアップ申請の一覧を返す。super-admin のみ。"""
+    items: list[PendingUser] = []
+    for snap in pending_users_ref().stream():
+        d = snap.to_dict() or {}
+        items.append(
+            PendingUser(
+                email=d.get("email") or snap.id,
+                display_name=d.get("display_name", ""),
+                requested_team_name=d.get("requested_team_name", ""),
+                note=d.get("note", ""),
+                created_at=d.get("created_at"),
+            )
+        )
+    items.sort(key=lambda p: p.created_at or dt.datetime.min, reverse=False)
+    return PendingListResponse(items=items)
+
+
+@app.post("/api/admin/approve", response_model=ApproveResponse)
+def admin_approve(
+    body: ApproveRequest,
+    admin: User = Depends(require_super_admin),
+) -> ApproveResponse:
+    """申請を承認する。super-admin のみ。
+
+    action="assign": 既存 team に追加。
+    action="create_team": 新規 team を作成して追加。
+    どちらの場合も pending_users/{email} を削除し、allowed_users/{email} を作成。
+    """
+    email = body.email.strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="email required")
+    if body.action not in ("assign", "create_team"):
+        raise HTTPException(
+            status_code=400, detail="action must be 'assign' or 'create_team'"
+        )
+    if body.role not in ("admin", "member", "viewer"):
+        raise HTTPException(
+            status_code=400, detail="role must be admin / member / viewer"
+        )
+
+    # 既に allowed_users にいる場合は別 endpoint (team 追加) を使うべき
+    existing = allowed_users_ref().document(email).get()
+    if existing.exists and (existing.to_dict() or {}).get("active", True):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{email} is already in allowed_users. Use team-add endpoint.",
+        )
+
+    db = get_firestore_db()
+
+    if body.action == "create_team":
+        if body.new_team is None:
+            raise HTTPException(
+                status_code=400, detail="new_team is required for create_team"
+            )
+        team_id = body.new_team.team_id.strip()
+        if not team_id:
+            raise HTTPException(status_code=400, detail="team_id required")
+        team_ref = db.collection("teams").document(team_id)
+        if team_ref.get().exists:
+            raise HTTPException(
+                status_code=409, detail=f"team {team_id!r} already exists"
+            )
+        if not body.new_team.nextcloud_group_folder.strip():
+            raise HTTPException(
+                status_code=400, detail="nextcloud_group_folder required"
+            )
+        team_ref.set(
+            {
+                "name": body.new_team.name.strip() or team_id,
+                "nextcloud_group_folder": body.new_team.nextcloud_group_folder.strip(),
+                "created_at": dt.datetime.now(dt.UTC),
+                "created_by": admin.email,
+            }
+        )
+        target_team = team_id
+    else:  # assign
+        target_team = body.team_id.strip()
+        if not target_team:
+            raise HTTPException(
+                status_code=400, detail="team_id required for assign"
+            )
+        if not db.collection("teams").document(target_team).get().exists:
+            raise HTTPException(
+                status_code=404, detail=f"team {target_team!r} not found"
+            )
+
+    # pending entry から display_name を持ってくる
+    pending_snap = pending_users_ref().document(email).get()
+    pending_data = pending_snap.to_dict() if pending_snap.exists else {}
+    display_name = (pending_data or {}).get("display_name", "")
+
+    allowed_users_ref().document(email).set(
+        {
+            "email": email,
+            "display_name": display_name,
+            "role": "member",  # legacy global role; team 単位 role は teams[].role
+            "teams": [{"team_id": target_team, "role": body.role}],
+            "default_team": target_team,
+            "active": True,
+            "created_at": dt.datetime.now(dt.UTC),
+            "created_by": admin.email,
+        },
+        merge=True,
+    )
+    if pending_snap.exists:
+        pending_users_ref().document(email).delete()
+
+    return ApproveResponse(status="ok", email=email, team_id=target_team)

@@ -214,3 +214,69 @@ export async function deleteRecord(id: string): Promise<void> {
   });
   if (!res.ok) throw new Error(`Failed to delete record: ${res.status}`);
 }
+
+// --- signup / admin ---
+
+export interface RequestAccessResult {
+  status: string; // "pending" | "already_allowed"
+  email: string;
+  requested_team_name: string;
+}
+
+export async function requestAccess(
+  requested_team_name: string,
+  note: string = "",
+): Promise<RequestAccessResult> {
+  const res = await authFetch(`${API_BASE}/api/auth/request-access`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requested_team_name, note }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Request access failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+export interface PendingUser {
+  email: string;
+  display_name: string;
+  requested_team_name: string;
+  note: string;
+  created_at: string | null;
+}
+
+export async function fetchPendingUsers(): Promise<PendingUser[]> {
+  const res = await authFetch(`${API_BASE}/api/admin/pending`);
+  if (!res.ok) throw new Error(`Failed to fetch pending: ${res.status}`);
+  const data = (await res.json()) as { items: PendingUser[] };
+  return data.items;
+}
+
+export interface ApproveBody {
+  email: string;
+  action: "create_team" | "assign";
+  role: "admin" | "member" | "viewer";
+  team_id?: string; // assign のみ
+  new_team?: {
+    team_id: string;
+    name: string;
+    nextcloud_group_folder: string;
+  }; // create_team のみ
+}
+
+export async function approveUser(
+  body: ApproveBody,
+): Promise<{ status: string; email: string; team_id: string }> {
+  const res = await authFetch(`${API_BASE}/api/admin/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Approve failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
