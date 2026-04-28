@@ -9,43 +9,16 @@
 | 1 | `teams/{team_id}` collection 作成 + `allowed_users` を `teams[]` + `default_team` 構造に移行 | 2026-04-27 |
 | 2 | backend を per-team Lab に変更、`X-Labvault-Team` header で team context 解決、Nextcloud `group_folder` を `teams/{team_id}` から動的取得、SDK / frontend も対応 | 2026-04-27 |
 | 5 | private Artifact Registry (`labvault-pypi`) で wheel 配布、`v*` tag push で自動 publish | 2026-04-27 |
+| 6 | header に team selector ドロップダウン、team 切替時は `key={currentTeam}` で children remount し全 fetch を再発火、`/api/auth/me` に team `name` を含める | 2026-04-28 |
+| 3 | サインアップ + super-admin 承認フロー (auth.py 2 段階化、`pending_users` collection、`/api/auth/request-access` / `/api/admin/pending` / `/api/admin/approve`、申請フォーム + 承認 UI) | 2026-04-28 |
 
 ## 残タスク
 
-### Phase 3: サインアップ + admin 承認フロー
+### Phase 3 残り (後回し)
 
-**目的**: 新規メンバーが web UI からセルフ申請 → admin がチーム振り分けして承認、で完結させる。
-
-- [ ] **`pending_users/{email}` collection 設計**
-  - フィールド: `email`, `display_name`, `requested_team_name` (自由入力), `created_at`, `requester_uid`
-- [ ] **backend エンドポイント**
-  - `POST /api/auth/request-access` — 認証済 (Firebase login 通過) だが allowed_users 未登録のユーザーが叩く。`requested_team_name` を受け取って `pending_users` に保存
-  - `GET /api/admin/pending` — super-admin のみ。pending 一覧
-  - `POST /api/admin/approve` — body: `{email, team_id, role, action: "create_team" | "assign"}`
-    - `create_team` の場合は同時に `teams/{new_id}` を作成 (`name`, `nextcloud_group_folder` も入力)
-    - `allowed_users/{email}` に `teams=[{team_id, role}]`, `default_team` を set
-    - `pending_users/{email}` を削除
-  - `POST /api/admin/users/{email}/teams` — admin が後から team を追加/削除
-- [ ] **auth.py 修正**
-  - allowed_users 未登録ユーザーがログインできた後の挙動を「申請画面に誘導」に変更 (現状は 403)
-  - 案: `current_user` を 2 段階に分割。`current_authenticated_user` (Firebase 通過)、`current_authorized_user` (allowed_users 通過)。申請エンドポイントは前者を使う
-- [ ] **frontend**
-  - 申請フォーム (team 名入力)
-  - 「申請中」状態の表示
-  - admin 承認画面 (pending list、create_team / assign 切替、role 選択)
-  - admin ユーザー一覧 + team 編集画面
-
-**スコープ判断**: 当面メンバー追加が稀ならこの Phase は遅らせて、admin が `seed_admin.py` 拡張版 + 手動 IAM grant で対応する選択肢もある。
-
-### Phase 6: team selector UI
-
-**目的**: 複数 team に所属するユーザーが web UI で team を切り替えられるようにする。
-
-- [ ] header に team 切替ドロップダウン (`useAuth().teams` を表示、`setCurrentTeam` を呼ぶ)
-- [ ] team 切替時に画面 (records 一覧、検索結果) を再取得
-- [ ] localStorage 永続化 (実装済 — 動作確認のみ)
-
-**現状**: backend は per-team で完全に動く。frontend は localStorage に team を保持しているが、切替 UI が無いので 1 team 固定状態。
+- [ ] `POST /api/admin/users/{email}/teams` — admin が承認済みユーザーに team を後から追加/削除
+- [ ] admin ユーザー一覧画面 (現状は pending のみ)
+- [ ] team-scoped admin (`teams[].role == "admin"`) の判定ヘルパー `require_team_admin(team_id)` を追加し、approve や user 編集を team admin にも開放
 
 ### メンバー管理の自動化 (AR + allowed_users 連動)
 
@@ -86,4 +59,4 @@
 
 - 設計: [auth_design.md](./auth_design.md)
 - マイグレーションスクリプト: `scripts/migrate_to_multitenant.py`
-- 実装コミット: 4f5a93b (Phase 1+2), b8e2250 / 765141c (Phase 5)
+- 実装コミット: 4f5a93b (Phase 1+2), b8e2250 / 765141c (Phase 5), 407b464 (Phase 6), f114f98 (Phase 3)
