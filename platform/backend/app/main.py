@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import User, current_team, current_user, init_firebase_admin
-from .dependencies import close_lab, get_team_meta
+from .dependencies import close_lab, get_firestore_db, get_team_meta
 from .routers import bulk_upload, files, preview, records, search
 from .schemas import HealthResponse
 from .secrets_util import get_secret
@@ -73,13 +73,27 @@ def health() -> HealthResponse:
 
 @app.get("/api/auth/me")
 def auth_me(user: User = Depends(current_user)) -> dict[str, Any]:
-    """現在のユーザー情報を返す。フロントで表示用。"""
+    """現在のユーザー情報を返す。フロントで表示用。
+
+    teams[].name は teams/{team_id}.name から解決する。doc が無い場合は team_id。
+    """
+    db = get_firestore_db()
+    team_names: dict[str, str] = {}
+    for team_id, _ in user.teams:
+        snap = db.collection("teams").document(team_id).get()
+        if snap.exists:
+            team_names[team_id] = (snap.to_dict() or {}).get("name") or team_id
+        else:
+            team_names[team_id] = team_id
     return {
         "uid": user.uid,
         "email": user.email,
         "display_name": user.display_name,
         "role": user.role,
-        "teams": [{"team_id": t, "role": r} for t, r in user.teams],
+        "teams": [
+            {"team_id": t, "role": r, "name": team_names[t]}
+            for t, r in user.teams
+        ],
         "default_team": user.default_team,
     }
 

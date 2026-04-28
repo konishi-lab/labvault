@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth";
 import { setTeamProvider, setTokenProvider } from "@/lib/api";
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { user, loading, signIn, getIdToken, currentTeam } = useAuth();
+  const { user, loading, signIn, getIdToken, currentTeam, teams } = useAuth();
 
   // api.ts 側に token / team 取得関数を渡す。user 切替時に最新を反映。
   useEffect(() => {
@@ -37,5 +37,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  return <>{children}</>;
+  // /api/auth/me 応答待ち。currentTeam が決まらないと最初の fetch は default team で走り、
+  // その後 key 変更で remount され二重 fetch になるため、確定するまで待つ。
+  if (currentTeam == null && teams.length === 0) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center text-muted-foreground">
+        チーム情報を読み込み中...
+      </div>
+    );
+  }
+
+  // team 切替時は子コンポーネントを remount して全 fetch を再発火させる。
+  return (
+    <div key={currentTeam ?? "no-team"} className="contents">
+      {children}
+    </div>
+  );
 }

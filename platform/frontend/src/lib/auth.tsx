@@ -26,6 +26,7 @@ export interface AuthUser {
 export interface TeamMembership {
   team_id: string;
   role: string;
+  name?: string;
 }
 
 interface AuthContextValue {
