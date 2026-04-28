@@ -23,6 +23,7 @@ from .auth import (
     require_super_admin,
 )
 from .dependencies import close_lab, get_firestore_db, get_team_meta
+from .notifications import notify_signup_request
 from .routers import bulk_upload, files, preview, records, search
 from .schemas import (
     ApproveRequest,
@@ -182,15 +183,28 @@ def request_access(
     if existing.exists and (existing.to_dict() or {}).get("active", True):
         return RequestAccessResponse(status="already_allowed", email=email)
 
+    note = body.note.strip()
+    pending_doc = pending_users_ref().document(email)
+    is_new_request = not pending_doc.get().exists
     payload: dict[str, Any] = {
         "email": email,
         "display_name": auth_user.display_name,
         "requester_uid": auth_user.uid,
         "requested_team_name": requested_name,
-        "note": body.note.strip(),
+        "note": note,
         "created_at": dt.datetime.now(dt.UTC),
     }
-    pending_users_ref().document(email).set(payload, merge=True)
+    pending_doc.set(payload, merge=True)
+
+    # 初回申請のみ Slack 通知 (再送信時の重複通知を避ける)
+    if is_new_request:
+        notify_signup_request(
+            email=email,
+            display_name=auth_user.display_name,
+            requested_team_name=requested_name,
+            note=note,
+        )
+
     return RequestAccessResponse(
         status="pending", email=email, requested_team_name=requested_name
     )
