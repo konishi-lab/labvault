@@ -145,3 +145,49 @@ class ApproveResponse(BaseModel):
     status: str  # "ok"
     email: str
     team_id: str
+
+
+# --- Admin: user / team management ---
+
+
+class TeamMembershipResponse(BaseModel):
+    team_id: str
+    role: str
+    name: str = ""
+
+
+class AllowedUser(BaseModel):
+    email: str
+    display_name: str = ""
+    role: str = ""  # legacy global role
+    teams: list[TeamMembershipResponse] = []
+    default_team: str = ""
+    active: bool = True
+    created_at: datetime | None = None
+    last_login_at: datetime | None = None
+
+
+class UserListResponse(BaseModel):
+    items: list[AllowedUser]
+
+
+class AddTeamRequest(BaseModel):
+    team_id: str
+    role: str = "member"  # admin | member | viewer
+
+
+class UserTeamsResponse(BaseModel):
+    status: str  # "ok"
+    email: str
+    teams: list[TeamMembershipResponse]
+    default_team: str
+
+
+class TeamSummary(BaseModel):
+    team_id: str
+    name: str = ""
+    nextcloud_group_folder: str = ""
+
+
+class TeamListResponse(BaseModel):
+    items: list[TeamSummary]

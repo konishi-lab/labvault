@@ -11,13 +11,13 @@
 | 5 | private Artifact Registry (`labvault-pypi`) で wheel 配布、`v*` tag push で自動 publish | 2026-04-27 |
 | 6 | header に team selector ドロップダウン、team 切替時は `key={currentTeam}` で children remount し全 fetch を再発火、`/api/auth/me` に team `name` を含める | 2026-04-28 |
 | 3 | サインアップ + super-admin 承認フロー (auth.py 2 段階化、`pending_users` collection、`/api/auth/request-access` / `/api/admin/pending` / `/api/admin/approve`、申請フォーム + 承認 UI) | 2026-04-28 |
+| 3+ | admin ユーザー一覧 + team 後追い (`GET /api/admin/users` / `GET /api/admin/teams` / `POST /api/admin/users/{email}/teams` / `DELETE .../teams/{team_id}`、`/admin/users` 画面で team 追加/削除) | 2026-05-11 |
 
 ## 残タスク
 
 ### Phase 3 残り (後回し)
 
-- [ ] `POST /api/admin/users/{email}/teams` — admin が承認済みユーザーに team を後から追加/削除
-- [ ] admin ユーザー一覧画面 (現状は pending のみ)
+- [ ] user の deactivate/reactivate 用 endpoint (`PATCH /api/admin/users/{email}` の `active`)
 - [ ] team-scoped admin (`teams[].role == "admin"`) の判定ヘルパー `require_team_admin(team_id)` を追加し、approve や user 編集を team admin にも開放
 
 ### メンバー管理の自動化 (AR + allowed_users 連動)

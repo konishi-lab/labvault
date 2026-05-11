@@ -280,3 +280,86 @@ export async function approveUser(
   }
   return res.json();
 }
+
+// --- admin: user / team management ---
+
+export type TeamRole = "admin" | "member" | "viewer";
+
+export interface UserTeamMembership {
+  team_id: string;
+  role: string;
+  name: string;
+}
+
+export interface AllowedUserSummary {
+  email: string;
+  display_name: string;
+  role: string; // legacy global
+  teams: UserTeamMembership[];
+  default_team: string;
+  active: boolean;
+  created_at: string | null;
+  last_login_at: string | null;
+}
+
+export async function fetchAllowedUsers(): Promise<AllowedUserSummary[]> {
+  const res = await authFetch(`${API_BASE}/api/admin/users`);
+  if (!res.ok) throw new Error(`Failed to fetch users: ${res.status}`);
+  const data = (await res.json()) as { items: AllowedUserSummary[] };
+  return data.items;
+}
+
+export interface TeamSummary {
+  team_id: string;
+  name: string;
+  nextcloud_group_folder: string;
+}
+
+export async function fetchAllTeams(): Promise<TeamSummary[]> {
+  const res = await authFetch(`${API_BASE}/api/admin/teams`);
+  if (!res.ok) throw new Error(`Failed to fetch teams: ${res.status}`);
+  const data = (await res.json()) as { items: TeamSummary[] };
+  return data.items;
+}
+
+export interface UserTeamsResult {
+  status: string;
+  email: string;
+  teams: UserTeamMembership[];
+  default_team: string;
+}
+
+export async function addUserTeam(
+  email: string,
+  team_id: string,
+  role: TeamRole,
+): Promise<UserTeamsResult> {
+  const res = await authFetch(
+    `${API_BASE}/api/admin/users/${encodeURIComponent(email)}/teams`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team_id, role }),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Add team failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+export async function removeUserTeam(
+  email: string,
+  team_id: string,
+): Promise<UserTeamsResult> {
+  const res = await authFetch(
+    `${API_BASE}/api/admin/users/${encodeURIComponent(email)}/teams/${encodeURIComponent(team_id)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Remove team failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}

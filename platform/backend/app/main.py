@@ -26,6 +26,8 @@ from .dependencies import close_lab, get_firestore_db, get_team_meta
 from .notifications import notify_signup_request
 from .routers import bulk_upload, files, preview, records, search
 from .schemas import (
+    AddTeamRequest,
+    AllowedUser,
     ApproveRequest,
     ApproveResponse,
     HealthResponse,
@@ -33,6 +35,11 @@ from .schemas import (
     PendingUser,
     RequestAccessRequest,
     RequestAccessResponse,
+    TeamListResponse,
+    TeamMembershipResponse,
+    TeamSummary,
+    UserListResponse,
+    UserTeamsResponse,
 )
 from .secrets_util import get_secret
 
@@ -360,3 +367,211 @@ def admin_approve(
         pending_users_ref().document(email).delete()
 
     return ApproveResponse(status="ok", email=email, team_id=target_team)
+
+
+def _team_name_map() -> dict[str, str]:
+    """teams collection から {team_id: name} map を作る。"""
+    db = get_firestore_db()
+    out: dict[str, str] = {}
+    for snap in db.collection("teams").stream():
+        d = snap.to_dict() or {}
+        out[snap.id] = d.get("name") or snap.id
+    return out
+
+
+def _resolve_teams(
+    teams_raw: list[dict[str, Any]] | None,
+    name_map: dict[str, str],
+) -> list[TeamMembershipResponse]:
+    """allowed_users.teams[] を name 解決済の response 形式に変換。"""
+    out: list[TeamMembershipResponse] = []
+    for t in teams_raw or []:
+        if not isinstance(t, dict) or not t.get("team_id"):
+            continue
+        team_id = t["team_id"]
+        out.append(
+            TeamMembershipResponse(
+                team_id=team_id,
+                role=t.get("role", "member"),
+                name=name_map.get(team_id, team_id),
+            )
+        )
+    return out
+
+
+@app.get("/api/admin/teams", response_model=TeamListResponse)
+def admin_list_teams(
+    _admin: User = Depends(require_super_admin),
+) -> TeamListResponse:
+    """teams collection の全 team を返す。super-admin のみ。
+
+    UI で「既存 team に追加」のドロップダウンを作るのに使う。
+    """
+    items: list[TeamSummary] = []
+    for snap in get_firestore_db().collection("teams").stream():
+        d = snap.to_dict() or {}
+        items.append(
+            TeamSummary(
+                team_id=snap.id,
+                name=d.get("name", ""),
+                nextcloud_group_folder=d.get("nextcloud_group_folder", ""),
+            )
+        )
+    items.sort(key=lambda t: t.team_id)
+    return TeamListResponse(items=items)
+
+
+@app.get("/api/admin/users", response_model=UserListResponse)
+def admin_list_users(
+    _admin: User = Depends(require_super_admin),
+) -> UserListResponse:
+    """allowed_users 一覧を返す。super-admin のみ。
+
+    各 user の teams[] には team の表示名 (teams/{team_id}.name) も含める。
+    """
+    name_map = _team_name_map()
+    items: list[AllowedUser] = []
+    for snap in allowed_users_ref().stream():
+        d = snap.to_dict() or {}
+        items.append(
+            AllowedUser(
+                email=d.get("email") or snap.id,
+                display_name=d.get("display_name", ""),
+                role=d.get("role", ""),
+                teams=_resolve_teams(d.get("teams"), name_map),
+                default_team=d.get("default_team", ""),
+                active=bool(d.get("active", True)),
+                created_at=d.get("created_at"),
+                last_login_at=d.get("last_login_at"),
+            )
+        )
+    items.sort(key=lambda u: u.email)
+    return UserListResponse(items=items)
+
+
+@app.post(
+    "/api/admin/users/{email}/teams", response_model=UserTeamsResponse
+)
+def admin_add_user_team(
+    email: str,
+    body: AddTeamRequest,
+    _admin: User = Depends(require_super_admin),
+) -> UserTeamsResponse:
+    """承認済ユーザーに team を追加する。super-admin のみ。
+
+    冪等: 既に所属している team_id を渡した場合は role を上書きする。
+    default_team が未設定なら、追加した team を default にする。
+    """
+    email = email.strip()
+    target_team = body.team_id.strip()
+    if not target_team:
+        raise HTTPException(status_code=400, detail="team_id required")
+    if body.role not in ("admin", "member", "viewer"):
+        raise HTTPException(
+            status_code=400, detail="role must be admin / member / viewer"
+        )
+
+    db = get_firestore_db()
+    if not db.collection("teams").document(target_team).get().exists:
+        raise HTTPException(
+            status_code=404, detail=f"team {target_team!r} not found"
+        )
+
+    user_ref = allowed_users_ref().document(email)
+    snap = user_ref.get()
+    if not snap.exists:
+        raise HTTPException(
+            status_code=404, detail=f"{email} is not in allowed_users"
+        )
+    data = snap.to_dict() or {}
+
+    teams_raw = list(data.get("teams") or [])
+    found = False
+    for t in teams_raw:
+        if isinstance(t, dict) and t.get("team_id") == target_team:
+            t["role"] = body.role
+            found = True
+            break
+    if not found:
+        teams_raw.append({"team_id": target_team, "role": body.role})
+
+    default_team = data.get("default_team") or target_team
+
+    user_ref.set(
+        {"teams": teams_raw, "default_team": default_team},
+        merge=True,
+    )
+
+    name_map = _team_name_map()
+    return UserTeamsResponse(
+        status="ok",
+        email=email,
+        teams=_resolve_teams(teams_raw, name_map),
+        default_team=default_team,
+    )
+
+
+@app.delete(
+    "/api/admin/users/{email}/teams/{team_id}",
+    response_model=UserTeamsResponse,
+)
+def admin_remove_user_team(
+    email: str,
+    team_id: str,
+    _admin: User = Depends(require_super_admin),
+) -> UserTeamsResponse:
+    """承認済ユーザーから team を外す。super-admin のみ。
+
+    最後の team を外そうとした場合は 400 (代わりに deactivate する想定。
+    deactivate 用の API は別途追加予定)。
+    default_team が削除対象だった場合は残った teams の先頭に振り替える。
+    """
+    email = email.strip()
+    target_team = team_id.strip()
+    if not target_team:
+        raise HTTPException(status_code=400, detail="team_id required")
+
+    user_ref = allowed_users_ref().document(email)
+    snap = user_ref.get()
+    if not snap.exists:
+        raise HTTPException(
+            status_code=404, detail=f"{email} is not in allowed_users"
+        )
+    data = snap.to_dict() or {}
+    teams_raw = list(data.get("teams") or [])
+    new_teams = [
+        t
+        for t in teams_raw
+        if not (isinstance(t, dict) and t.get("team_id") == target_team)
+    ]
+    if len(new_teams) == len(teams_raw):
+        raise HTTPException(
+            status_code=404,
+            detail=f"{email} is not a member of {target_team!r}",
+        )
+    if not new_teams:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"cannot remove last team from {email}. "
+                "deactivate the user instead."
+            ),
+        )
+
+    default_team = data.get("default_team") or ""
+    if default_team == target_team:
+        first = new_teams[0]
+        default_team = first.get("team_id", "") if isinstance(first, dict) else ""
+
+    user_ref.set(
+        {"teams": new_teams, "default_team": default_team},
+        merge=True,
+    )
+
+    name_map = _team_name_map()
+    return UserTeamsResponse(
+        status="ok",
+        email=email,
+        teams=_resolve_teams(new_teams, name_map),
+        default_team=default_team,
+    )
