@@ -190,10 +190,12 @@ class UserTeamsResponse(BaseModel):
 class UpdateUserRequest(BaseModel):
     """`PATCH /api/admin/users/{email}` の body。
 
-    現状は active toggle のみ。将来 display_name や role など足す場合は optional で。
+    各 field は optional。指定された field のみ更新する (PATCH semantics)。
+    将来 role など足す場合も同じ流儀で。
     """
 
-    active: bool
+    active: bool | None = None
+    display_name: str | None = None
 
 
 class TeamSummary(BaseModel):

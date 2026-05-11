@@ -364,16 +364,21 @@ export async function removeUserTeam(
   return res.json();
 }
 
-export async function setUserActive(
+export interface UpdateUserBody {
+  active?: boolean;
+  display_name?: string;
+}
+
+export async function updateUser(
   email: string,
-  active: boolean,
+  body: UpdateUserBody,
 ): Promise<AllowedUserSummary> {
   const res = await authFetch(
     `${API_BASE}/api/admin/users/${encodeURIComponent(email)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ active }),
+      body: JSON.stringify(body),
     },
   );
   if (!res.ok) {
@@ -382,3 +387,6 @@ export async function setUserActive(
   }
   return res.json();
 }
+
+export const setUserActive = (email: string, active: boolean) =>
+  updateUser(email, { active });

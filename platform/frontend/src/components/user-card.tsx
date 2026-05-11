@@ -4,10 +4,12 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   addUserTeam,
   removeUserTeam,
   setUserActive,
+  updateUser,
   type AllowedUserSummary,
   type TeamRole,
   type TeamSummary,
@@ -31,6 +33,34 @@ export function UserCard({
   const [togglingActive, setTogglingActive] = useState(false);
   const [pendingTeam, setPendingTeam] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(user.display_name);
+  const [savingName, setSavingName] = useState(false);
+
+  const handleSaveName = async () => {
+    const next = nameDraft.trim();
+    if (next === user.display_name) {
+      setEditingName(false);
+      return;
+    }
+    setError(null);
+    setSavingName(true);
+    try {
+      await updateUser(user.email, { display_name: next });
+      setEditingName(false);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const handleCancelName = () => {
+    setNameDraft(user.display_name);
+    setEditingName(false);
+  };
 
   const memberOf = useMemo(
     () => new Set(user.teams.map((t) => t.team_id)),
@@ -108,8 +138,55 @@ export function UserCard({
   return (
     <Card className={user.active ? "" : "opacity-60"}>
       <CardHeader className="space-y-1 pb-3">
-        <CardTitle className="flex items-center gap-2 text-base font-medium">
-          <span>{user.display_name || user.email}</span>
+        <CardTitle className="flex flex-wrap items-center gap-2 text-base font-medium">
+          {editingName ? (
+            <>
+              <Input
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleSaveName();
+                  if (e.key === "Escape") handleCancelName();
+                }}
+                disabled={savingName}
+                autoFocus
+                maxLength={100}
+                className="h-7 max-w-xs text-sm"
+                placeholder={user.email}
+              />
+              <Button
+                size="xs"
+                onClick={handleSaveName}
+                disabled={savingName}
+              >
+                {savingName ? "保存中..." : "保存"}
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={handleCancelName}
+                disabled={savingName}
+              >
+                キャンセル
+              </Button>
+            </>
+          ) : (
+            <>
+              <span>{user.display_name || user.email}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setNameDraft(user.display_name);
+                  setEditingName(true);
+                }}
+                className="text-xs text-muted-foreground transition-colors hover:text-primary"
+                aria-label="表示名を編集"
+                title="表示名を編集"
+              >
+                ✎
+              </button>
+            </>
+          )}
           {user.role === "admin" && (
             <Badge variant="default">super-admin</Badge>
           )}

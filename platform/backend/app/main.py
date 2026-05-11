@@ -630,13 +630,16 @@ def admin_update_user(
     body: UpdateUserRequest,
     admin: User = Depends(require_super_admin),
 ) -> AllowedUser:
-    """ユーザーの active 状態を更新する。super-admin のみ。
+    """ユーザーの属性を更新する。super-admin のみ。
 
-    安全策:
+    PATCH semantics: body で指定された field のみ更新する。
+    現状は active と display_name に対応。
+
+    安全策 (active 更新時のみ):
       - 自己 deactivate は禁止 (誤操作で締め出されるのを防ぐ)
       - 最後の active super-admin の deactivate も禁止 (admin 全員不在を防ぐ)
 
-    副作用:
+    副作用 (active 更新時):
       - deactivate → AR reader を revoke
       - reactivate → AR reader を再 grant
       - state 変更が無ければ何もしない (冪等)
@@ -649,29 +652,44 @@ def admin_update_user(
             status_code=404, detail=f"{email} is not in allowed_users"
         )
     data = snap.to_dict() or {}
-    current_active = bool(data.get("active", True))
 
-    if current_active != body.active:
-        if not body.active:
-            # deactivate path
-            if email == admin.email:
-                raise HTTPException(
-                    status_code=400,
-                    detail="cannot deactivate yourself. ask another super-admin.",
-                )
-            if data.get("role") == "admin":
-                others = _count_active_super_admins(exclude_email=email)
-                if others == 0:
+    patch: dict[str, Any] = {}
+
+    if body.display_name is not None:
+        new_name = body.display_name.strip()
+        if len(new_name) > 100:
+            raise HTTPException(
+                status_code=400, detail="display_name is too long (max 100)"
+            )
+        if new_name != (data.get("display_name") or ""):
+            patch["display_name"] = new_name
+
+    if body.active is not None:
+        current_active = bool(data.get("active", True))
+        if current_active != body.active:
+            if not body.active:
+                if email == admin.email:
                     raise HTTPException(
                         status_code=400,
-                        detail="cannot deactivate the last active super-admin.",
+                        detail="cannot deactivate yourself. ask another super-admin.",
                     )
-            user_ref.set({"active": False}, merge=True)
-            revoke_reader(email)
-        else:
-            # reactivate path
-            user_ref.set({"active": True}, merge=True)
-            grant_reader(email)
+                if data.get("role") == "admin":
+                    others = _count_active_super_admins(exclude_email=email)
+                    if others == 0:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="cannot deactivate the last active super-admin.",
+                        )
+            patch["active"] = body.active
+
+    if patch:
+        user_ref.set(patch, merge=True)
+        # active 切替時のみ AR を更新 (display_name 変更だけなら no-op)
+        if "active" in patch:
+            if patch["active"]:
+                grant_reader(email)
+            else:
+                revoke_reader(email)
 
     snap = user_ref.get()
     return _to_allowed_user(snap, _team_name_map())
