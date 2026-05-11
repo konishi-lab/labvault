@@ -145,6 +145,9 @@ class ApproveResponse(BaseModel):
     status: str  # "ok"
     email: str
     team_id: str
+    # Artifact Registry reader 権限を付与できたか
+    # (None=試行せず, True=成功 or 既に付与済み, False=失敗 — backend ログ参照)
+    ar_granted: bool | None = None
 
 
 # --- Admin: user / team management ---
@@ -181,6 +184,7 @@ class UserTeamsResponse(BaseModel):
     email: str
     teams: list[TeamMembershipResponse]
     default_team: str
+    ar_granted: bool | None = None  # add 時のみ意味あり
 
 
 class TeamSummary(BaseModel):

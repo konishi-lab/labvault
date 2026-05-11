@@ -12,6 +12,7 @@
 | 6 | header に team selector ドロップダウン、team 切替時は `key={currentTeam}` で children remount し全 fetch を再発火、`/api/auth/me` に team `name` を含める | 2026-04-28 |
 | 3 | サインアップ + super-admin 承認フロー (auth.py 2 段階化、`pending_users` collection、`/api/auth/request-access` / `/api/admin/pending` / `/api/admin/approve`、申請フォーム + 承認 UI) | 2026-04-28 |
 | 3+ | admin ユーザー一覧 + team 後追い (`GET /api/admin/users` / `GET /api/admin/teams` / `POST /api/admin/users/{email}/teams` / `DELETE .../teams/{team_id}`、`/admin/users` 画面で team 追加/削除) | 2026-05-11 |
+| AR連動 | 案 B (直接 IAM API) で Artifact Registry reader を承認時に自動付与 (`app/artifact_registry.py`、`admin_approve` / `admin_add_user_team` から呼ぶ。冪等。`LABVAULT_AR_REPO` 未設定なら no-op) | 2026-05-11 |
 
 ## 残タスク
 
@@ -20,30 +21,32 @@
 - [ ] user の deactivate/reactivate 用 endpoint (`PATCH /api/admin/users/{email}` の `active`)
 - [ ] team-scoped admin (`teams[].role == "admin"`) の判定ヘルパー `require_team_admin(team_id)` を追加し、approve や user 編集を team admin にも開放
 
-### メンバー管理の自動化 (AR + allowed_users 連動)
+### AR 連動の運用メモ (案 B 採用済)
 
-**目的**: admin 承認時に Artifact Registry の reader 権限も同時付与する。
+採用理由: Workspace ドメイン未保有のため案 A (Google Group) が選べない。`allowed_users` を SoT、AR IAM はそのミラーと割り切る。
 
-選択肢:
+**初回セットアップ (一度だけ手動実行)** — runtime SA に該当 repo の repoAdmin を付与:
 
-- **案 A: Google Group 一本化 (推奨)**
-  - `labvault-users@<workspace-domain>` を作成
-  - AR repo に group 単位で `roles/artifactregistry.reader` 付与
-  - 承認時に backend が Admin SDK Directory API で group に email 追加
-  - 必要権限: backend SA に `roles/groups.member.editor` (or Workspace 管理者代理)
-  - メリット: AR IAM 触らない、admin が group で一覧確認可能
-  - 注意: Workspace ドメインが必要 (`g.ecc.u-tokyo.ac.jp` は東大組織の管理下なので使えない可能性あり、別途確認)
+```bash
+gcloud artifacts repositories add-iam-policy-binding labvault-pypi \
+  --location=asia-northeast1 \
+  --project=klab-laser-process \
+  --member=serviceAccount:labvault-api@klab-laser-process.iam.gserviceaccount.com \
+  --role=roles/artifactregistry.repoAdmin
+```
 
-- **案 B: 直接 IAM API**
-  - 承認時に backend が Resource Manager API で AR repo の IAM policy に email を追加
-  - 必要権限: backend SA に `roles/artifactregistry.repoAdmin` (該当 repo のみ)
-  - メリット: 追加インフラ不要
-  - デメリット: ユーザー一覧が AR IAM と allowed_users の両方に分散
+**動作**:
 
-- **案 C: 手動運用 (当面)**
-  - 承認時に admin が gcloud で IAM 付与
-  - 文書化のみで実装不要
-  - 人数 < 10 ならこれで足りる
+- `POST /api/admin/approve` 成功時に `grant_reader(email)` を呼ぶ
+- `POST /api/admin/users/{email}/teams` でも呼ぶ (旧 user の救済を兼ねる)
+- 失敗しても処理は止めず、レスポンスの `ar_granted: bool | None` で結果を返す
+- `LABVAULT_AR_REPO` 未設定なら no-op で warning ログのみ
+
+**未実装** (TODO):
+
+- [ ] 既存ユーザーの一括 backfill スクリプト (現状は手動 gcloud or 「team 再追加」で代用)
+- [ ] user deactivate 時の `revoke_reader` 連動 (deactivate endpoint 自体が未実装)
+- [ ] admin UI で grant 失敗時の retry ボタン
 
 ### その他の改善
 

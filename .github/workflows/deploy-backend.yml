@@ -58,5 +58,5 @@ jobs:
             --port=8080 --memory=512Mi --cpu=1 \
             --min-instances=0 --max-instances=3 \
             --allow-unauthenticated \
-            --set-env-vars=LABVAULT_TEAM=konishi-lab,LABVAULT_GCP_PROJECT=klab-laser-process,LABVAULT_FIRESTORE_DATABASE=labvault,LABVAULT_NEXTCLOUD_URL=https://arim.mdx.jp/nextcloud,LABVAULT_NEXTCLOUD_USER=arim00065,LABVAULT_NEXTCLOUD_GROUP_FOLDER=large/24UTARIM004 \
+            --set-env-vars=LABVAULT_TEAM=konishi-lab,LABVAULT_GCP_PROJECT=klab-laser-process,LABVAULT_FIRESTORE_DATABASE=labvault,LABVAULT_NEXTCLOUD_URL=https://arim.mdx.jp/nextcloud,LABVAULT_NEXTCLOUD_USER=arim00065,LABVAULT_NEXTCLOUD_GROUP_FOLDER=large/24UTARIM004,LABVAULT_AR_REPO=projects/klab-laser-process/locations/asia-northeast1/repositories/labvault-pypi \
             --quiet

@@ -22,6 +22,7 @@ from .auth import (
     pending_users_ref,
     require_super_admin,
 )
+from .artifact_registry import grant_reader
 from .dependencies import close_lab, get_firestore_db, get_team_meta
 from .notifications import notify_signup_request
 from .routers import bulk_upload, files, preview, records, search
@@ -366,7 +367,13 @@ def admin_approve(
     if pending_snap.exists:
         pending_users_ref().document(email).delete()
 
-    return ApproveResponse(status="ok", email=email, team_id=target_team)
+    # AR reader を付与 (LABVAULT_AR_REPO 未設定なら no-op)。
+    # 失敗しても承認自体は成功扱い — レスポンスの ar_granted で admin に伝える。
+    ar_granted = grant_reader(email)
+
+    return ApproveResponse(
+        status="ok", email=email, team_id=target_team, ar_granted=ar_granted
+    )
 
 
 def _team_name_map() -> dict[str, str]:
@@ -502,12 +509,16 @@ def admin_add_user_team(
         merge=True,
     )
 
+    # 既存承認以前に作られた user (AR 未付与) の救済も兼ねて grant を呼ぶ。冪等。
+    ar_granted = grant_reader(email)
+
     name_map = _team_name_map()
     return UserTeamsResponse(
         status="ok",
         email=email,
         teams=_resolve_teams(teams_raw, name_map),
         default_team=default_team,
+        ar_granted=ar_granted,
     )
 
 
