@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   addUserTeam,
   removeUserTeam,
+  setUserActive,
   type AllowedUserSummary,
   type TeamRole,
   type TeamSummary,
@@ -15,11 +16,19 @@ import {
 interface Props {
   user: AllowedUserSummary;
   allTeams: TeamSummary[];
+  /** ログイン中の super-admin の email。自分自身を deactivate させないために使う。 */
+  currentAdminEmail: string | null;
   onChanged: () => void;
 }
 
-export function UserCard({ user, allTeams, onChanged }: Props) {
+export function UserCard({
+  user,
+  allTeams,
+  currentAdminEmail,
+  onChanged,
+}: Props) {
   const [adding, setAdding] = useState(false);
+  const [togglingActive, setTogglingActive] = useState(false);
   const [pendingTeam, setPendingTeam] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +57,31 @@ export function UserCard({ user, allTeams, onChanged }: Props) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setAdding(false);
+    }
+  };
+
+  const handleToggleActive = async () => {
+    const next = !user.active;
+    const verb = next ? "再有効化" : "無効化";
+    if (
+      !confirm(
+        `${user.email} を${verb}しますか?` +
+          (next
+            ? ""
+            : "\n(API/CLI/Web UI へのアクセスがブロックされ、Artifact Registry の reader 権限も剥奪されます)"),
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setTogglingActive(true);
+    try {
+      await setUserActive(user.email, next);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTogglingActive(false);
     }
   };
 
@@ -172,6 +206,31 @@ export function UserCard({ user, allTeams, onChanged }: Props) {
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+
+        <div className="flex items-center justify-end border-t pt-3">
+          {(() => {
+            const isSelf = currentAdminEmail === user.email;
+            return (
+              <Button
+                size="sm"
+                variant={user.active ? "destructive" : "outline"}
+                onClick={handleToggleActive}
+                disabled={togglingActive || isSelf}
+                title={
+                  isSelf
+                    ? "自分自身は無効化できません (他の super-admin に依頼してください)"
+                    : undefined
+                }
+              >
+                {togglingActive
+                  ? "処理中..."
+                  : user.active
+                    ? "ユーザーを無効化"
+                    : "ユーザーを再有効化"}
+              </Button>
+            );
+          })()}
+        </div>
       </CardContent>
     </Card>
   );

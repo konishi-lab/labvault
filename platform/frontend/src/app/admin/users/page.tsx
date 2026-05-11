@@ -16,7 +16,7 @@ import {
 } from "@/lib/api";
 
 export default function AdminUsersPage() {
-  const { role } = useAuth();
+  const { role, user: currentUser } = useAuth();
   const [users, setUsers] = useState<AllowedUserSummary[]>([]);
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,6 +128,7 @@ export default function AdminUsersPage() {
               key={u.email}
               user={u}
               allTeams={teams}
+              currentAdminEmail={currentUser?.email ?? null}
               onChanged={reload}
             />
           ))}

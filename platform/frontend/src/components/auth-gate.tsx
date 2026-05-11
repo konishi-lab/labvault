@@ -57,6 +57,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return <PendingStatus />;
   }
 
+  if (authStatus === "deactivated") {
+    return (
+      <div className="mx-auto max-w-md space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-sm">
+        <div className="text-base font-semibold text-destructive">
+          このアカウントは無効化されています
+        </div>
+        <p className="text-muted-foreground">
+          {user.email} は管理者によって無効化されました。アクセスを再開するには
+          管理者に連絡してください。
+        </p>
+      </div>
+    );
+  }
+
   // authorized — team 切替時は子コンポーネントを remount して全 fetch を再発火させる。
   return (
     <div key={currentTeam ?? "no-team"} className="contents">

@@ -22,7 +22,7 @@ from .auth import (
     pending_users_ref,
     require_super_admin,
 )
-from .artifact_registry import grant_reader
+from .artifact_registry import grant_reader, revoke_reader
 from .dependencies import close_lab, get_firestore_db, get_team_meta
 from .notifications import notify_signup_request
 from .routers import bulk_upload, files, preview, records, search
@@ -39,6 +39,7 @@ from .schemas import (
     TeamListResponse,
     TeamMembershipResponse,
     TeamSummary,
+    UpdateUserRequest,
     UserListResponse,
     UserTeamsResponse,
 )
@@ -105,10 +106,11 @@ def auth_me(
 ) -> dict[str, Any]:
     """現在のユーザーの認可状態を返す。
 
-    認証 (Firebase) のみ通れば 200 を返す。レスポンスの `status` で 3 状態を返す:
-      - "authorized": allowed_users 登録済み (teams / default_team を返す)
+    認証 (Firebase) のみ通れば 200 を返す。レスポンスの `status` で 4 状態を返す:
+      - "authorized": allowed_users 登録済み & active (teams / default_team を返す)
+      - "deactivated": allowed_users にいるが active=False (admin による無効化)
       - "pending": pending_users にいる (申請中)
-      - "unregistered": どちらにもいない (申請フォームへ誘導)
+      - "unregistered": どこにもいない (申請フォームへ誘導)
 
     AuthGate がこれで分岐できる。teams[].name は teams/{team_id}.name から解決。
     """
@@ -147,6 +149,13 @@ def auth_me(
                 "teams": teams_list,
                 "default_team": default_team,
             }
+        # active=False: pending / unregistered より優先して deactivated を返す。
+        # ユーザーには「admin に連絡してください」を促し、re-apply フォームは出さない。
+        return {
+            "status": "deactivated",
+            "email": email,
+            "display_name": data.get("display_name") or auth_user.display_name,
+        }
 
     pending_snap = pending_users_ref().document(email).get()
     if pending_snap.exists:
@@ -533,8 +542,8 @@ def admin_remove_user_team(
 ) -> UserTeamsResponse:
     """承認済ユーザーから team を外す。super-admin のみ。
 
-    最後の team を外そうとした場合は 400 (代わりに deactivate する想定。
-    deactivate 用の API は別途追加予定)。
+    最後の team を外そうとした場合は 400 (代わりに PATCH /users/{email} で
+    deactivate する想定)。
     default_team が削除対象だった場合は残った teams の先頭に振り替える。
     """
     email = email.strip()
@@ -586,3 +595,83 @@ def admin_remove_user_team(
         teams=_resolve_teams(new_teams, name_map),
         default_team=default_team,
     )
+
+
+def _count_active_super_admins(exclude_email: str | None = None) -> int:
+    """role==admin かつ active==True なユーザー数 (exclude_email を除外可)。"""
+    n = 0
+    for snap in allowed_users_ref().stream():
+        if exclude_email and snap.id == exclude_email:
+            continue
+        d = snap.to_dict() or {}
+        if d.get("role") == "admin" and d.get("active", True):
+            n += 1
+    return n
+
+
+def _to_allowed_user(snap: Any, name_map: dict[str, str]) -> AllowedUser:
+    """allowed_users docsnapshot を AllowedUser に詰め替える。"""
+    d = snap.to_dict() or {}
+    return AllowedUser(
+        email=d.get("email") or snap.id,
+        display_name=d.get("display_name", ""),
+        role=d.get("role", ""),
+        teams=_resolve_teams(d.get("teams"), name_map),
+        default_team=d.get("default_team", ""),
+        active=bool(d.get("active", True)),
+        created_at=d.get("created_at"),
+        last_login_at=d.get("last_login_at"),
+    )
+
+
+@app.patch("/api/admin/users/{email}", response_model=AllowedUser)
+def admin_update_user(
+    email: str,
+    body: UpdateUserRequest,
+    admin: User = Depends(require_super_admin),
+) -> AllowedUser:
+    """ユーザーの active 状態を更新する。super-admin のみ。
+
+    安全策:
+      - 自己 deactivate は禁止 (誤操作で締め出されるのを防ぐ)
+      - 最後の active super-admin の deactivate も禁止 (admin 全員不在を防ぐ)
+
+    副作用:
+      - deactivate → AR reader を revoke
+      - reactivate → AR reader を再 grant
+      - state 変更が無ければ何もしない (冪等)
+    """
+    email = email.strip()
+    user_ref = allowed_users_ref().document(email)
+    snap = user_ref.get()
+    if not snap.exists:
+        raise HTTPException(
+            status_code=404, detail=f"{email} is not in allowed_users"
+        )
+    data = snap.to_dict() or {}
+    current_active = bool(data.get("active", True))
+
+    if current_active != body.active:
+        if not body.active:
+            # deactivate path
+            if email == admin.email:
+                raise HTTPException(
+                    status_code=400,
+                    detail="cannot deactivate yourself. ask another super-admin.",
+                )
+            if data.get("role") == "admin":
+                others = _count_active_super_admins(exclude_email=email)
+                if others == 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="cannot deactivate the last active super-admin.",
+                    )
+            user_ref.set({"active": False}, merge=True)
+            revoke_reader(email)
+        else:
+            # reactivate path
+            user_ref.set({"active": True}, merge=True)
+            grant_reader(email)
+
+    snap = user_ref.get()
+    return _to_allowed_user(snap, _team_name_map())

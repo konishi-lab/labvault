@@ -31,9 +31,10 @@ export interface TeamMembership {
 
 export type AuthStatus =
   | "loading" // /api/auth/me 応答待ち
-  | "authorized" // allowed_users 登録済み
+  | "authorized" // allowed_users 登録済み & active
+  | "deactivated" // allowed_users にいるが active=False (admin による無効化)
   | "pending" // pending_users にいる
-  | "unregistered"; // どちらにもいない
+  | "unregistered"; // どこにもいない
 
 export interface PendingInfo {
   requested_team_name: string;
@@ -160,7 +161,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         requested_team_name: me.requested_team_name ?? "",
       });
     } else {
-      // unregistered
+      // unregistered / deactivated
       setTeams([]);
       setRole("");
       setCurrentTeamState(null);

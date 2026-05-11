@@ -187,6 +187,15 @@ class UserTeamsResponse(BaseModel):
     ar_granted: bool | None = None  # add 時のみ意味あり
 
 
+class UpdateUserRequest(BaseModel):
+    """`PATCH /api/admin/users/{email}` の body。
+
+    現状は active toggle のみ。将来 display_name や role など足す場合は optional で。
+    """
+
+    active: bool
+
+
 class TeamSummary(BaseModel):
     team_id: str
     name: str = ""

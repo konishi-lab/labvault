@@ -363,3 +363,22 @@ export async function removeUserTeam(
   }
   return res.json();
 }
+
+export async function setUserActive(
+  email: string,
+  active: boolean,
+): Promise<AllowedUserSummary> {
+  const res = await authFetch(
+    `${API_BASE}/api/admin/users/${encodeURIComponent(email)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active }),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Update user failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
