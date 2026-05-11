@@ -7,11 +7,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth";
 import { ApprovalCard } from "@/components/approval-card";
-import { fetchPendingUsers, type PendingUser } from "@/lib/api";
+import {
+  fetchAllTeams,
+  fetchPendingUsers,
+  type PendingUser,
+  type TeamSummary,
+} from "@/lib/api";
 
 export default function AdminPendingPage() {
   const { role } = useAuth();
   const [items, setItems] = useState<PendingUser[]>([]);
+  const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,8 +25,12 @@ export default function AdminPendingPage() {
     setLoading(true);
     setError(null);
     try {
-      const list = await fetchPendingUsers();
+      const [list, ts] = await Promise.all([
+        fetchPendingUsers(),
+        fetchAllTeams(),
+      ]);
       setItems(list);
+      setTeams(ts);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -86,7 +96,12 @@ export default function AdminPendingPage() {
       ) : (
         <div className="space-y-4">
           {items.map((p) => (
-            <ApprovalCard key={p.email} pending={p} onApproved={reload} />
+            <ApprovalCard
+              key={p.email}
+              pending={p}
+              existingTeams={teams}
+              onApproved={reload}
+            />
           ))}
         </div>
       )}
