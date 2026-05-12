@@ -12,7 +12,16 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+)
 
 from labvault import Lab
 
@@ -243,3 +252,160 @@ def save_template(
     data = _restore_datetimes(body)
     lab._metadata.save_template(team, name, data)
     return Response(status_code=204)
+
+
+# --- Storage proxy (Phase 4) ---
+
+
+@router.post("/storage", status_code=201)
+async def storage_upload(
+    file: UploadFile,
+    path: str = Form(...),
+    content_type: str = Form(""),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> dict[str, str]:
+    """ファイルアップロード。
+
+    ``path`` は SDK が組み立てた相対パス (例 ``{team}/{record_id}/{filename}``)。
+    backend は無加工で ``lab._storage.upload()`` に渡す。
+    """
+    data = await file.read()
+    ct = content_type or file.content_type or ""
+    stored_path = lab._storage.upload(path, data, ct)
+    return {"path": stored_path}
+
+
+@router.get("/storage")
+def storage_download(
+    path: str = Query(...),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> Response:
+    """ファイルダウンロード。content は application/octet-stream で返す。"""
+    try:
+        data = lab._storage.download(path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"file not found: {path}") from e
+    return Response(content=data, media_type="application/octet-stream")
+
+
+@router.delete("/storage", status_code=204)
+def storage_delete(
+    path: str = Query(...),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> Response:
+    """ファイル削除 (冪等)。"""
+    try:
+        lab._storage.delete(path)
+    except FileNotFoundError:
+        pass  # idempotent
+    return Response(status_code=204)
+
+
+@router.get("/storage/exists")
+def storage_exists(
+    path: str = Query(...),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> dict[str, bool]:
+    return {"exists": lab._storage.exists(path)}
+
+
+@router.get("/storage/list")
+def storage_list(
+    prefix: str = Query(""),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> dict[str, list[str]]:
+    return {"paths": lab._storage.list_files(prefix)}
+
+
+# --- Search proxy (Phase 4) ---
+
+
+@router.post("/search/index", status_code=204)
+def search_index(
+    body: dict[str, Any] = Body(...),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> Response:
+    """ベクトル検索のインデックスを更新する。
+
+    body: {record_id: str, text: str, embedding?: list[float]}
+    embedding 未指定なら backend の Embedding client で text から生成して保存する。
+    """
+    rid = body.get("record_id")
+    if not rid:
+        raise HTTPException(status_code=400, detail="record_id required")
+    text = body.get("text", "")
+    embedding = body.get("embedding")
+    if embedding is None and text and getattr(lab, "_embedding", None) is not None:
+        try:
+            embedding = lab._embedding.embed(text)
+        except Exception:
+            embedding = None
+    lab._search.index(team, rid, text, embedding=embedding)
+    return Response(status_code=204)
+
+
+@router.post("/search")
+def search_query(
+    body: dict[str, Any] = Body(...),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> list[dict[str, Any]]:
+    """ベクトル検索。
+
+    body: {query: str, embedding?: list[float], filters?: dict, limit?: int}
+    embedding 未指定なら query を backend で embed する。
+    """
+    query = body.get("query", "")
+    embedding = body.get("embedding")
+    filters = body.get("filters")
+    limit = int(body.get("limit", 20))
+    if embedding is None and query and getattr(lab, "_embedding", None) is not None:
+        try:
+            embedding = lab._embedding.embed(query)
+        except Exception:
+            embedding = None
+    rows = lab._search.search(
+        team, query, embedding=embedding, filters=filters, limit=limit
+    )
+    return [_jsonable(r) for r in rows]
+
+
+@router.delete("/search/index/{record_id}", status_code=204)
+def search_delete_index(
+    record_id: str,
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> Response:
+    lab._search.delete_index(team, record_id)
+    return Response(status_code=204)
+
+
+# --- Embedding proxy (Phase 4) ---
+
+
+@router.post("/embedding")
+def embedding_embed(
+    body: dict[str, Any] = Body(...),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> dict[str, Any]:
+    """text または texts (batch) を embedding に変換して返す。
+
+    body: {text?: str, texts?: list[str]}
+    Returns: {embedding: [...]} or {embeddings: [[...], ...]}
+    """
+    if getattr(lab, "_embedding", None) is None:
+        raise HTTPException(status_code=503, detail="embedding client not configured")
+    text = body.get("text")
+    texts = body.get("texts")
+    if text is not None:
+        return {"embedding": lab._embedding.embed(text)}
+    if texts is not None:
+        return {"embeddings": lab._embedding.embed_batch(texts)}
+    raise HTTPException(status_code=400, detail="text or texts required")

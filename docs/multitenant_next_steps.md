@@ -19,6 +19,7 @@
 | 認証拡張 Phase 1 | Web UI に email/password サインアップ/ログイン (Firebase Auth) を追加。Personal Access Token (PAT) システム実装: `POST/GET/DELETE /api/auth/tokens`、`current_authenticated_user` が `lv_*` 形式 token を Firestore `tokens` collection の sha256 hash で lookup。`/account/tokens` 画面で発行/コピー/失効 | 2026-05-12 |
 | 認証拡張 Phase 2 | SDK の `PlatformMetadataBackend` (read 系) 実装。backend に `/api/metadata/*` 生 dict エンドポイント (Vector → list 変換)、`PlatformClient` に PAT 対応 + 汎用 get/list + `PlatformNotFound`、`Lab(metadata_backend=PlatformMetadataBackend(client))` で PAT-only な read が動作 (e2e で `lab.list()` / `lab.get()` 確認済) | 2026-05-12 |
 | 認証拡張 Phase 3 | `PlatformMetadataBackend` の write 系 (create_record / update_record / delete_record / save_cell_log / save_template) 実装。backend に `POST/PATCH/DELETE /records*` + `POST /cell_logs` + `PUT /templates/{name}` 追加。datetime ↔ ISO 文字列の双方向変換 helper (`_to_jsonable` / `_restore_datetimes`)。e2e で create→note/tag/status→soft delete→cleanup の往復確認済 | 2026-05-12 |
+| 認証拡張 Phase 4 | `PlatformStorage` / `PlatformSearch` / `PlatformEmbedding` 実装。backend に `/api/metadata/storage/*` (multipart upload + binary download + delete + exists + list)、`/api/metadata/search/*` (index / search / delete)、`/api/metadata/embedding` (text/texts) 追加。embedding 未指定時は backend 側で自動生成 (PAT-only client に優しい)。e2e で `Lab(全 backend = Platform*)` で create→file 添付→search→cleanup の完全往復確認済 | 2026-05-12 |
 
 ## 残タスク
 
@@ -61,8 +62,8 @@ gcloud artifacts repositories add-iam-policy-binding labvault-pypi \
 
 - [x] ~~**Phase 2** — `PlatformMetadataBackend` (read 系)~~ (2026-05-12 完了)
 - [x] ~~**Phase 3** — `PlatformMetadataBackend` の write 系~~ (2026-05-12 完了)
-- [ ] **Phase 4** — `PlatformStorage` (file upload/download/list を backend HTTP 経由)、Vertex AI Embedding も backend に集約 (`PlatformSearch`)
-- [ ] **Phase 5** — Lab auto-selection (`LABVAULT_TOKEN` あり → platform backend / ADC のみ → 直結)、`~/.labvault/credentials` 読込、E2E、装置 PC 運用 doc
+- [x] ~~**Phase 4** — `PlatformStorage` / `PlatformSearch` / `PlatformEmbedding`~~ (2026-05-12 完了)
+- [ ] **Phase 5** — Lab auto-selection (`LABVAULT_TOKEN` あり → Platform* backend に自動切替 / ADC のみ → 直結)、`~/.labvault/credentials` 読込、E2E、装置 PC 運用 doc
 
 ### Firebase 設定 (要手動)
 
