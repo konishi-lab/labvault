@@ -26,7 +26,7 @@ from .auth import (
 from .artifact_registry import grant_reader, revoke_reader
 from .dependencies import close_lab, get_firestore_db, get_team_meta
 from .notifications import notify_signup_request
-from .routers import bulk_upload, files, preview, records, search
+from .routers import bulk_upload, files, metadata, preview, records, search
 from .schemas import (
     AddTeamRequest,
     AllowedUser,
@@ -93,6 +93,7 @@ app.include_router(bulk_upload.router, dependencies=_auth_deps)
 app.include_router(preview.router, dependencies=_auth_deps)
 app.include_router(files.router, dependencies=_auth_deps)
 app.include_router(search.router, dependencies=_auth_deps)
+app.include_router(metadata.router, dependencies=_auth_deps)
 
 
 @app.get("/api/health", response_model=HealthResponse)
