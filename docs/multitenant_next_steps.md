@@ -13,12 +13,14 @@
 | 3 | サインアップ + super-admin 承認フロー (auth.py 2 段階化、`pending_users` collection、`/api/auth/request-access` / `/api/admin/pending` / `/api/admin/approve`、申請フォーム + 承認 UI) | 2026-04-28 |
 | 3+ | admin ユーザー一覧 + team 後追い (`GET /api/admin/users` / `GET /api/admin/teams` / `POST /api/admin/users/{email}/teams` / `DELETE .../teams/{team_id}`、`/admin/users` 画面で team 追加/削除) | 2026-05-11 |
 | AR連動 | 案 B (直接 IAM API) で Artifact Registry reader を承認時に自動付与 (`app/artifact_registry.py`、`admin_approve` / `admin_add_user_team` から呼ぶ。冪等。`LABVAULT_AR_REPO` 未設定なら no-op) | 2026-05-11 |
+| 3+ | user の deactivate/reactivate (`PATCH /api/admin/users/{email}` の `active`)。自己 deactivate と最後の super-admin deactivate を 400 で拒否。`auth_me` に "deactivated" status 追加、AuthGate で明示メッセージ。AR reader も連動 revoke/grant | 2026-05-11 |
+| 3+ | admin が他ユーザーの display_name を編集可。`PATCH /api/admin/users/{email}` を PATCH semantics 化、UserCard で inline 編集 (Enter 保存 / Esc cancel、IME 確定 Enter は無視) | 2026-05-12 |
+| MCP | MCP の team 対応 (`Lab.team` 公開、`create_server` を per-team Lab キャッシュ化、各ツールに `team: str | None = None` 追加。事前構築 lab は team 未指定時のフォールバックとして動作しテスト互換維持) | 2026-05-12 |
 
 ## 残タスク
 
 ### Phase 3 残り (後回し)
 
-- [ ] user の deactivate/reactivate 用 endpoint (`PATCH /api/admin/users/{email}` の `active`)
 - [ ] team-scoped admin (`teams[].role == "admin"`) の判定ヘルパー `require_team_admin(team_id)` を追加し、approve や user 編集を team admin にも開放
 
 ### AR 連動の運用メモ (案 B 採用済)
@@ -51,7 +53,6 @@ gcloud artifacts repositories add-iam-policy-binding labvault-pypi \
 ### その他の改善
 
 - [ ] **Vector Search の team フィルタ追加** — 現状 `find_nearest` は deleted_at + status のみ filter。Phase 2 で path 階層分離されているので実害は無いが、念のため明示 filter も足す
-- [ ] **MCP サーバーの team 対応** — 現状 `LABVAULT_TEAM` 固定。複数 team に所属するユーザーが MCP で team を切替えるための引数追加 (各ツールに `team: str` optional)
 - [ ] **装置 PC 運用手順書** — SA で運用するか、ユーザーアカウントで運用するか。`LABVAULT_PLATFORM_URL` + ADC でセットアップする標準フローを `docs/instrument_pc_setup.md` に
 - [ ] **README の install 手順を実利用者でレビュー** — 別アカウントで `gcloud auth application-default login` から始めて pip install まで通るか確認
 - [ ] **AR repo cleanup ポリシー** — 古い patch version を残し続けるか定期削除するか。当面は無削除

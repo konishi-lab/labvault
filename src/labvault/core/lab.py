@@ -330,6 +330,11 @@ class Lab:
     # --- コンテキストマネージャ ---
 
     @property
+    def team(self) -> str:
+        """この Lab が紐付いている team_id。"""
+        return self._team
+
+    @property
     def sync_status(self) -> dict[str, Any]:
         """同期状態を返す。"""
         if self._sync_manager is None:

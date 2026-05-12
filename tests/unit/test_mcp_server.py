@@ -260,3 +260,21 @@ class TestGetTimeline:
 
         result = tools["get_timeline"](record_id=parent.id)
         assert len(result) == 3  # parent + 2 children
+
+
+class TestTeamArg:
+    """各ツールの team 引数 (Phase: MCP の team 対応)。"""
+
+    def test_search_with_explicit_team_uses_registered_lab(self, lab, tools):
+        """team を明示しても、それが lab.team と一致すれば登録済 lab が使われる。"""
+        lab.new("only-in-test-team", auto_log=False)
+        # lab fixture の team は "test-team"
+        result = tools["search"](query="only-in-test-team", team=lab.team)
+        assert len(result) == 1
+        assert result[0]["title"] == "only-in-test-team"
+
+    def test_search_with_blank_team_falls_back(self, lab, tools):
+        """空文字 team は team=None と同等扱い (default lab にフォールバック)。"""
+        lab.new("blank-team-test", auto_log=False)
+        result = tools["search"](query="blank-team-test", team="")
+        assert len(result) == 1
