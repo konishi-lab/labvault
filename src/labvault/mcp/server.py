@@ -143,9 +143,7 @@ def create_server(lab: Lab | None = None) -> Any:
     @mcp.tool(
         description="レコードの詳細を表示する。条件、結果、メモ、ファイル一覧を含む。"
     )
-    def get_detail(
-        record_id: str, team: str | None = None
-    ) -> dict[str, Any]:
+    def get_detail(record_id: str, team: str | None = None) -> dict[str, Any]:
         lab = _get_lab(team)
         rec = lab.get(record_id)
         return {
