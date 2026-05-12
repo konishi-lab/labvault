@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "labvault"
-version = "0.1.1"
+version = "0.1.2"
 description = "Lab data management SDK. Auto-logs notebook execution, stores data with LLM-friendly metadata."
 readme = "README.md"
 license = "MIT"
