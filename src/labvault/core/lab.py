@@ -65,10 +65,19 @@ class Lab:
         settings = Settings()
         self._team = team or settings.team or "default"
         self._user = user or settings.user or ""
-        self._metadata = metadata_backend or _auto_metadata(settings)
-        self._storage = storage_backend or _auto_storage(settings)
-        self._search = search_backend or _auto_search(settings)
-        self._embedding = embedding_client or _auto_embedding(settings)
+
+        # PAT mode 検出: token + platform_url が揃えば全 backend を Platform* に切替。
+        # これにより装置 PC/CI など GCP ADC が使えない環境でも SDK が動作する。
+        # 個別 backend が明示指定されていれば常にそれを優先 (テスト互換)。
+        platform_client = _build_platform_client(settings)
+        self._metadata = metadata_backend or _auto_metadata(settings, platform_client)
+        self._storage = storage_backend or _auto_storage(
+            settings, platform_client, team=self._team
+        )
+        self._search = search_backend or _auto_search(settings, platform_client)
+        self._embedding = embedding_client or _auto_embedding(
+            settings, platform_client, team=self._team
+        )
         self._settings = settings
         self._active_tracker: Any | None = None
         self._buffer: Any | None = None
@@ -430,8 +439,31 @@ class Lab:
         return f"Lab(team={self._team!r})"
 
 
-def _auto_metadata(settings: Settings) -> Any:
-    """設定に応じてメタデータバックエンドを自動選択する。"""
+def _build_platform_client(settings: Settings) -> Any | None:
+    """PAT mode 用の PlatformClient を組む。
+
+    token + platform_url が両方あるときだけ生成 (これが PAT mode の trigger)。
+    どちらか欠けたら None を返し、各 _auto_* は従来の direct backend を返す。
+
+    片方だけ設定されている場合: token だけ → URL 不明、platform_url だけ → ADC で
+    既に動くので Platform 強制不要、と解釈し Platform mode には入らない。
+    """
+    if not settings.token or not settings.platform_url:
+        return None
+    from labvault.backends.platform_client import PlatformClient
+
+    return PlatformClient(settings.platform_url, token=settings.token)
+
+
+def _auto_metadata(settings: Settings, client: Any | None = None) -> Any:
+    """設定に応じてメタデータバックエンドを自動選択する。
+
+    PAT mode (client が渡されたとき) は PlatformMetadataBackend を返す。
+    """
+    if client is not None:
+        from labvault.backends.platform_metadata import PlatformMetadataBackend
+
+        return PlatformMetadataBackend(client)
     if settings.gcp_project:
         from labvault.backends.firestore import FirestoreMetadataBackend
 
@@ -442,14 +474,22 @@ def _auto_metadata(settings: Settings) -> Any:
     return InMemoryMetadataBackend()
 
 
-def _auto_storage(settings: Settings) -> Any:
+def _auto_storage(
+    settings: Settings, client: Any | None = None, *, team: str = ""
+) -> Any:
     """設定に応じてストレージバックエンドを自動選択する。
 
     優先順位:
-    1. LABVAULT_PLATFORM_URL がある場合 → platform 経由で credentials 取得
-    2. LABVAULT_NEXTCLOUD_PASSWORD が .env にある場合 → 直接接続 (開発用/後方互換)
-    3. どちらも無ければ InMemory
+    1. PAT mode (client) → PlatformStorage (file ops を backend HTTP 経由)
+    2. LABVAULT_PLATFORM_URL がある + ADC → platform 経由で creds 取得 → 直 Nextcloud
+    3. LABVAULT_NEXTCLOUD_PASSWORD が .env にある → 直接接続 (開発用)
+    4. どれも無ければ InMemory
     """
+    if client is not None:
+        from labvault.backends.platform_storage import PlatformStorage
+
+        return PlatformStorage(client, team=team or settings.team or "default")
+
     if settings.platform_url:
         try:
             from labvault.backends.nextcloud import NextcloudStorage
@@ -488,8 +528,17 @@ def _auto_storage(settings: Settings) -> Any:
     return InMemoryStorageBackend()
 
 
-def _auto_embedding(settings: Settings) -> Any | None:
-    """設定に応じて EmbeddingClient を自動作成する。"""
+def _auto_embedding(
+    settings: Settings, client: Any | None = None, *, team: str = ""
+) -> Any | None:
+    """設定に応じて EmbeddingClient を自動作成する。
+
+    PAT mode (client) → PlatformEmbedding (backend で Vertex AI を呼ぶ)。
+    """
+    if client is not None:
+        from labvault.backends.platform_search import PlatformEmbedding
+
+        return PlatformEmbedding(client, team=team or settings.team or "default")
     if settings.gcp_project:
         try:
             from labvault.backends.embedding import EmbeddingClient
@@ -500,11 +549,16 @@ def _auto_embedding(settings: Settings) -> Any | None:
     return None
 
 
-def _auto_search(settings: Settings) -> Any:
+def _auto_search(settings: Settings, client: Any | None = None) -> Any:
     """設定に応じて検索バックエンドを自動選択する。
 
-    Firestore が構成されていれば Vector Search、なければ InMemory。
+    PAT mode (client) → PlatformSearch (backend HTTP)。
+    なければ Firestore Vector Search、それも無ければ InMemory。
     """
+    if client is not None:
+        from labvault.backends.platform_search import PlatformSearch
+
+        return PlatformSearch(client)
     if settings.gcp_project:
         from labvault.backends.firestore_search import FirestoreSearchBackend
 

@@ -20,6 +20,7 @@
 | 認証拡張 Phase 2 | SDK の `PlatformMetadataBackend` (read 系) 実装。backend に `/api/metadata/*` 生 dict エンドポイント (Vector → list 変換)、`PlatformClient` に PAT 対応 + 汎用 get/list + `PlatformNotFound`、`Lab(metadata_backend=PlatformMetadataBackend(client))` で PAT-only な read が動作 (e2e で `lab.list()` / `lab.get()` 確認済) | 2026-05-12 |
 | 認証拡張 Phase 3 | `PlatformMetadataBackend` の write 系 (create_record / update_record / delete_record / save_cell_log / save_template) 実装。backend に `POST/PATCH/DELETE /records*` + `POST /cell_logs` + `PUT /templates/{name}` 追加。datetime ↔ ISO 文字列の双方向変換 helper (`_to_jsonable` / `_restore_datetimes`)。e2e で create→note/tag/status→soft delete→cleanup の往復確認済 | 2026-05-12 |
 | 認証拡張 Phase 4 | `PlatformStorage` / `PlatformSearch` / `PlatformEmbedding` 実装。backend に `/api/metadata/storage/*` (multipart upload + binary download + delete + exists + list)、`/api/metadata/search/*` (index / search / delete)、`/api/metadata/embedding` (text/texts) 追加。embedding 未指定時は backend 側で自動生成 (PAT-only client に優しい)。e2e で `Lab(全 backend = Platform*)` で create→file 添付→search→cleanup の完全往復確認済 | 2026-05-12 |
+| 認証拡張 Phase 5 | Lab auto-selection 完成。`Settings.token` field 追加、`~/.labvault/credentials` を env_file として自動読込。`Lab.__init__` で token + platform_url が揃えば 4 backend (metadata/storage/search/embedding) を全て Platform* に自動切替。共有 PlatformClient を 1 つだけ生成。装置 PC 運用手順書 `docs/instrument_pc_setup.md` 追加。e2e で `Lab()` 1 行 (env だけ) で本番 Firestore に PAT 経由で書き込み確認済 | 2026-05-12 |
 
 ## 残タスク
 
@@ -63,7 +64,12 @@ gcloud artifacts repositories add-iam-policy-binding labvault-pypi \
 - [x] ~~**Phase 2** — `PlatformMetadataBackend` (read 系)~~ (2026-05-12 完了)
 - [x] ~~**Phase 3** — `PlatformMetadataBackend` の write 系~~ (2026-05-12 完了)
 - [x] ~~**Phase 4** — `PlatformStorage` / `PlatformSearch` / `PlatformEmbedding`~~ (2026-05-12 完了)
-- [ ] **Phase 5** — Lab auto-selection (`LABVAULT_TOKEN` あり → Platform* backend に自動切替 / ADC のみ → 直結)、`~/.labvault/credentials` 読込、E2E、装置 PC 運用 doc
+- [x] ~~**Phase 5** — Lab auto-selection + 装置 PC 手順書~~ (2026-05-12 完了)
+
+**🎉 認証拡張は Phase 1〜5 すべて完了。** Workspace ドメイン無しでも以下が成立:
+
+- Web UI: Google ログイン or email/password ログイン (どちらでも)
+- SDK / CLI / MCP / 装置 PC: GCP ADC または PAT どちらでも動作。PAT モードでは Google アカウント完全不要
 
 ### Firebase 設定 (要手動)
 
@@ -78,7 +84,7 @@ Web UI の email/password サインアップを動かすには Firebase Console 
 ### その他の改善
 
 - [ ] **Vector Search の team フィルタ追加** — 現状 `find_nearest` は deleted_at + status のみ filter。Phase 2 で path 階層分離されているので実害は無いが、念のため明示 filter も足す
-- [ ] **装置 PC 運用手順書** — SA で運用するか、ユーザーアカウントで運用するか、PAT で運用するか。`LABVAULT_PLATFORM_URL` + ADC or PAT のセットアップ標準フローを `docs/instrument_pc_setup.md` に (認証拡張 Phase 5 と一体化)
+- [x] ~~**装置 PC 運用手順書**~~ — `docs/instrument_pc_setup.md` (PAT 方式中心) 追加済 (2026-05-12)
 - [ ] **README の install 手順を実利用者でレビュー** — 別アカウントで `gcloud auth application-default login` から始めて pip install まで通るか確認
 - [ ] **AR repo cleanup ポリシー** — 古い patch version を残し続けるか定期削除するか。当面は無削除
 

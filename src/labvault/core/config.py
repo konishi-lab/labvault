@@ -19,12 +19,13 @@ class Settings(BaseSettings):
     読み込み優先順位:
     1. 環境変数 (LABVAULT_ prefix)
     2. .env ファイル (カレントディレクトリ)
-    3. ~/.labvault/config.toml
+    3. ~/.labvault/credentials (PAT 等の機密値置場、env と同形式)
+    4. ~/.labvault/config.toml
     """
 
     model_config = SettingsConfigDict(
         env_prefix="LABVAULT_",
-        env_file=".env",
+        env_file=(".env", str(Path.home() / ".labvault" / "credentials")),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -38,6 +39,9 @@ class Settings(BaseSettings):
     nextcloud_password: str = ""
     nextcloud_group_folder: str = ""
     platform_url: str = ""
+    # PAT (Personal Access Token, lv_*)。設定されていれば SDK は backend HTTP
+    # 経由で動作 (GCP ADC 不要)。
+    token: str = ""
     buffer_dir: Path = Field(
         default_factory=lambda: Path.home() / ".labvault" / "buffer"
     )
