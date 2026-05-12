@@ -6,9 +6,11 @@ import { setTeamProvider, setTokenProvider } from "@/lib/api";
 import { RequestAccessForm } from "@/components/request-access-form";
 import { PendingStatus } from "@/components/pending-status";
 import { LoginForm } from "@/components/login-form";
+import { WelcomeScreen } from "@/components/welcome-screen";
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { user, loading, getIdToken, currentTeam, authStatus } = useAuth();
+  const { user, loading, getIdToken, currentTeam, authStatus, showWelcome } =
+    useAuth();
 
   // api.ts 側に token / team 取得関数を渡す。user 切替時に最新を反映。
   useEffect(() => {
@@ -60,6 +62,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
         </p>
       </div>
     );
+  }
+
+  // 初回ログイン (welcomed_at が無い) なら welcome 画面を 1 回だけ出す。
+  if (showWelcome) {
+    return <WelcomeScreen />;
   }
 
   // authorized — team 切替時は子コンポーネントを remount して全 fetch を再発火させる。

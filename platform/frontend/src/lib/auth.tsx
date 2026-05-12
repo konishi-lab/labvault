@@ -65,6 +65,9 @@ interface AuthContextValue {
   refreshAuthStatus: () => Promise<void>;
   // legacy global role (allowed_users.role)
   role: string;
+  // welcome panel (初回ログイン)
+  showWelcome: boolean;
+  dismissWelcome: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -88,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
   const [pendingInfo, setPendingInfo] = useState<PendingInfo | null>(null);
   const [role, setRole] = useState<string>("");
+  const [showWelcome, setShowWelcome] = useState<boolean>(false);
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -167,12 +171,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       default_team?: string;
       role?: string;
       requested_team_name?: string;
+      show_welcome?: boolean;
     };
     setAuthStatus(me.status);
     if (me.status === "authorized") {
       const ts = me.teams ?? [];
       setTeams(ts);
       setRole(me.role ?? "");
+      setShowWelcome(Boolean(me.show_welcome));
       const stored =
         typeof window !== "undefined"
           ? window.localStorage.getItem(TEAM_STORAGE_KEY)
@@ -186,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else if (me.status === "pending") {
       setTeams([]);
       setRole("");
+      setShowWelcome(false);
       setCurrentTeamState(null);
       setPendingInfo({
         requested_team_name: me.requested_team_name ?? "",
@@ -194,9 +201,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // unregistered / deactivated
       setTeams([]);
       setRole("");
+      setShowWelcome(false);
       setCurrentTeamState(null);
       setPendingInfo(null);
     }
+  }, [getIdToken]);
+
+  const dismissWelcome = useCallback(async () => {
+    const token = await getIdToken();
+    if (!token) return;
+    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    try {
+      await fetch(`${base}/api/auth/welcome-acknowledged`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      // ignore — backend が落ちていても UI は閉じる
+    }
+    setShowWelcome(false);
   }, [getIdToken]);
 
   // user 確定後に /api/auth/me を呼んで status を更新
@@ -234,6 +257,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         pendingInfo,
         refreshAuthStatus: fetchAuthStatus,
         role,
+        showWelcome,
+        dismissWelcome,
       }}
     >
       {children}

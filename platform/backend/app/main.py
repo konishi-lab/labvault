@@ -153,6 +153,9 @@ def auth_me(
                 "role": data.get("role", "member"),
                 "teams": teams_list,
                 "default_team": default_team,
+                # 初回ログイン (welcomed_at が無い) のときだけ frontend で
+                # welcome 画面を 1 回出す。
+                "show_welcome": data.get("welcomed_at") is None,
             }
         # active=False: pending / unregistered より優先して deactivated を返す。
         # ユーザーには「admin に連絡してください」を促し、re-apply フォームは出さない。
@@ -228,6 +231,21 @@ def request_access(
     return RequestAccessResponse(
         status="pending", email=email, requested_team_name=requested_name
     )
+
+
+@app.post("/api/auth/welcome-acknowledged")
+def welcome_acknowledged(
+    user: User = Depends(current_user),
+) -> dict[str, str]:
+    """Welcome 画面を見たことを記録する (allowed_users.welcomed_at を set)。
+
+    冪等: 既に welcomed_at が立っていても再 set される (now で上書き)。
+    """
+    allowed_users_ref().document(user.email).set(
+        {"welcomed_at": dt.datetime.now(dt.UTC)},
+        merge=True,
+    )
+    return {"status": "ok"}
 
 
 @app.get("/api/auth/nextcloud-credentials")
