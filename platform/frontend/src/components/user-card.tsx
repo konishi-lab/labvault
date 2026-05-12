@@ -145,8 +145,17 @@ export function UserCard({
                 value={nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleSaveName();
-                  if (e.key === "Escape") handleCancelName();
+                  // IME 変換確定の Enter (isComposing) や keyCode 229 は無視する。
+                  // 一部ブラウザは isComposing が false に戻った直後の Enter も
+                  // 同じイベントで発火するため keyCode も併せて見る。
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleSaveName();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    handleCancelName();
+                  }
                 }}
                 disabled={savingName}
                 autoFocus
