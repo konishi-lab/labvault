@@ -195,31 +195,111 @@ class TestPlatformMetadataReads:
         assert [t["name"] for t in result] == ["a", "b"]
 
 
-class TestPlatformMetadataWritesNotImplemented:
-    """write 系メソッドは Phase 3 まで NotImplementedError。"""
+class TestPlatformMetadataWrites:
+    """write 系メソッドの HTTP 呼び出し。"""
 
-    @pytest.fixture()
-    def backend(self) -> PlatformMetadataBackend:
-        return PlatformMetadataBackend(
-            PlatformClient("https://example.test", token="lv_x")
+    def test_create_record_posts_with_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured = _install_mock(monkeypatch, {("POST", "/api/metadata/records"): None})
+        client = PlatformClient("https://example.test", token="lv_x")
+        backend = PlatformMetadataBackend(client)
+        backend.create_record("t1", {"id": "REC1", "title": "hi"})
+        assert captured[0].method == "POST"
+        # body を読む
+        import json
+
+        body = json.loads(captured[0].read())
+        assert body["id"] == "REC1"
+        assert body["title"] == "hi"
+
+    def test_create_record_requires_id(self) -> None:
+        client = PlatformClient("https://example.test", token="lv_x")
+        backend = PlatformMetadataBackend(client)
+        with pytest.raises(ValueError, match="id"):
+            backend.create_record("t1", {"title": "no id"})
+
+    def test_create_record_serializes_datetime(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import datetime as dt
+        import json
+
+        captured = _install_mock(monkeypatch, {("POST", "/api/metadata/records"): None})
+        client = PlatformClient("https://example.test", token="lv_x")
+        backend = PlatformMetadataBackend(client)
+        now = dt.datetime(2026, 5, 12, 12, 0, tzinfo=dt.UTC)
+        backend.create_record(
+            "t1",
+            {"id": "X", "created_at": now, "notes": [{"created_at": now}]},
         )
+        body = json.loads(captured[0].read())
+        assert body["created_at"] == now.isoformat()
+        assert body["notes"][0]["created_at"] == now.isoformat()
 
-    def test_create_record(self, backend: PlatformMetadataBackend) -> None:
-        with pytest.raises(NotImplementedError):
-            backend.create_record("t1", {"id": "X"})
+    def test_update_record_patches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured = _install_mock(
+            monkeypatch, {("PATCH", "/api/metadata/records/REC1"): None}
+        )
+        client = PlatformClient("https://example.test", token="lv_x")
+        backend = PlatformMetadataBackend(client)
+        backend.update_record("t1", "REC1", {"status": "success"})
+        assert captured[0].method == "PATCH"
 
-    def test_update_record(self, backend: PlatformMetadataBackend) -> None:
-        with pytest.raises(NotImplementedError):
-            backend.update_record("t1", "X", {})
+    def test_delete_record_deletes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured = _install_mock(
+            monkeypatch, {("DELETE", "/api/metadata/records/R1"): None}
+        )
+        client = PlatformClient("https://example.test", token="lv_x")
+        backend = PlatformMetadataBackend(client)
+        backend.delete_record("t1", "R1")
+        assert captured[0].method == "DELETE"
 
-    def test_delete_record(self, backend: PlatformMetadataBackend) -> None:
-        with pytest.raises(NotImplementedError):
-            backend.delete_record("t1", "X")
+    def test_delete_record_404_is_idempotent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_mock(monkeypatch, {})  # all 404
+        client = PlatformClient("https://example.test", token="lv_x")
+        backend = PlatformMetadataBackend(client)
+        # 404 でも例外を出さない (Firestore の delete も冪等)
+        backend.delete_record("t1", "GONE")
 
-    def test_save_cell_log(self, backend: PlatformMetadataBackend) -> None:
-        with pytest.raises(NotImplementedError):
-            backend.save_cell_log("t1", "X", {})
+    def test_save_cell_log_generates_cell_id_when_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json
 
-    def test_save_template(self, backend: PlatformMetadataBackend) -> None:
-        with pytest.raises(NotImplementedError):
-            backend.save_template("t1", "X", {})
+        captured = _install_mock(
+            monkeypatch,
+            {("POST", "/api/metadata/records/R1/cell_logs"): {"cell_id": "abc"}},
+        )
+        client = PlatformClient("https://example.test", token="lv_x")
+        backend = PlatformMetadataBackend(client)
+        data: dict[str, Any] = {"cell_number": 1}
+        backend.save_cell_log("t1", "R1", data)
+        # SDK 側で生成した cell_id が dict に入る
+        assert "cell_id" in data
+        body = json.loads(captured[0].read())
+        assert body["cell_id"]  # 何らかの値
+
+    def test_save_cell_log_keeps_existing_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json
+
+        captured = _install_mock(
+            monkeypatch,
+            {("POST", "/api/metadata/records/R1/cell_logs"): {"cell_id": "explicit"}},
+        )
+        client = PlatformClient("https://example.test", token="lv_x")
+        backend = PlatformMetadataBackend(client)
+        backend.save_cell_log("t1", "R1", {"cell_id": "explicit", "cell_number": 1})
+        body = json.loads(captured[0].read())
+        assert body["cell_id"] == "explicit"
+
+    def test_save_template_puts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured = _install_mock(
+            monkeypatch, {("PUT", "/api/metadata/templates/exp_xrd"): None}
+        )
+        client = PlatformClient("https://example.test", token="lv_x")
+        backend = PlatformMetadataBackend(client)
+        backend.save_template("t1", "exp_xrd", {"fields": []})
+        assert captured[0].method == "PUT"

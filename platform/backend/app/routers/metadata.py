@@ -9,15 +9,29 @@ team は ``X-Labvault-Team`` header から取る (current_team が解決)。
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 
 from labvault import Lab
 
 from ..auth import current_team, get_lab
 
 router = APIRouter(prefix="/api/metadata")
+
+# JSON 経由で来た文字列を Firestore Timestamp に戻すための既知 key 集合。
+# 深いネスト (notes[].created_at, events[].timestamp 等) も同名なら一律変換する。
+DATETIME_KEYS = {
+    "created_at",
+    "updated_at",
+    "deleted_at",
+    "started_at",
+    "ended_at",
+    "last_used_at",
+    "last_login_at",
+    "timestamp",
+}
 
 
 def _jsonable(value: Any) -> Any:
@@ -40,6 +54,31 @@ def _jsonable(value: Any) -> Any:
         return {k: _jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_jsonable(v) for v in value]
+    return value
+
+
+def _restore_datetimes(value: Any) -> Any:
+    """SDK から JSON で送られてきた dict 内の ISO 文字列を datetime に戻す。
+
+    DATETIME_KEYS に含まれる名前の値が文字列なら ``datetime.fromisoformat`` で
+    パースして Firestore に Timestamp として書けるようにする (一貫性維持)。
+    """
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if k in DATETIME_KEYS and isinstance(v, str):
+                try:
+                    parsed = dt.datetime.fromisoformat(v)
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=dt.UTC)
+                    out[k] = parsed
+                except ValueError:
+                    out[k] = v
+            else:
+                out[k] = _restore_datetimes(v)
+        return out
+    if isinstance(value, list):
+        return [_restore_datetimes(v) for v in value]
     return value
 
 
@@ -104,7 +143,9 @@ def get_cell_logs(
     team: str = Depends(current_team),
 ) -> list[dict[str, Any]]:
     """セルログ一覧の生 dict 配列。cell_number 昇順。"""
-    return [_jsonable(r) for r in lab._metadata.get_cell_logs(team, record_id, limit=limit)]
+    return [
+        _jsonable(r) for r in lab._metadata.get_cell_logs(team, record_id, limit=limit)
+    ]
 
 
 @router.get("/templates/{name}")
@@ -127,3 +168,78 @@ def list_templates(
 ) -> list[dict[str, Any]]:
     """テンプレート一覧の生 dict 配列。"""
     return [_jsonable(t) for t in lab._metadata.list_templates(team)]
+
+
+# --- Write endpoints (Phase 3) ---
+
+
+@router.post("/records", status_code=201)
+def create_record(
+    body: dict[str, Any] = Body(...),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> Response:
+    """生 dict のレコードを作成する (set 上書き、merge しない)。
+
+    body には ``id`` フィールドが必須 (Firestore の document id に使う)。
+    """
+    if not body.get("id"):
+        raise HTTPException(status_code=400, detail="body.id required")
+    data = _restore_datetimes(body)
+    lab._metadata.create_record(team, data)
+    return Response(status_code=201)
+
+
+@router.patch("/records/{record_id}", status_code=204)
+def update_record(
+    record_id: str,
+    body: dict[str, Any] = Body(...),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> Response:
+    """レコードを部分更新する (set with merge)。"""
+    data = _restore_datetimes(body)
+    lab._metadata.update_record(team, record_id, data)
+    return Response(status_code=204)
+
+
+@router.delete("/records/{record_id}", status_code=204)
+def delete_record(
+    record_id: str,
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> Response:
+    """レコードを物理削除する (soft delete は update_record で deleted_at を設定する別経路)."""
+    lab._metadata.delete_record(team, record_id)
+    return Response(status_code=204)
+
+
+@router.post("/records/{record_id}/cell_logs", status_code=201)
+def save_cell_log(
+    record_id: str,
+    body: dict[str, Any] = Body(...),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> dict[str, str]:
+    """セルログを保存する。
+
+    ``body.cell_id`` が無ければ backend 側で uuid4 を生成し、レスポンスで返す。
+    既にあれば上書き (set)。
+    """
+    data = _restore_datetimes(body)
+    lab._metadata.save_cell_log(team, record_id, data)
+    # save_cell_log は data を mutate して cell_id を埋めるので、それを返す
+    return {"cell_id": data.get("cell_id", "")}
+
+
+@router.put("/templates/{name}", status_code=204)
+def save_template(
+    name: str,
+    body: dict[str, Any] = Body(...),
+    lab: Lab = Depends(get_lab),
+    team: str = Depends(current_team),
+) -> Response:
+    """テンプレートを upsert する。"""
+    data = _restore_datetimes(body)
+    lab._metadata.save_template(team, name, data)
+    return Response(status_code=204)
