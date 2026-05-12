@@ -21,9 +21,7 @@ def _post_to_webhook(url: str, payload: dict[str, Any]) -> None:
     try:
         resp = httpx.post(url, json=payload, timeout=5.0)
         if resp.status_code >= 300:
-            logger.warning(
-                "slack webhook returned %s: %s", resp.status_code, resp.text
-            )
+            logger.warning("slack webhook returned %s: %s", resp.status_code, resp.text)
     except Exception:
         logger.exception("slack webhook post failed")
 
@@ -53,6 +51,8 @@ def notify_signup_request(
     ]
     if note:
         lines.append(f"• 備考: {note}")
-    lines.append("承認: <https://labvault-web-355809880738.asia-northeast1.run.app/admin/pending|/admin/pending>")
+    lines.append(
+        "承認: <https://labvault-web-355809880738.asia-northeast1.run.app/admin/pending|/admin/pending>"
+    )
 
     _post_to_webhook(url, {"text": "\n".join(lines)})

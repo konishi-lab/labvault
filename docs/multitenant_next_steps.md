@@ -16,6 +16,7 @@
 | 3+ | user の deactivate/reactivate (`PATCH /api/admin/users/{email}` の `active`)。自己 deactivate と最後の super-admin deactivate を 400 で拒否。`auth_me` に "deactivated" status 追加、AuthGate で明示メッセージ。AR reader も連動 revoke/grant | 2026-05-11 |
 | 3+ | admin が他ユーザーの display_name を編集可。`PATCH /api/admin/users/{email}` を PATCH semantics 化、UserCard で inline 編集 (Enter 保存 / Esc cancel、IME 確定 Enter は無視) | 2026-05-12 |
 | MCP | MCP の team 対応 (`Lab.team` 公開、`create_server` を per-team Lab キャッシュ化、各ツールに `team: str | None = None` 追加。事前構築 lab は team 未指定時のフォールバックとして動作しテスト互換維持) | 2026-05-12 |
+| 認証拡張 Phase 1 | Web UI に email/password サインアップ/ログイン (Firebase Auth) を追加。Personal Access Token (PAT) システム実装: `POST/GET/DELETE /api/auth/tokens`、`current_authenticated_user` が `lv_*` 形式 token を Firestore `tokens` collection の sha256 hash で lookup。`/account/tokens` 画面で発行/コピー/失効 | 2026-05-12 |
 
 ## 残タスク
 
@@ -50,10 +51,31 @@ gcloud artifacts repositories add-iam-policy-binding labvault-pypi \
 - [ ] user deactivate 時の `revoke_reader` 連動 (deactivate endpoint 自体が未実装)
 - [ ] admin UI で grant 失敗時の retry ボタン
 
+### 認証拡張 Phase 2-5 (PAT を SDK でも使えるようにする)
+
+**目的**: 装置 PC / CI などで `gcloud auth application-default login` を経由せず、PAT だけで SDK が動くようにする。
+
+現状 SDK は `google.auth.default()` を 3 か所で使っている (`PlatformClient` / `firestore.Client` / Vertex AI Embedding)。これらを backend HTTP 経由に置換する必要がある。
+
+- [ ] **Phase 2** — `PlatformMetadataBackend` (read 系: get / list / search を backend HTTP 経由)
+- [ ] **Phase 3** — 同 (write 系: create / update / delete / note / tags)
+- [ ] **Phase 4** — `PlatformStorage` (file upload/download/list を backend HTTP 経由)、Vertex AI Embedding も backend に集約
+- [ ] **Phase 5** — Lab auto-selection (`LABVAULT_TOKEN` あり → platform backend / ADC のみ → 直結)、`~/.labvault/credentials` 読込、E2E、装置 PC 運用 doc
+
+### Firebase 設定 (要手動)
+
+Web UI の email/password サインアップを動かすには Firebase Console で provider を有効化する必要がある:
+
+1. <https://console.firebase.google.com/project/klab-laser-process/authentication/providers> を開く
+2. 「Email/Password」を有効化 (パスワードレス magic link は不要)
+3. 保存
+
+これをやるまで login form の「メールで新規登録」は `auth/operation-not-allowed` エラーで止まる。
+
 ### その他の改善
 
 - [ ] **Vector Search の team フィルタ追加** — 現状 `find_nearest` は deleted_at + status のみ filter。Phase 2 で path 階層分離されているので実害は無いが、念のため明示 filter も足す
-- [ ] **装置 PC 運用手順書** — SA で運用するか、ユーザーアカウントで運用するか。`LABVAULT_PLATFORM_URL` + ADC でセットアップする標準フローを `docs/instrument_pc_setup.md` に
+- [ ] **装置 PC 運用手順書** — SA で運用するか、ユーザーアカウントで運用するか、PAT で運用するか。`LABVAULT_PLATFORM_URL` + ADC or PAT のセットアップ標準フローを `docs/instrument_pc_setup.md` に (認証拡張 Phase 5 と一体化)
 - [ ] **README の install 手順を実利用者でレビュー** — 別アカウントで `gcloud auth application-default login` から始めて pip install まで通るか確認
 - [ ] **AR repo cleanup ポリシー** — 古い patch version を残し続けるか定期削除するか。当面は無削除
 

@@ -9,9 +9,12 @@ import {
   type ReactNode,
 } from "react";
 import {
+  createUserWithEmailAndPassword,
   onAuthStateChanged,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut as fbSignOut,
+  updateProfile,
   type User as FirebaseUser,
 } from "firebase/auth";
 import { getFirebaseAuth, googleProvider } from "./firebase";
@@ -44,6 +47,12 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   signIn: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (
+    email: string,
+    password: string,
+    displayName?: string,
+  ) => Promise<void>;
   signOut: () => Promise<void>;
   getIdToken: () => Promise<string | null>;
   // multi-team
@@ -99,6 +108,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async () => {
     await signInWithPopup(getFirebaseAuth(), googleProvider);
   }, []);
+
+  const signInWithEmail = useCallback(
+    async (email: string, password: string) => {
+      await signInWithEmailAndPassword(getFirebaseAuth(), email, password);
+    },
+    [],
+  );
+
+  const signUpWithEmail = useCallback(
+    async (email: string, password: string, displayName?: string) => {
+      const cred = await createUserWithEmailAndPassword(
+        getFirebaseAuth(),
+        email,
+        password,
+      );
+      if (displayName && cred.user) {
+        await updateProfile(cred.user, { displayName });
+      }
+    },
+    [],
+  );
 
   const signOut = useCallback(async () => {
     await fbSignOut(getFirebaseAuth());
@@ -193,6 +223,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         loading,
         signIn,
+        signInWithEmail,
+        signUpWithEmail,
         signOut,
         getIdToken,
         teams,

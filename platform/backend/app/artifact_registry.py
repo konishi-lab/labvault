@@ -121,9 +121,7 @@ def _modify_policy(email: str, *, add: bool) -> bool:
         logger.exception("AR setIamPolicy failed for %s", repo)
         return False
 
-    logger.info(
-        "AR: %s %s reader on %s", member, "granted" if add else "revoked", repo
-    )
+    logger.info("AR: %s %s reader on %s", member, "granted" if add else "revoked", repo)
     return True
 
 

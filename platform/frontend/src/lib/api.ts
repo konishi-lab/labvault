@@ -390,3 +390,52 @@ export async function updateUser(
 
 export const setUserActive = (email: string, active: boolean) =>
   updateUser(email, { active });
+
+// --- Personal Access Tokens (PAT) ---
+
+export interface TokenSummary {
+  id: string;
+  label: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface CreatedToken {
+  id: string;
+  label: string;
+  token: string; // raw, only present at creation time
+  prefix: string;
+  created_at: string;
+}
+
+export async function createToken(label: string): Promise<CreatedToken> {
+  const res = await authFetch(`${API_BASE}/api/auth/tokens`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Create token failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+export async function listTokens(): Promise<TokenSummary[]> {
+  const res = await authFetch(`${API_BASE}/api/auth/tokens`);
+  if (!res.ok) throw new Error(`Failed to list tokens: ${res.status}`);
+  const data = (await res.json()) as { items: TokenSummary[] };
+  return data.items;
+}
+
+export async function revokeToken(id: string): Promise<void> {
+  const res = await authFetch(
+    `${API_BASE}/api/auth/tokens/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Revoke token failed: ${res.status} ${text}`);
+  }
+}

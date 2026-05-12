@@ -33,12 +33,8 @@ def get_firestore_db() -> Any:
             from google.cloud import firestore
 
             project = os.environ.get("LABVAULT_GCP_PROJECT")
-            database = os.environ.get(
-                "LABVAULT_FIRESTORE_DATABASE", "(default)"
-            )
-            _firestore_db = firestore.Client(
-                project=project or None, database=database
-            )
+            database = os.environ.get("LABVAULT_FIRESTORE_DATABASE", "(default)")
+            _firestore_db = firestore.Client(project=project or None, database=database)
         return _firestore_db
 
 
@@ -46,9 +42,7 @@ def get_team_meta(team_id: str) -> dict[str, Any]:
     """teams/{team_id} ドキュメントを取得する。存在しなければ 404。"""
     snap = get_firestore_db().collection("teams").document(team_id).get()
     if not snap.exists:
-        raise HTTPException(
-            status_code=404, detail=f"team {team_id!r} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"team {team_id!r} not found")
     return snap.to_dict() or {}
 
 

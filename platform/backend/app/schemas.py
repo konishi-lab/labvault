@@ -204,5 +204,39 @@ class TeamSummary(BaseModel):
     nextcloud_group_folder: str = ""
 
 
+# --- Personal Access Tokens (PAT) ---
+
+
+class CreateTokenRequest(BaseModel):
+    label: str = ""
+
+
+class CreateTokenResponse(BaseModel):
+    """発行直後のレスポンス。raw `token` はこのときのみ返却 (再表示不可)。"""
+
+    id: str
+    label: str
+    token: str
+    prefix: str  # 表示用の先頭プレフィックス (e.g., "lv_abcdefghi")
+    created_at: datetime
+
+
+class TokenInfo(BaseModel):
+    id: str
+    label: str
+    prefix: str
+    created_at: datetime
+    last_used_at: datetime | None = None
+
+
+class TokenListResponse(BaseModel):
+    items: list[TokenInfo]
+
+
+class RevokeTokenResponse(BaseModel):
+    status: str  # "ok"
+    id: str
+
+
 class TeamListResponse(BaseModel):
     items: list[TeamSummary]

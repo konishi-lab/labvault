@@ -21,6 +21,7 @@ from .auth import (
     init_firebase_admin,
     pending_users_ref,
     require_super_admin,
+    tokens_ref,
 )
 from .artifact_registry import grant_reader, revoke_reader
 from .dependencies import close_lab, get_firestore_db, get_team_meta
@@ -31,14 +32,19 @@ from .schemas import (
     AllowedUser,
     ApproveRequest,
     ApproveResponse,
+    CreateTokenRequest,
+    CreateTokenResponse,
     HealthResponse,
     PendingListResponse,
     PendingUser,
     RequestAccessRequest,
     RequestAccessResponse,
+    RevokeTokenResponse,
     TeamListResponse,
     TeamMembershipResponse,
     TeamSummary,
+    TokenInfo,
+    TokenListResponse,
     UpdateUserRequest,
     UserListResponse,
     UserTeamsResponse,
@@ -134,9 +140,7 @@ def auth_me(
                     if snap.exists
                     else team_id
                 )
-                teams_list.append(
-                    {"team_id": team_id, "role": role, "name": name}
-                )
+                teams_list.append({"team_id": team_id, "role": role, "name": name})
             default_team = data.get("default_team") or (
                 teams_list[0]["team_id"] if teams_list else ""
             )
@@ -191,9 +195,7 @@ def request_access(
 
     requested_name = body.requested_team_name.strip()
     if not requested_name:
-        raise HTTPException(
-            status_code=400, detail="requested_team_name is required"
-        )
+        raise HTTPException(status_code=400, detail="requested_team_name is required")
 
     # 既に allowed_users にいる場合は申請不要
     existing = allowed_users_ref().document(email).get()
@@ -262,6 +264,111 @@ def nextcloud_credentials(
         "password": password,
         "group_folder": group_folder,
     }
+
+
+# --- Personal Access Tokens (PAT) ---
+
+
+def _generate_pat() -> tuple[str, str, str]:
+    """新しい PAT を生成する。
+
+    Returns:
+        (raw_token, sha256_hex, display_prefix)
+        raw_token は ``lv_<base32>`` 形式 (~55 chars)。発行時のみ返却。
+        sha256_hex は Firestore に保存する hash。
+        display_prefix は表示用の先頭部分 (~12 chars)。
+    """
+    import base64
+    import hashlib
+    import secrets
+
+    raw_bytes = secrets.token_bytes(32)
+    body = base64.b32encode(raw_bytes).decode("ascii").rstrip("=").lower()
+    raw = f"lv_{body}"
+    h = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return raw, h, raw[:12]
+
+
+@app.post("/api/auth/tokens", response_model=CreateTokenResponse)
+def create_token(
+    body: CreateTokenRequest,
+    user: User = Depends(current_user),
+) -> CreateTokenResponse:
+    """新しい Personal Access Token を発行する。
+
+    raw token はこのレスポンスでのみ返却 (Firestore には hash のみ保存、
+    再表示不可)。SDK / curl で `Authorization: Bearer <token>` として使う。
+    """
+    import uuid
+
+    label = body.label.strip()[:100]
+    raw, h, prefix = _generate_pat()
+    token_id = uuid.uuid4().hex[:16]
+    now = dt.datetime.now(dt.UTC)
+    tokens_ref().document(token_id).set(
+        {
+            "id": token_id,
+            "email": user.email,
+            "label": label,
+            "token_hash": h,
+            "prefix": prefix,
+            "created_at": now,
+            "last_used_at": None,
+            "revoked_at": None,
+        }
+    )
+    return CreateTokenResponse(
+        id=token_id,
+        label=label,
+        token=raw,
+        prefix=prefix,
+        created_at=now,
+    )
+
+
+@app.get("/api/auth/tokens", response_model=TokenListResponse)
+def list_tokens(user: User = Depends(current_user)) -> TokenListResponse:
+    """ログインユーザーの PAT 一覧を返す (失効済みは除く)。
+
+    raw token は返さない (発行時のみ)。prefix で視覚的に識別する想定。
+    """
+    items: list[TokenInfo] = []
+    for snap in tokens_ref().where("email", "==", user.email).stream():
+        d = snap.to_dict() or {}
+        if d.get("revoked_at"):
+            continue
+        items.append(
+            TokenInfo(
+                id=snap.id,
+                label=d.get("label", ""),
+                prefix=d.get("prefix", ""),
+                created_at=d["created_at"],
+                last_used_at=d.get("last_used_at"),
+            )
+        )
+    items.sort(key=lambda t: t.created_at, reverse=True)
+    return TokenListResponse(items=items)
+
+
+@app.delete("/api/auth/tokens/{token_id}", response_model=RevokeTokenResponse)
+def revoke_token(
+    token_id: str,
+    user: User = Depends(current_user),
+) -> RevokeTokenResponse:
+    """自分の PAT を失効させる。super-admin でも他人の PAT は失効不可。
+
+    soft delete: revoked_at をセットするだけ (履歴を残す)。
+    """
+    snap = tokens_ref().document(token_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="token not found")
+    d = snap.to_dict() or {}
+    if d.get("email") != user.email:
+        raise HTTPException(status_code=403, detail="not your token")
+    if d.get("revoked_at"):
+        return RevokeTokenResponse(status="ok", id=token_id)  # 冪等
+    tokens_ref().document(token_id).update({"revoked_at": dt.datetime.now(dt.UTC)})
+    return RevokeTokenResponse(status="ok", id=token_id)
 
 
 @app.get("/api/admin/pending", response_model=PendingListResponse)
@@ -347,9 +454,7 @@ def admin_approve(
     else:  # assign
         target_team = body.team_id.strip()
         if not target_team:
-            raise HTTPException(
-                status_code=400, detail="team_id required for assign"
-            )
+            raise HTTPException(status_code=400, detail="team_id required for assign")
         if not db.collection("teams").document(target_team).get().exists:
             raise HTTPException(
                 status_code=404, detail=f"team {target_team!r} not found"
@@ -465,9 +570,7 @@ def admin_list_users(
     return UserListResponse(items=items)
 
 
-@app.post(
-    "/api/admin/users/{email}/teams", response_model=UserTeamsResponse
-)
+@app.post("/api/admin/users/{email}/teams", response_model=UserTeamsResponse)
 def admin_add_user_team(
     email: str,
     body: AddTeamRequest,
@@ -489,16 +592,12 @@ def admin_add_user_team(
 
     db = get_firestore_db()
     if not db.collection("teams").document(target_team).get().exists:
-        raise HTTPException(
-            status_code=404, detail=f"team {target_team!r} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"team {target_team!r} not found")
 
     user_ref = allowed_users_ref().document(email)
     snap = user_ref.get()
     if not snap.exists:
-        raise HTTPException(
-            status_code=404, detail=f"{email} is not in allowed_users"
-        )
+        raise HTTPException(status_code=404, detail=f"{email} is not in allowed_users")
     data = snap.to_dict() or {}
 
     teams_raw = list(data.get("teams") or [])
@@ -554,9 +653,7 @@ def admin_remove_user_team(
     user_ref = allowed_users_ref().document(email)
     snap = user_ref.get()
     if not snap.exists:
-        raise HTTPException(
-            status_code=404, detail=f"{email} is not in allowed_users"
-        )
+        raise HTTPException(status_code=404, detail=f"{email} is not in allowed_users")
     data = snap.to_dict() or {}
     teams_raw = list(data.get("teams") or [])
     new_teams = [
@@ -573,8 +670,7 @@ def admin_remove_user_team(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"cannot remove last team from {email}. "
-                "deactivate the user instead."
+                f"cannot remove last team from {email}. deactivate the user instead."
             ),
         )
 
@@ -648,9 +744,7 @@ def admin_update_user(
     user_ref = allowed_users_ref().document(email)
     snap = user_ref.get()
     if not snap.exists:
-        raise HTTPException(
-            status_code=404, detail=f"{email} is not in allowed_users"
-        )
+        raise HTTPException(status_code=404, detail=f"{email} is not in allowed_users")
     data = snap.to_dict() or {}
 
     patch: dict[str, Any] = {}

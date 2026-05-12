@@ -1,7 +1,10 @@
 """Firebase ID token 認証 + allowed_users ホワイトリスト。
 
 設計:
-- Firebase ID token を Authorization: Bearer で受取、firebase-admin で検証
+- Authorization: Bearer の token を 3 通りで検証 (順に試行):
+    1. PAT (lv_*) — Firestore tokens collection を hash で lookup
+    2. Firebase ID token — firebase-admin で verify
+    3. Google OAuth access token — userinfo endpoint 経由
 - allowed_users/{email} を Firestore から引き、active=True をチェック
 - role ("admin" | "member" | "viewer") を User に詰めて handler に渡す
 - 開発時は LABVAULT_DEV_SKIP_AUTH=1 で検証スキップ可 (ローカル開発のみ)
@@ -11,6 +14,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import logging
 import os
 from dataclasses import dataclass
@@ -100,6 +104,54 @@ def pending_users_ref() -> Any:
     return _firestore_db().collection("pending_users")
 
 
+def tokens_ref() -> Any:
+    """tokens コレクション参照。PAT (Personal Access Token) の保管場所。"""
+    return _firestore_db().collection("tokens")
+
+
+PAT_PREFIX = "lv_"
+
+
+def _verify_pat(token: str) -> AuthenticatedUser | None:
+    """PAT (lv_*) を検証する。失敗時 None。
+
+    raw token は保存していないので、SHA-256 hash で tokens collection を引く。
+    検証成功時は last_used_at を best-effort 更新する。
+    """
+    if not token.startswith(PAT_PREFIX):
+        return None
+    h = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    db = _firestore_db()
+
+    snaps = list(db.collection("tokens").where("token_hash", "==", h).limit(1).stream())
+    if not snaps:
+        return None
+    snap = snaps[0]
+    d = snap.to_dict() or {}
+    if d.get("revoked_at"):
+        return None
+    email = d.get("email")
+    if not email:
+        return None
+
+    # last_used_at 更新は best-effort (失敗しても認証は通す)
+    try:
+        db.collection("tokens").document(snap.id).update(
+            {"last_used_at": dt.datetime.now(dt.UTC)}
+        )
+    except Exception:
+        logger.warning("failed to update last_used_at for token %s", snap.id)
+
+    # uid / display_name は allowed_users から拾えれば拾う (まだ未承認なら email を使う)
+    user_snap = allowed_users_ref().document(email).get()
+    user_data = (user_snap.to_dict() or {}) if user_snap.exists else {}
+    return AuthenticatedUser(
+        uid=user_data.get("uid", email),
+        email=email,
+        display_name=user_data.get("display_name", email),
+    )
+
+
 def _dev_skip() -> bool:
     return os.environ.get("LABVAULT_DEV_SKIP_AUTH") == "1"
 
@@ -158,8 +210,15 @@ def current_authenticated_user(
     init_firebase_admin()
     token = authorization.removeprefix("Bearer ").strip()
 
-    # 1) Firebase ID token として検証 (Web UI)
-    # 2) 失敗したら Google OAuth access token として検証 (SDK/CLI の ADC)
+    # 1) PAT (Personal Access Token) — 我々が発行した lv_* 形式
+    if token.startswith(PAT_PREFIX):
+        pat_user = _verify_pat(token)
+        if pat_user is None:
+            raise HTTPException(status_code=401, detail="Invalid PAT")
+        return pat_user
+
+    # 2) Firebase ID token として検証 (Web UI)
+    # 3) 失敗したら Google OAuth access token として検証 (SDK/CLI の ADC)
     try:
         decoded = fb_auth.verify_id_token(token)
         email = decoded.get("email")

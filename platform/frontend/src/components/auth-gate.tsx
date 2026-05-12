@@ -1,15 +1,14 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
-import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { setTeamProvider, setTokenProvider } from "@/lib/api";
 import { RequestAccessForm } from "@/components/request-access-form";
 import { PendingStatus } from "@/components/pending-status";
+import { LoginForm } from "@/components/login-form";
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { user, loading, signIn, getIdToken, currentTeam, authStatus } =
-    useAuth();
+  const { user, loading, getIdToken, currentTeam, authStatus } = useAuth();
 
   // api.ts 側に token / team 取得関数を渡す。user 切替時に最新を反映。
   useEffect(() => {
@@ -29,15 +28,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (!user) {
-    return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4">
-        <div className="text-lg font-semibold">labvault にログイン</div>
-        <div className="text-sm text-muted-foreground">
-          許可されたアカウントのみアクセスできます
-        </div>
-        <Button onClick={signIn}>Google でログイン</Button>
-      </div>
-    );
+    return <LoginForm />;
   }
 
   // /api/auth/me 応答待ち。
