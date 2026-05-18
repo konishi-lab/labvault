@@ -16,7 +16,13 @@ from labvault.core.config import Settings
 from labvault.core.exceptions import RecordNotFoundError
 from labvault.core.id import generate_id
 from labvault.core.record import Record
-from labvault.core.types import RecordType, Status
+from labvault.core.types import (
+    RecordType,
+    Status,
+    TemplateV10,
+    template_from_dict,
+    template_to_dict,
+)
 
 
 def _match_condition(actual: Any, spec: Any) -> bool:
@@ -115,6 +121,27 @@ class Lab:
         record_id = self._generate_unique_id()
         record_type = str(type)
 
+        # template が指定されていれば、default_tags / type / 必須条件チェック等のための
+        # 紐付けを行う。template を見つけ次第 backend にも upsert する (冪等)。
+        resolved_template: TemplateV10 | None = None
+        if template:
+            resolved_template = self.get_template(template)
+            if resolved_template is None:
+                msg = (
+                    f"template {template!r} not found. "
+                    "ビルトイン (XRD/SEM/SQUID/TEM/Raman) もしくは "
+                    "lab.define_template(...) で定義した名前を指定してください。"
+                )
+                raise ValueError(msg)
+            # template の type / default_tags をマージ。明示指定が優先。
+            if type == RecordType.EXPERIMENT and resolved_template.type:
+                record_type = resolved_template.type
+            merged_tags = list(tags) if tags else []
+            for t in resolved_template.default_tags:
+                if t not in merged_tags:
+                    merged_tags.append(t)
+            tags = merged_tags
+
         rec = Record(
             id=record_id,
             team=self._team,
@@ -123,9 +150,16 @@ class Lab:
             status=Status.RUNNING,
             created_by=created_by if created_by is not None else self._user,
             tags=tags,
-            conditions_data=conditions if conditions else None,
+            # conditions は下で template alias を適用してから conditions() で書く
+            conditions_data=None,
+            template_name=resolved_template.name if resolved_template else None,
             lab=self,
         )
+
+        # conditions は template の alias / unit が効いた状態で書きたいので、
+        # Record 生成後に conditions() メソッド経由で渡す。
+        if conditions:
+            rec.conditions(**conditions)
 
         self._metadata.create_record(self._team, rec._to_dict())
 
@@ -135,13 +169,64 @@ class Lab:
         if sample:
             rec.link(sample, "measured_on")
 
-        # template は M3 以降で実装
-        _ = template
-
         if auto_log:
             self._activate_tracker(rec)
 
         return rec
+
+    # --- テンプレート API ---
+
+    def define_template(self, template: TemplateV10) -> None:
+        """テンプレートを定義 / 上書き保存する。
+
+        backend.save_template(team, name, dict) に永続化される。同名 template が
+        既にあれば内容を置き換える (冪等)。
+        """
+        self._metadata.save_template(
+            self._team, template.name, template_to_dict(template)
+        )
+
+    def templates(self) -> builtins.list[TemplateV10]:
+        """この team に登録された template の一覧。
+
+        backend にも未登録なビルトインは含まれない点に注意 (initial state では
+        空リスト)。ビルトインは `lab.new(title, template="XRD")` で初めて参照
+        された時に backend に lazy save される。
+        """
+        raw_list = self._metadata.list_templates(self._team)
+        out: builtins.list[TemplateV10] = []
+        for raw in raw_list:
+            try:
+                out.append(template_from_dict(raw))
+            except (KeyError, TypeError):
+                continue
+        return out
+
+    def get_template(self, name: str) -> TemplateV10 | None:
+        """名前で template を取得する (見つからなければ None)。
+
+        探索順: backend に保存済 → ビルトイン (BUILTIN_TEMPLATES)。
+        ビルトインがヒットした場合は backend に自動 upsert する (次回参照を高速化)。
+        """
+        raw = self._metadata.get_template(self._team, name)
+        if raw is not None:
+            try:
+                return template_from_dict(raw)
+            except (KeyError, TypeError):
+                pass
+
+        import contextlib
+
+        from labvault.core.builtin_templates import BUILTIN_TEMPLATES
+
+        builtin = BUILTIN_TEMPLATES.get(name)
+        if builtin is None:
+            return None
+        # 初回参照時に backend に lazy save (冪等)。backend 側の不具合があっても
+        # in-memory のビルトインは返したいので、ここでは黙って吸収する。
+        with contextlib.suppress(Exception):
+            self.define_template(builtin)
+        return builtin
 
     # --- Record 取得 ---
 
