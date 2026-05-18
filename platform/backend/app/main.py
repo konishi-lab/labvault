@@ -11,19 +11,23 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from .artifact_registry import grant_reader, revoke_reader
 from .auth import (
     AuthenticatedUser,
     User,
+    admin_team_ids,
     allowed_users_ref,
     current_authenticated_user,
     current_team,
     current_user,
     init_firebase_admin,
+    is_super_admin,
     pending_users_ref,
+    require_any_team_admin,
     require_super_admin,
+    require_team_admin_for,
     tokens_ref,
 )
-from .artifact_registry import grant_reader, revoke_reader
 from .dependencies import close_lab, get_firestore_db, get_team_meta
 from .notifications import notify_signup_request
 from .routers import bulk_upload, files, metadata, preview, records, search
@@ -145,14 +149,21 @@ def auth_me(
             default_team = data.get("default_team") or (
                 teams_list[0]["team_id"] if teams_list else ""
             )
+            # is_admin = super-admin もしくは何らかの team の admin。
+            # frontend が admin メニュー表示を判定するのに使う。
+            legacy_role = data.get("role", "member")
+            is_admin = legacy_role == "admin" or any(
+                t["role"] == "admin" for t in teams_list
+            )
             return {
                 "status": "authorized",
                 "uid": data.get("uid", auth_user.uid),
                 "email": email,
                 "display_name": data.get("display_name") or auth_user.display_name,
-                "role": data.get("role", "member"),
+                "role": legacy_role,
                 "teams": teams_list,
                 "default_team": default_team,
+                "is_admin": is_admin,
                 # 初回ログイン (welcomed_at が無い) のときだけ frontend で
                 # welcome 画面を 1 回出す。
                 "show_welcome": data.get("welcomed_at") is None,
@@ -414,12 +425,14 @@ def admin_pending(
 @app.post("/api/admin/approve", response_model=ApproveResponse)
 def admin_approve(
     body: ApproveRequest,
-    admin: User = Depends(require_super_admin),
+    admin: User = Depends(require_any_team_admin),
 ) -> ApproveResponse:
-    """申請を承認する。super-admin のみ。
+    """申請を承認する。
 
-    action="assign": 既存 team に追加。
-    action="create_team": 新規 team を作成して追加。
+    認可:
+      - `action="assign"`: super-admin もしくは対象 team の admin
+      - `action="create_team"`: super-admin のみ (新 team 作成は global 操作のため)
+
     どちらの場合も pending_users/{email} を削除し、allowed_users/{email} を作成。
     """
     email = body.email.strip()
@@ -445,6 +458,11 @@ def admin_approve(
     db = get_firestore_db()
 
     if body.action == "create_team":
+        if not is_super_admin(admin):
+            raise HTTPException(
+                status_code=403,
+                detail="creating a new team requires super-admin",
+            )
         if body.new_team is None:
             raise HTTPException(
                 status_code=400, detail="new_team is required for create_team"
@@ -478,6 +496,8 @@ def admin_approve(
             raise HTTPException(
                 status_code=404, detail=f"team {target_team!r} not found"
             )
+        # super-admin はバイパス、それ以外は target_team の admin が必須
+        require_team_admin_for(admin, target_team)
 
     # pending entry から display_name を持ってくる
     pending_snap = pending_users_ref().document(email).get()
@@ -541,14 +561,20 @@ def _resolve_teams(
 
 @app.get("/api/admin/teams", response_model=TeamListResponse)
 def admin_list_teams(
-    _admin: User = Depends(require_super_admin),
+    admin: User = Depends(require_any_team_admin),
 ) -> TeamListResponse:
-    """teams collection の全 team を返す。super-admin のみ。
+    """teams 一覧を返す。
+
+    認可: super-admin もしくは何らかの team の admin。
+    team admin は自分が admin の team のみを返す。super-admin は全 team。
 
     UI で「既存 team に追加」のドロップダウンを作るのに使う。
     """
+    allowed = admin_team_ids(admin)  # super なら () = 制限なし
     items: list[TeamSummary] = []
     for snap in get_firestore_db().collection("teams").stream():
+        if allowed and snap.id not in allowed:
+            continue
         d = snap.to_dict() or {}
         items.append(
             TeamSummary(
@@ -563,16 +589,30 @@ def admin_list_teams(
 
 @app.get("/api/admin/users", response_model=UserListResponse)
 def admin_list_users(
-    _admin: User = Depends(require_super_admin),
+    admin: User = Depends(require_any_team_admin),
 ) -> UserListResponse:
-    """allowed_users 一覧を返す。super-admin のみ。
+    """allowed_users 一覧を返す。
+
+    認可: super-admin もしくは何らかの team の admin。
+    team admin は「自分が admin の team のいずれかに所属しているメンバー」のみを
+    返す (他 team 限定のメンバーは見えない)。super-admin は全件。
 
     各 user の teams[] には team の表示名 (teams/{team_id}.name) も含める。
     """
+    allowed_teams = admin_team_ids(admin)  # super なら () = 制限なし
     name_map = _team_name_map()
     items: list[AllowedUser] = []
     for snap in allowed_users_ref().stream():
         d = snap.to_dict() or {}
+        if allowed_teams:
+            teams_raw = d.get("teams") or []
+            user_team_ids = {
+                t["team_id"]
+                for t in teams_raw
+                if isinstance(t, dict) and t.get("team_id")
+            }
+            if user_team_ids.isdisjoint(allowed_teams):
+                continue
         items.append(
             AllowedUser(
                 email=d.get("email") or snap.id,
@@ -593,9 +633,11 @@ def admin_list_users(
 def admin_add_user_team(
     email: str,
     body: AddTeamRequest,
-    _admin: User = Depends(require_super_admin),
+    admin: User = Depends(require_any_team_admin),
 ) -> UserTeamsResponse:
-    """承認済ユーザーに team を追加する。super-admin のみ。
+    """承認済ユーザーに team を追加する。
+
+    認可: super-admin もしくは追加先 team の admin。
 
     冪等: 既に所属している team_id を渡した場合は role を上書きする。
     default_team が未設定なら、追加した team を default にする。
@@ -608,6 +650,7 @@ def admin_add_user_team(
         raise HTTPException(
             status_code=400, detail="role must be admin / member / viewer"
         )
+    require_team_admin_for(admin, target_team)
 
     db = get_firestore_db()
     if not db.collection("teams").document(target_team).get().exists:
@@ -656,9 +699,11 @@ def admin_add_user_team(
 def admin_remove_user_team(
     email: str,
     team_id: str,
-    _admin: User = Depends(require_super_admin),
+    admin: User = Depends(require_any_team_admin),
 ) -> UserTeamsResponse:
-    """承認済ユーザーから team を外す。super-admin のみ。
+    """承認済ユーザーから team を外す。
+
+    認可: super-admin もしくは対象 team の admin。
 
     最後の team を外そうとした場合は 400 (代わりに PATCH /users/{email} で
     deactivate する想定)。
@@ -668,6 +713,7 @@ def admin_remove_user_team(
     target_team = team_id.strip()
     if not target_team:
         raise HTTPException(status_code=400, detail="team_id required")
+    require_team_admin_for(admin, target_team)
 
     user_ref = allowed_users_ref().document(email)
     snap = user_ref.get()

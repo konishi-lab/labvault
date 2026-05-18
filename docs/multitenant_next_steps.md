@@ -21,12 +21,15 @@
 | 認証拡張 Phase 3 | `PlatformMetadataBackend` の write 系 (create_record / update_record / delete_record / save_cell_log / save_template) 実装。backend に `POST/PATCH/DELETE /records*` + `POST /cell_logs` + `PUT /templates/{name}` 追加。datetime ↔ ISO 文字列の双方向変換 helper (`_to_jsonable` / `_restore_datetimes`)。e2e で create→note/tag/status→soft delete→cleanup の往復確認済 | 2026-05-12 |
 | 認証拡張 Phase 4 | `PlatformStorage` / `PlatformSearch` / `PlatformEmbedding` 実装。backend に `/api/metadata/storage/*` (multipart upload + binary download + delete + exists + list)、`/api/metadata/search/*` (index / search / delete)、`/api/metadata/embedding` (text/texts) 追加。embedding 未指定時は backend 側で自動生成 (PAT-only client に優しい)。e2e で `Lab(全 backend = Platform*)` で create→file 添付→search→cleanup の完全往復確認済 | 2026-05-12 |
 | 認証拡張 Phase 5 | Lab auto-selection 完成。`Settings.token` field 追加、`~/.labvault/credentials` を env_file として自動読込。`Lab.__init__` で token + platform_url が揃えば 4 backend (metadata/storage/search/embedding) を全て Platform* に自動切替。共有 PlatformClient を 1 つだけ生成。装置 PC 運用手順書 `docs/instrument_pc_setup.md` 追加。e2e で `Lab()` 1 行 (env だけ) で本番 Firestore に PAT 経由で書き込み確認済 | 2026-05-12 |
+| team admin | `teams[].role == "admin"` の team-scoped admin を追加。`auth.py` に `is_super_admin / is_team_admin / is_any_team_admin / admin_team_ids / require_team_admin_for / require_any_team_admin` helpers。`/api/admin/approve` (assign 時) / `/api/admin/users/{email}/teams` (add/remove) / `/api/admin/teams` / `/api/admin/users` を team admin に開放 (super-admin はバイパス、team admin は自分が admin の team のみ操作可)。`create_team` action と `/api/admin/pending`, `PATCH /api/admin/users/{email}` は引き続き super-admin 限定。`/api/auth/me` に `is_admin: bool` 追加、frontend は `useAuth().isAdmin` で admin UI 表示判定 | 2026-05-18 |
 
 ## 残タスク
 
-### Phase 3 残り (後回し)
+### 既知の未対応 (UX 改善)
 
-- [ ] team-scoped admin (`teams[].role == "admin"`) の判定ヘルパー `require_team_admin(team_id)` を追加し、approve や user 編集を team admin にも開放
+- [ ] **user-card 内部の権限分岐** — `/admin/users` の UserCard には super-admin 専用操作 (global active 切替 / display_name 編集) と team-scoped 操作 (team の add/remove) が混在。現状は team admin が super-admin 専用ボタンを押すと backend が 403/400 で蹴る。UI 側で is_super_admin によって表示分岐すると親切
+- [ ] **team admin による pending 承認** — pending_users に `requested_team_id` (ユーザーが希望する既存 team) を持たせれば、team admin に「自 team への申請」だけ承認させられる。現状 pending は全件 super-admin にしか見えない
+- [ ] **backend endpoint-level test** — `platform/backend/tests/` が未整備。team admin の許可/拒否マトリクスを TestClient で網羅したい (現状は SDK 用 `tests/unit/` しか無いため auth helpers の単体検証のみ)
 
 ### AR 連動の運用メモ (案 B 採用済)
 

@@ -16,7 +16,7 @@ import {
 } from "@/lib/api";
 
 export default function AdminUsersPage() {
-  const { role, user: currentUser } = useAuth();
+  const { isAdmin, user: currentUser } = useAuth();
   const [users, setUsers] = useState<AllowedUserSummary[]>([]);
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,11 +41,11 @@ export default function AdminUsersPage() {
   }, []);
 
   useEffect(() => {
-    if (role !== "admin") return;
+    if (!isAdmin) return;
     reload();
-  }, [role, reload]);
+  }, [isAdmin, reload]);
 
-  if (role !== "admin") {
+  if (!isAdmin) {
     return (
       <div className="space-y-4">
         <Link href="/">
@@ -53,7 +53,7 @@ export default function AdminUsersPage() {
             ← 一覧に戻る
           </Button>
         </Link>
-        <p className="text-destructive">super-admin 権限が必要です。</p>
+        <p className="text-destructive">admin 権限が必要です。</p>
       </div>
     );
   }
