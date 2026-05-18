@@ -100,7 +100,8 @@ examples/          # すぐ試せるサンプル
 | **M4** Embedding (Vertex AI) | 完了 (動作確認済) |
 | **M4** MCP サーバー (7ツール) | 完了 (Claude Code 動作確認済) |
 | **M6** WebApp (Next.js + FastAPI) | 進行中 (レコード閲覧、条件カラム、散布図、一括アップロード) |
-| **M3** テンプレート + パーサー | 未着手 |
+| **M3** テンプレート | 完了 (alias 正規化 / required 警告 / ビルトイン 5 種 XRD/SEM/SQUID/TEM/Raman) |
+| **M3** ファイルパーサー連携 | 未着手 (`.vk4` 単体は既存。template 経由の add() 自動起動はこれから) |
 | **M5** 拡張 (ProcessChain等) | 未着手 |
 
 ## 重要な規約

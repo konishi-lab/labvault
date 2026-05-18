@@ -98,6 +98,7 @@ class Record:
         events: list[dict[str, Any]] | None = None,
         deleted_at: datetime | None = None,
         parent_id: str | None = None,
+        template_name: str | None = None,
         lab: Lab | None = None,
     ) -> None:
         self._id = id
@@ -129,6 +130,7 @@ class Record:
         self._events: list[dict[str, Any]] = list(events) if events else []
         self._deleted_at = deleted_at
         self._parent_id = parent_id
+        self._template_name = template_name
         self._lab = lab
 
     # --- プロパティ ---
@@ -165,8 +167,40 @@ class Record:
 
     @status.setter
     def status(self, value: str | Status) -> None:
-        self._status = Status(value)
+        new_status = Status(value)
+        self._status = new_status
+        # success / failed / partial に遷移したタイミングで template の必須条件を点検。
+        # 未入力なら UserWarning を出して書き込みを止めない。
+        if new_status in (Status.SUCCESS, Status.FAILED, Status.PARTIAL):
+            self._warn_missing_required_conditions()
         self._persist()
+
+    @property
+    def template_name(self) -> str | None:
+        """紐付いたテンプレート名 (template 未指定なら None)。"""
+        return self._template_name
+
+    def _resolve_template(self) -> Any | None:
+        """この record に紐付いた TemplateV10 を取得する (見つからなければ None)。"""
+        if not self._template_name or self._lab is None:
+            return None
+        return self._lab.get_template(self._template_name)
+
+    def _warn_missing_required_conditions(self) -> None:
+        """required_conditions のうち未入力の key を UserWarning で警告する。"""
+        import warnings
+
+        tpl = self._resolve_template()
+        if tpl is None:
+            return
+        missing = [k for k in tpl.required_conditions if k not in self._conditions]
+        if missing:
+            warnings.warn(
+                f"Record {self._id} ({self._template_name}): "
+                f"必須条件が未入力です: {', '.join(missing)}",
+                UserWarning,
+                stacklevel=3,
+            )
 
     @property
     def created_by(self) -> str:
@@ -244,6 +278,8 @@ class Record:
         """実験条件を設定する。
 
         値はスカラー、(値, 単位) タプル、(値, 単位, 説明) タプルのいずれか。
+        template が紐付いていれば alias (旧名・表記揺れ) は正規化された name に変換。
+        未定義の key はそのまま保存する。
 
         Examples:
             exp.conditions(pulseenergy=1e-05)
@@ -252,7 +288,16 @@ class Record:
         """
         from labvault.core.units import validate_unit
 
-        for key, val in kwargs.items():
+        tpl = self._resolve_template()
+        alias_map = tpl.alias_map() if tpl is not None else {}
+        field_unit_map = (
+            {f.name: f.unit for f in tpl.condition_fields if f.unit}
+            if tpl is not None
+            else {}
+        )
+
+        for raw_key, val in kwargs.items():
+            key = alias_map.get(raw_key, raw_key)
             if isinstance(val, tuple):
                 if len(val) == 2:
                     value, unit = val
@@ -269,6 +314,10 @@ class Record:
                     self._conditions[key] = val[0]
             else:
                 self._conditions[key] = val
+                # template に unit 定義があれば自動補完 (既に設定済なら触らない)
+                tu = field_unit_map.get(key)
+                if tu and key not in self._condition_units:
+                    self._condition_units[key] = tu
         self._persist()
         return self
 
@@ -745,6 +794,7 @@ class Record:
             "events": list(self._events),
             "deleted_at": (self._deleted_at.isoformat() if self._deleted_at else None),
             "parent_id": self._parent_id,
+            "template": self._template_name,
         }
 
     # --- コンテキストマネージャ ---
@@ -833,6 +883,7 @@ class Record:
             events=data.get("events"),
             deleted_at=(_parse_dt(deleted_at_raw) if deleted_at_raw else None),
             parent_id=data.get("parent_id"),
+            template_name=data.get("template"),
             lab=lab,
         )
         rec._condition_units = dict(data.get("condition_units") or {})
