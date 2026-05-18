@@ -22,12 +22,29 @@
 
 ### 1. labvault SDK をインストール
 
+`pip install` は private な Artifact Registry から wheel を取得するため、**この 1 ステップだけは GCP 認証が必要**。PAT モードであっても pip 自体は Google 認証で読みに行く (PAT は SDK 実行時の認証であって AR の認証ではない)。
+
 ```bash
+# 装置 PC で gcloud が使える場合:
+gcloud auth login
+gcloud auth application-default login
+pip install keyring keyrings.google-artifactregistry-auth
 pip install --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
   labvault
 ```
 
-(初回は AR の reader 権限が必要だが、PAT モードでは pip 自体は通る形に出来る場合があります。詳細は別途。)
+gcloud が入らない / ブラウザが無くて ADC ログインも難しい装置 PC では:
+
+1. ブラウザのある別マシンで wheel を download
+   ```bash
+   pip download --no-deps --dest ~/wheels \
+     --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
+     labvault
+   ```
+2. `scp ~/wheels/labvault-*.whl instrument-pc:/tmp/`
+3. 装置 PC で `pip install /tmp/labvault-*.whl httpx pydantic pydantic-settings click` (依存も同様に持参)
+
+インストール後は PAT が認証を担うので、GCP credentials は装置 PC に残す必要なし。
 
 ### 2. PAT を発行
 
@@ -49,6 +66,11 @@ LABVAULT_USER=instrument-xrd-1
 EOF
 chmod 600 ~/.labvault/credentials
 ```
+
+- `LABVAULT_TOKEN` — 認証に使う PAT
+- `LABVAULT_PLATFORM_URL` — backend の URL (固定)
+- `LABVAULT_TEAM` — 書き込む team。複数 team 所属の場合のみ意味あり (single team なら省略可)
+- `LABVAULT_USER` — Record の `created_by` に入る装置識別子。後で「どの装置から投入されたか」を絞り込むのに使う。`instrument-xrd-1` `sputter-A` 等、装置単位の名前を推奨
 
 `chmod 600` は他ユーザーから読めなくするための重要なステップ。
 

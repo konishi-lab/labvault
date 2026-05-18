@@ -21,12 +21,12 @@
 from labvault import Lab
 
 lab = Lab()
-exp = lab.new("Fe-Cr薄膜 XRD測定", template="XRD")
+exp = lab.new("Fe-Cr薄膜 XRD測定")
 
 # 条件を記録
 exp.conditions(target="Cu", voltage_kV=40, temperature_C=500)
 
-# データを保存（.rasからメタデータを自動抽出）
+# データを保存
 exp.add("xrd_data.ras")
 
 # 結果を記録
@@ -35,6 +35,8 @@ exp.results["phase"] = "BCC"
 
 exp.status = "success"
 ```
+
+> 測定テンプレート (`template="XRD"` で必須条件チェック + 装置ファイル自動パース) は **M3 で対応予定**。
 
 ## 装置制御スクリプトからの記録
 
@@ -100,23 +102,44 @@ labvault overview DE9Z7K
 
 ## インストール
 
-labvault は研究室管理の Artifact Registry (private) で配布しています。
-GCP アカウント (`hirosuke@example.com` 等) に reader 権限が付与されている必要があります。
+新規ユーザーは **3 ステップ**: ① Web UI でアカウント承認 → ② pip install (要 GCP 認証) → ③ SDK 認証 (ADC または PAT)。
+
+```
+[Web UI でログイン]
+       │
+       ▼
+[「申請」フォームから access request]
+       │  (Slack に通知 → admin が approve)
+       ▼
+[承認 = allowed_users 登録 + Artifact Registry reader 自動付与]
+       │
+       ▼
+[pip install] ──► [SDK 認証 (ADC or PAT)] ──► lab = Lab() が動く
+```
+
+### 1. アカウント承認 (初回のみ)
+
+Web UI <https://labvault-web-355809880738.asia-northeast1.run.app> にログインして「申請」フォームを送信。admin が approve すると Slack 通知が飛び、自動で Artifact Registry reader 権限が付与される。承認前に下の手順を試しても `pip install` が 403 で落ちる。
+
+### 2. pip install
+
+`pip install` は private な Artifact Registry から wheel を取得するため、**GCP 認証が必要** (PAT ではなく Google 認証)。
 
 ```bash
-# 1. ADC ログイン (初回のみ)
+# 一度だけ: GCP ログイン
+gcloud auth login
 gcloud auth application-default login
 
-# 2. AR 用 keyring backend
+# Artifact Registry の認証 helper
 pip install keyring keyrings.google-artifactregistry-auth
 
-# 3. labvault インストール
+# labvault 本体
 pip install \
   --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
   labvault[gcp,nextcloud]
 ```
 
-更新は `pip install -U labvault` で可能。エクストラ:
+エクストラ:
 
 | 名前 | 内容 |
 |---|---|
@@ -125,7 +148,56 @@ pip install \
 | `mcp` | MCP サーバー |
 | `all` | 全部入り |
 
-権限がない / 申請したい場合は web UI (`https://labvault-web-...run.app`) からログイン → admin 承認をリクエストしてください。
+更新は `pip install -U labvault`。
+
+### 3. SDK 認証 — 2 通り
+
+| 方式 | 向いている場面 | 設定 |
+|---|---|---|
+| **PAT (推奨)** | 装置 PC・CI・Notebook 問わず全般。Google 認証セッションが切れても動く | Web UI `/account/tokens` で発行 → `~/.labvault/credentials` に書く |
+| ADC | `gcloud auth application-default login` がある環境でそのまま使いたい場合 | 環境変数 (下記) を `.env` に書くだけ |
+
+#### PAT 方式 (推奨)
+
+```bash
+mkdir -p ~/.labvault
+cat > ~/.labvault/credentials << 'EOF'
+LABVAULT_TOKEN=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+LABVAULT_TEAM=konishi-lab
+EOF
+chmod 600 ~/.labvault/credentials
+```
+
+→ `Lab()` 1 行で Firestore/Nextcloud/Vertex AI に Platform 経由でアクセス。Google ライブラリ無しでも動く。詳細: [docs/instrument_pc_setup.md](docs/instrument_pc_setup.md)。
+
+#### ADC 方式
+
+カレントディレクトリの `.env`:
+
+```bash
+LABVAULT_TEAM=konishi-lab
+LABVAULT_USER=your-name
+LABVAULT_GCP_PROJECT=klab-laser-process
+LABVAULT_FIRESTORE_DATABASE=labvault
+LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+```
+
+→ `gcloud auth application-default login` の credential を直接使って Firestore/Vertex AI にアクセス。Nextcloud credential は backend 経由で都度取得。
+
+### 4. 動作確認
+
+```bash
+labvault doctor
+```
+
+`team` / `user` / `gcp_project` / Nextcloud 疎通をまとめて表示。`[!!]` が無ければ環境設定は OK。`Lab()` が成立するかは↓:
+
+```bash
+python -c "from labvault import Lab; lab = Lab(); print(lab); print(type(lab._metadata).__name__)"
+```
+
+PAT モードなら `PlatformMetadataBackend`、ADC モードなら `FirestoreMetadataBackend` と表示される。
 
 ## セットアップ
 
