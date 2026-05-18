@@ -18,8 +18,16 @@ import {
 interface Props {
   user: AllowedUserSummary;
   allTeams: TeamSummary[];
-  /** ログイン中の super-admin の email。自分自身を deactivate させないために使う。 */
+  /** ログイン中の admin の email。自分自身を deactivate させないために使う。 */
   currentAdminEmail: string | null;
+  /** ログイン user が super-admin (legacy role == "admin") か。
+   *  super 専用操作 (display_name 編集 / global active 切替) のゲートに使う。 */
+  isSuperAdmin: boolean;
+  /** ログイン user が admin role を持つ team の id 集合。
+   *  team chip の × (team から外す) を出すかの判定に使う。
+   *  super-admin は全 team を含む空でない設定 (true) として扱うため、
+   *  呼び出し側は super-admin の場合 null を渡す (= 全 team 許可)。 */
+  adminTeamIds: Set<string> | null;
   onChanged: () => void;
 }
 
@@ -27,6 +35,8 @@ export function UserCard({
   user,
   allTeams,
   currentAdminEmail,
+  isSuperAdmin,
+  adminTeamIds,
   onChanged,
 }: Props) {
   const [adding, setAdding] = useState(false);
@@ -182,18 +192,20 @@ export function UserCard({
           ) : (
             <>
               <span>{user.display_name || user.email}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setNameDraft(user.display_name);
-                  setEditingName(true);
-                }}
-                className="text-xs text-muted-foreground transition-colors hover:text-primary"
-                aria-label="表示名を編集"
-                title="表示名を編集"
-              >
-                ✎
-              </button>
+              {isSuperAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNameDraft(user.display_name);
+                    setEditingName(true);
+                  }}
+                  className="text-xs text-muted-foreground transition-colors hover:text-primary"
+                  aria-label="表示名を編集"
+                  title="表示名を編集"
+                >
+                  ✎
+                </button>
+              )}
             </>
           )}
           {user.role === "admin" && (
@@ -225,24 +237,34 @@ export function UserCard({
             <div className="text-sm text-destructive">team 未設定</div>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {user.teams.map((t) => (
-                <span
-                  key={t.team_id}
-                  className="inline-flex items-center gap-1 rounded-full border bg-muted/50 py-0.5 pl-2 pr-1 text-xs"
-                >
-                  <span className="font-medium">{t.name || t.team_id}</span>
-                  <span className="text-muted-foreground">({t.role})</span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemove(t.team_id)}
-                    disabled={pendingTeam === t.team_id}
-                    className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
-                    aria-label={`Remove ${t.team_id}`}
+              {user.teams.map((t) => {
+                // adminTeamIds === null は super-admin (全 team を操作可)。
+                // team admin は自分が admin の team の chip からのみ × を出す。
+                const canRemove =
+                  adminTeamIds === null || adminTeamIds.has(t.team_id);
+                return (
+                  <span
+                    key={t.team_id}
+                    className="inline-flex items-center gap-1 rounded-full border bg-muted/50 py-0.5 pl-2 pr-1 text-xs"
                   >
-                    ×
-                  </button>
-                </span>
-              ))}
+                    <span className="font-medium">{t.name || t.team_id}</span>
+                    <span className="text-muted-foreground">({t.role})</span>
+                    {canRemove ? (
+                      <button
+                        type="button"
+                        onClick={() => handleRemove(t.team_id)}
+                        disabled={pendingTeam === t.team_id}
+                        className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                        aria-label={`Remove ${t.team_id}`}
+                      >
+                        ×
+                      </button>
+                    ) : (
+                      <span className="ml-0.5 inline-flex h-4 w-4" />
+                    )}
+                  </span>
+                );
+              })}
             </div>
           )}
         </div>
@@ -293,30 +315,32 @@ export function UserCard({
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        <div className="flex items-center justify-end border-t pt-3">
-          {(() => {
-            const isSelf = currentAdminEmail === user.email;
-            return (
-              <Button
-                size="sm"
-                variant={user.active ? "destructive" : "outline"}
-                onClick={handleToggleActive}
-                disabled={togglingActive || isSelf}
-                title={
-                  isSelf
-                    ? "自分自身は無効化できません (他の super-admin に依頼してください)"
-                    : undefined
-                }
-              >
-                {togglingActive
-                  ? "処理中..."
-                  : user.active
-                    ? "ユーザーを無効化"
-                    : "ユーザーを再有効化"}
-              </Button>
-            );
-          })()}
-        </div>
+        {isSuperAdmin && (
+          <div className="flex items-center justify-end border-t pt-3">
+            {(() => {
+              const isSelf = currentAdminEmail === user.email;
+              return (
+                <Button
+                  size="sm"
+                  variant={user.active ? "destructive" : "outline"}
+                  onClick={handleToggleActive}
+                  disabled={togglingActive || isSelf}
+                  title={
+                    isSelf
+                      ? "自分自身は無効化できません (他の super-admin に依頼してください)"
+                      : undefined
+                  }
+                >
+                  {togglingActive
+                    ? "処理中..."
+                    : user.active
+                      ? "ユーザーを無効化"
+                      : "ユーザーを再有効化"}
+                </Button>
+              );
+            })()}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

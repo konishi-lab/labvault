@@ -16,7 +16,15 @@ import {
 } from "@/lib/api";
 
 export default function AdminUsersPage() {
-  const { isAdmin, user: currentUser } = useAuth();
+  const { isAdmin, role, teams: myTeams, user: currentUser } = useAuth();
+  const isSuperAdmin = role === "admin";
+  // super-admin は全 team を操作可なので null (= 制限なし)。
+  // team admin は自分が admin の team id 集合だけを渡す。
+  const adminTeamIds = isSuperAdmin
+    ? null
+    : new Set(
+        myTeams.filter((t) => t.role === "admin").map((t) => t.team_id),
+      );
   const [users, setUsers] = useState<AllowedUserSummary[]>([]);
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -129,6 +137,8 @@ export default function AdminUsersPage() {
               user={u}
               allTeams={teams}
               currentAdminEmail={currentUser?.email ?? null}
+              isSuperAdmin={isSuperAdmin}
+              adminTeamIds={adminTeamIds}
               onChanged={reload}
             />
           ))}
