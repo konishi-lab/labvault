@@ -542,13 +542,21 @@ def _team_name_map() -> dict[str, str]:
 def _resolve_teams(
     teams_raw: list[dict[str, Any]] | None,
     name_map: dict[str, str],
+    restrict_to: frozenset[str] | None = None,
 ) -> list[TeamMembershipResponse]:
-    """allowed_users.teams[] を name 解決済の response 形式に変換。"""
+    """allowed_users.teams[] を name 解決済の response 形式に変換。
+
+    restrict_to を渡すと、その集合に含まれる team_id のみ返す。team admin が
+    対象 user を見るときに「他 team での所属」を隠すために使う。super-admin
+    呼出しでは None を渡す (全 team 表示)。
+    """
     out: list[TeamMembershipResponse] = []
     for t in teams_raw or []:
         if not isinstance(t, dict) or not t.get("team_id"):
             continue
         team_id = t["team_id"]
+        if restrict_to is not None and team_id not in restrict_to:
+            continue
         out.append(
             TeamMembershipResponse(
                 team_id=team_id,
@@ -557,6 +565,12 @@ def _resolve_teams(
             )
         )
     return out
+
+
+def _admin_team_filter(admin: User) -> frozenset[str] | None:
+    """super-admin は None (制限なし)、team admin は admin role を持つ team 集合。"""
+    ids = admin_team_ids(admin)  # super なら () = 制限なし
+    return frozenset(ids) if ids else None
 
 
 @app.get("/api/admin/teams", response_model=TeamListResponse)
@@ -599,26 +613,26 @@ def admin_list_users(
 
     各 user の teams[] には team の表示名 (teams/{team_id}.name) も含める。
     """
-    allowed_teams = admin_team_ids(admin)  # super なら () = 制限なし
+    restrict = _admin_team_filter(admin)
     name_map = _team_name_map()
     items: list[AllowedUser] = []
     for snap in allowed_users_ref().stream():
         d = snap.to_dict() or {}
-        if allowed_teams:
+        if restrict is not None:
             teams_raw = d.get("teams") or []
             user_team_ids = {
                 t["team_id"]
                 for t in teams_raw
                 if isinstance(t, dict) and t.get("team_id")
             }
-            if user_team_ids.isdisjoint(allowed_teams):
+            if user_team_ids.isdisjoint(restrict):
                 continue
         items.append(
             AllowedUser(
                 email=d.get("email") or snap.id,
                 display_name=d.get("display_name", ""),
                 role=d.get("role", ""),
-                teams=_resolve_teams(d.get("teams"), name_map),
+                teams=_resolve_teams(d.get("teams"), name_map, restrict_to=restrict),
                 default_team=d.get("default_team", ""),
                 active=bool(d.get("active", True)),
                 created_at=d.get("created_at"),
@@ -686,7 +700,9 @@ def admin_add_user_team(
     return UserTeamsResponse(
         status="ok",
         email=email,
-        teams=_resolve_teams(teams_raw, name_map),
+        teams=_resolve_teams(
+            teams_raw, name_map, restrict_to=_admin_team_filter(admin)
+        ),
         default_team=default_team,
         ar_granted=ar_granted,
     )
@@ -753,7 +769,9 @@ def admin_remove_user_team(
     return UserTeamsResponse(
         status="ok",
         email=email,
-        teams=_resolve_teams(new_teams, name_map),
+        teams=_resolve_teams(
+            new_teams, name_map, restrict_to=_admin_team_filter(admin)
+        ),
         default_team=default_team,
     )
 

@@ -22,13 +22,15 @@
 | 認証拡張 Phase 4 | `PlatformStorage` / `PlatformSearch` / `PlatformEmbedding` 実装。backend に `/api/metadata/storage/*` (multipart upload + binary download + delete + exists + list)、`/api/metadata/search/*` (index / search / delete)、`/api/metadata/embedding` (text/texts) 追加。embedding 未指定時は backend 側で自動生成 (PAT-only client に優しい)。e2e で `Lab(全 backend = Platform*)` で create→file 添付→search→cleanup の完全往復確認済 | 2026-05-12 |
 | 認証拡張 Phase 5 | Lab auto-selection 完成。`Settings.token` field 追加、`~/.labvault/credentials` を env_file として自動読込。`Lab.__init__` で token + platform_url が揃えば 4 backend (metadata/storage/search/embedding) を全て Platform* に自動切替。共有 PlatformClient を 1 つだけ生成。装置 PC 運用手順書 `docs/instrument_pc_setup.md` 追加。e2e で `Lab()` 1 行 (env だけ) で本番 Firestore に PAT 経由で書き込み確認済 | 2026-05-12 |
 | team admin | `teams[].role == "admin"` の team-scoped admin を追加。`auth.py` に `is_super_admin / is_team_admin / is_any_team_admin / admin_team_ids / require_team_admin_for / require_any_team_admin` helpers。`/api/admin/approve` (assign 時) / `/api/admin/users/{email}/teams` (add/remove) / `/api/admin/teams` / `/api/admin/users` を team admin に開放 (super-admin はバイパス、team admin は自分が admin の team のみ操作可)。`create_team` action と `/api/admin/pending`, `PATCH /api/admin/users/{email}` は引き続き super-admin 限定。`/api/auth/me` に `is_admin: bool` 追加、frontend は `useAuth().isAdmin` で admin UI 表示判定 | 2026-05-18 |
+| user-card 権限分岐 | `/admin/users` の UserCard に `isSuperAdmin` / `adminTeamIds` prop を追加。super-admin 専用操作 (✎ 表示名編集 / 無効化-再有効化 button) を super のみに、team chip の × (team から外す) を「自分が admin の team」のみに表示制限 | 2026-05-18 |
+| chip team フィルタ | backend `_resolve_teams` に `restrict_to` 引数を追加し、`_admin_team_filter(admin)` で team admin の場合のみフィルタ。`admin_list_users` / `admin_add_user_team` / `admin_remove_user_team` の return から「他 team での所属」が漏れない | 2026-05-18 |
+| README install 改訂 | 「申請 → 承認 → install → SDK 認証」の 3 ステップ全体フローを README 冒頭に追加。PAT / ADC の 2 通り認証を表で比較。`template="XRD"` をクイックスタートから外し M3 で復活予定と注記。`labvault doctor` と backend 判別 one-liner を動作確認に追加。`docs/instrument_pc_setup.md` の「pip install には GCP 認証が必須」を明記、wheel-bundle 配布手順を追記 | 2026-05-18 |
 
 ## 残タスク
 
 ### 既知の未対応 (UX 改善)
 
-- [ ] **user-card 内部の権限分岐** — `/admin/users` の UserCard には super-admin 専用操作 (global active 切替 / display_name 編集) と team-scoped 操作 (team の add/remove) が混在。現状は team admin が super-admin 専用ボタンを押すと backend が 403/400 で蹴る。UI 側で is_super_admin によって表示分岐すると親切
-- [ ] **team admin による pending 承認** — pending_users に `requested_team_id` (ユーザーが希望する既存 team) を持たせれば、team admin に「自 team への申請」だけ承認させられる。現状 pending は全件 super-admin にしか見えない
+- [ ] **team admin による pending 承認** — 既存 team を申請者に晒すのはセキュリティ NG。素朴な `requested_team_id` 方式は採らない。代替案として super-admin が assign 先 team を「指名」した時点でその team の admin にもキューが回る 2 段階フローを検討、もしくは pending は super 専用のまま維持
 - [ ] **backend endpoint-level test** — `platform/backend/tests/` が未整備。team admin の許可/拒否マトリクスを TestClient で網羅したい (現状は SDK 用 `tests/unit/` しか無いため auth helpers の単体検証のみ)
 
 ### AR 連動の運用メモ (案 B 採用済)
@@ -55,8 +57,9 @@ gcloud artifacts repositories add-iam-policy-binding labvault-pypi \
 **未実装** (TODO):
 
 - [ ] 既存ユーザーの一括 backfill スクリプト (現状は手動 gcloud or 「team 再追加」で代用)
-- [ ] user deactivate 時の `revoke_reader` 連動 (deactivate endpoint 自体が未実装)
 - [ ] admin UI で grant 失敗時の retry ボタン
+
+(user deactivate 時の `revoke_reader` 連動は `PATCH /api/admin/users/{email}` の active 切替実装と一緒に完了済)
 
 ### 認証拡張 Phase 2-5 (PAT を SDK でも使えるようにする)
 
@@ -74,22 +77,13 @@ gcloud artifacts repositories add-iam-policy-binding labvault-pypi \
 - Web UI: Google ログイン or email/password ログイン (どちらでも)
 - SDK / CLI / MCP / 装置 PC: GCP ADC または PAT どちらでも動作。PAT モードでは Google アカウント完全不要
 
-### Firebase 設定 (要手動)
-
-Web UI の email/password サインアップを動かすには Firebase Console で provider を有効化する必要がある:
-
-1. <https://console.firebase.google.com/project/klab-laser-process/authentication/providers> を開く
-2. 「Email/Password」を有効化 (パスワードレス magic link は不要)
-3. 保存
-
-これをやるまで login form の「メールで新規登録」は `auth/operation-not-allowed` エラーで止まる。
-
 ### その他の改善
 
-- [ ] **Vector Search の team フィルタ追加** — 現状 `find_nearest` は deleted_at + status のみ filter。Phase 2 で path 階層分離されているので実害は無いが、念のため明示 filter も足す
 - [x] ~~**装置 PC 運用手順書**~~ — `docs/instrument_pc_setup.md` (PAT 方式中心) 追加済 (2026-05-12)
-- [ ] **README の install 手順を実利用者でレビュー** — 別アカウントで `gcloud auth application-default login` から始めて pip install まで通るか確認
+- [x] ~~**README install 改訂**~~ — 2026-05-18 (フロー図 / PAT・ADC 二択 / doctor 追記) 完了。**残: 別アカウントで実機オンボーディングを通しでなぞる実利用テスト** (Claude では実機できないので人間オペレータが必要)
 - [ ] **AR repo cleanup ポリシー** — 古い patch version を残し続けるか定期削除するか。当面は無削除
+
+(Vector Search の team 明示 filter は path 階層 `teams/{team}/records` で構造的に分離済のため不要として close。冗長 field を入れる場合は既存 record の backfill が要るが ROI 低)
 
 > リリース運用 (タグ → CI publish のフロー) は CLAUDE.md「リリース運用」を参照。
 
