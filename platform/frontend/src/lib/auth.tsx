@@ -65,6 +65,9 @@ interface AuthContextValue {
   refreshAuthStatus: () => Promise<void>;
   // legacy global role (allowed_users.role)
   role: string;
+  // admin UI 表示の判定用。super-admin もしくは何らかの team の admin。
+  // backend `/api/auth/me` の `is_admin` を反映。
+  isAdmin: boolean;
   // welcome panel (初回ログイン)
   showWelcome: boolean;
   dismissWelcome: () => Promise<void>;
@@ -91,6 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
   const [pendingInfo, setPendingInfo] = useState<PendingInfo | null>(null);
   const [role, setRole] = useState<string>("");
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [showWelcome, setShowWelcome] = useState<boolean>(false);
 
   useEffect(() => {
@@ -103,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAuthStatus("loading");
         setPendingInfo(null);
         setRole("");
+        setIsAdmin(false);
       }
       setLoading(false);
     });
@@ -170,6 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       teams?: TeamMembership[];
       default_team?: string;
       role?: string;
+      is_admin?: boolean;
       requested_team_name?: string;
       show_welcome?: boolean;
     };
@@ -178,6 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const ts = me.teams ?? [];
       setTeams(ts);
       setRole(me.role ?? "");
+      setIsAdmin(Boolean(me.is_admin));
       setShowWelcome(Boolean(me.show_welcome));
       const stored =
         typeof window !== "undefined"
@@ -192,6 +199,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else if (me.status === "pending") {
       setTeams([]);
       setRole("");
+      setIsAdmin(false);
       setShowWelcome(false);
       setCurrentTeamState(null);
       setPendingInfo({
@@ -201,6 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // unregistered / deactivated
       setTeams([]);
       setRole("");
+      setIsAdmin(false);
       setShowWelcome(false);
       setCurrentTeamState(null);
       setPendingInfo(null);
@@ -257,6 +266,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         pendingInfo,
         refreshAuthStatus: fetchAuthStatus,
         role,
+        isAdmin,
         showWelcome,
         dismissWelcome,
       }}

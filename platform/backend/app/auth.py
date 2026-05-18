@@ -312,13 +312,63 @@ def current_user(
 def require_super_admin(user: User = Depends(current_user)) -> User:
     """super-admin (allowed_users.role == 'admin') のみ通す。
 
-    将来 team-scoped admin (teams[].role == 'admin') を導入する場合は
-    `require_team_admin(team_id)` を別途追加する想定。
+    全 team を横断する操作 (pending 承認の create_team, 他 team の global active
+    切替など) に使う。team 単位の操作は `require_any_team_admin` +
+    `require_team_admin_for` の組み合わせを使う。
     """
     if user.role != "admin":
         raise HTTPException(
             status_code=403,
             detail="super-admin role required",
+        )
+    return user
+
+
+def is_super_admin(user: User) -> bool:
+    """legacy global admin (allowed_users.role == 'admin')。"""
+    return user.role == "admin"
+
+
+def is_team_admin(user: User, team_id: str) -> bool:
+    """指定 team の admin 権限を持つか (super-admin は常に True)。"""
+    return is_super_admin(user) or user.role_in(team_id) == "admin"
+
+
+def is_any_team_admin(user: User) -> bool:
+    """super-admin もしくは何らかの team の admin。"""
+    return is_super_admin(user) or any(r == "admin" for _, r in user.teams)
+
+
+def admin_team_ids(user: User) -> tuple[str, ...]:
+    """user が admin である team の id 一覧 (super-admin の場合は () = 全 team 相当)。
+
+    呼び出し側で「super-admin なら全件、team admin なら自 team のみ」を
+    分岐させるのに使う。
+    """
+    if is_super_admin(user):
+        return ()
+    return tuple(t for t, r in user.teams if r == "admin")
+
+
+def require_team_admin_for(user: User, team_id: str) -> None:
+    """team_id の admin でなければ 403。super-admin はバイパス。"""
+    if not is_team_admin(user, team_id):
+        raise HTTPException(
+            status_code=403,
+            detail=f"admin role required for team {team_id!r}",
+        )
+
+
+def require_any_team_admin(user: User = Depends(current_user)) -> User:
+    """super-admin もしくは何らかの team の admin を要求する FastAPI dep。
+
+    team 一覧 / user 一覧など「どの team の admin でも見てよい」エンドポイントで使う。
+    実際の team 絞り込みは handler 側で `admin_team_ids(user)` を使って行う。
+    """
+    if not is_any_team_admin(user):
+        raise HTTPException(
+            status_code=403,
+            detail="team admin role required",
         )
     return user
 
