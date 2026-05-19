@@ -46,7 +46,7 @@ export default function AdminPendingPage() {
   if (role !== "admin") {
     return (
       <div className="space-y-4">
-        <Link href="/">
+        <Link href="/records">
           <Button variant="ghost" className="cursor-pointer">
             ← 一覧に戻る
           </Button>
@@ -61,7 +61,7 @@ export default function AdminPendingPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/">
+        <Link href="/records">
           <Button variant="ghost" className="cursor-pointer">
             ← 一覧
           </Button>
