@@ -141,6 +141,16 @@ export default function HomePage() {
             </Link>{" "}
             から自分で操作できます。
           </p>
+          <p>
+            ようこそ画面 (labvault の紹介・トークン発行・装置 PC 手順) は{" "}
+            <Link
+              href="/welcome"
+              className="text-primary underline-offset-2 hover:underline"
+            >
+              /welcome
+            </Link>{" "}
+            からいつでも見直せます。
+          </p>
         </CardContent>
       </Card>
     </div>
