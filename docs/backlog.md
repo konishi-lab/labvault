@@ -29,24 +29,7 @@
 
 **ファイル**: `src/labvault/cli/main.py:245` (`def doctor`)
 
-### 2. `labvault.__version__` を `pyproject.toml` と同期
-**規模**: 10 分
-
-現状:
-- `labvault --version` → 0.1.2 (正)
-- `labvault.__version__` → 0.1.0 (古い hardcoded)
-
-修正案: `src/labvault/__init__.py` で
-
-```python
-from importlib.metadata import version as _v
-__version__ = _v("labvault")
-```
-
-`__version__` 直書きは pyproject と二重管理で必ずズレるので、
-`importlib.metadata` 経由にすれば一本化される。
-
-### 3. PAT 経路の venv smoke
+### 2. PAT 経路の venv smoke
 **規模**: 5 分 (PAT 発行を Web UI で 1 つもらえれば)
 
 今回の smoke は ADC モードだけ。PAT モードも本番で動くか同じ手順で確認:
