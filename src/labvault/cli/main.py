@@ -263,8 +263,7 @@ def doctor() -> None:
         click.echo(f"  [OK] config.toml: {config_path}")
     else:
         click.echo(
-            "  [--] config.toml: not present "
-            "(env / .env / credentials で代替可)"
+            "  [--] config.toml: not present (env / .env / credentials で代替可)"
         )
 
     creds_path = home / "credentials"
@@ -320,10 +319,7 @@ def doctor() -> None:
                 click.echo(f"  [!!] Nextcloud: {e}")
                 issues += 1
         elif settings.platform_url:
-            click.echo(
-                "  [OK] Nextcloud: via platform "
-                "(credentials は runtime に取得)"
-            )
+            click.echo("  [OK] Nextcloud: via platform (credentials は runtime に取得)")
         else:
             click.echo("  [--] Nextcloud: not configured")
 
@@ -334,9 +330,7 @@ def doctor() -> None:
         if settings.token and settings.platform_url:
             mode = "PAT mode — 全 backend が Platform* に切替 (Google アカウント不要)"
         elif settings.platform_url:
-            mode = (
-                "Mixed mode — Firestore/Vertex は ADC、Nextcloud は platform 経由"
-            )
+            mode = "Mixed mode — Firestore/Vertex は ADC、Nextcloud は platform 経由"
         else:
             mode = "Direct mode — Firestore/Nextcloud/Vertex を直接呼出"
         click.echo(f"  [OK] mode: {mode}")
