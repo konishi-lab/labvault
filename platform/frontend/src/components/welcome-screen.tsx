@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth";
@@ -10,17 +11,32 @@ import { useAuth } from "@/lib/auth";
  * 認可後 (allowed_users 登録 + active) の初回ログインで 1 回だけ表示する
  * welcome panel。「始める」ボタンで /api/auth/welcome-acknowledged を叩いて
  * 以降出さない。
+ *
+ * 「トークンを発行」も dismiss + 遷移をセットで行う。AuthGate が
+ * showWelcome=true の間は他の URL に行っても WelcomeScreen が出続けるため、
+ * Link 単独だと「押しても何も起きない」ように見える。
  */
 export function WelcomeScreen() {
+  const router = useRouter();
   const { user, teams, dismissWelcome } = useAuth();
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, setSubmitting] = useState<null | "start" | "tokens">(null);
 
   const handleStart = async () => {
-    setSubmitting(true);
+    setSubmitting("start");
     try {
       await dismissWelcome();
     } finally {
-      setSubmitting(false);
+      setSubmitting(null);
+    }
+  };
+
+  const handleGoToTokens = async () => {
+    setSubmitting("tokens");
+    try {
+      await dismissWelcome();
+      router.push("/account/tokens");
+    } finally {
+      setSubmitting(null);
     }
   };
 
@@ -71,9 +87,13 @@ export function WelcomeScreen() {
             に置いてください。Google アカウント無しでも動作します。
           </p>
           <div className="flex flex-wrap gap-2">
-            <Link href="/account/tokens">
-              <Button size="sm">トークンを発行</Button>
-            </Link>
+            <Button
+              size="sm"
+              onClick={handleGoToTokens}
+              disabled={submitting !== null}
+            >
+              {submitting === "tokens" ? "..." : "トークンを発行"}
+            </Button>
             <a
               href="https://github.com/konishi-lab/labvault/blob/main/docs/instrument_pc_setup.md"
               target="_blank"
@@ -107,8 +127,12 @@ export function WelcomeScreen() {
       </Card>
 
       <div className="flex justify-end">
-        <Button onClick={handleStart} disabled={submitting} size="lg">
-          {submitting ? "..." : "始める"}
+        <Button
+          onClick={handleStart}
+          disabled={submitting !== null}
+          size="lg"
+        >
+          {submitting === "start" ? "..." : "始める"}
         </Button>
       </div>
     </div>
