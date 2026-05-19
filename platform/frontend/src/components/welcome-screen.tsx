@@ -25,6 +25,11 @@ export function WelcomeScreen() {
     setSubmitting("start");
     try {
       await dismissWelcome();
+      // 初回ログイン welcome は AuthGate 経由で出るので、dismiss 後は AuthGate
+      // が children を表示し始める = 同じ URL のまま Dashboard 等に切替わる。
+      // 一方 /welcome URL から開いている場合は明示的に "/" に push しないと
+      // welcome ページがそのまま残るため、両ケースで router.push("/") する。
+      router.push("/");
     } finally {
       setSubmitting(null);
     }
