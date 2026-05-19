@@ -202,6 +202,23 @@ class Record:
                 stacklevel=3,
             )
 
+    def _compute_indexed_fields(self) -> dict[str, Any]:
+        """template.indexed_fields に該当する条件値を idx_<name> で返す。
+
+        Firestore の top-level field として書き出されることで where filter や
+        複合 index で使えるようになる。値が None / 未入力なら field を出さない
+        (Firestore で null を index しないため)。template 未指定なら空 dict。
+        """
+        tpl = self._resolve_template()
+        if tpl is None:
+            return {}
+        out: dict[str, Any] = {}
+        for name in tpl.indexed_fields:
+            value = self._conditions.get(name)
+            if value is not None:
+                out[f"idx_{name}"] = value
+        return out
+
     @property
     def created_by(self) -> str:
         """作成者。"""
@@ -738,8 +755,12 @@ class Record:
             )
 
     def _to_dict(self) -> dict[str, Any]:
-        """永続化用の辞書表現。"""
-        return {
+        """永続化用の辞書表現。
+
+        template が紐付いていれば template.indexed_fields の各 key を
+        `idx_<name>` として top-level に複製する (Firestore 検索用)。
+        """
+        base = {
             "id": self._id,
             "team": self._team,
             "title": self._title,
@@ -796,6 +817,10 @@ class Record:
             "parent_id": self._parent_id,
             "template": self._template_name,
         }
+        # template.indexed_fields の値を idx_<name> として top-level に昇格
+        # (Firestore 検索用)。template 未指定 or 値未入力なら何も追加されない。
+        base.update(self._compute_indexed_fields())
+        return base
 
     # --- コンテキストマネージャ ---
 
