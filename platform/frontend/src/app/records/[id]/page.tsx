@@ -290,7 +290,7 @@ export default function RecordDetailPage() {
   if (error || !record) {
     return (
       <div className="space-y-4">
-        <Link href="/">
+        <Link href="/records">
           <Button variant="ghost" className="cursor-pointer">
             ← 一覧に戻る
           </Button>
@@ -310,7 +310,7 @@ export default function RecordDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/">
+        <Link href="/records">
           <Button variant="ghost" className="cursor-pointer">
             ← 一覧
           </Button>

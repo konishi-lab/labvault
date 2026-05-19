@@ -41,7 +41,7 @@ export default function RootLayout({
               </Link>
               <nav className="flex gap-4 text-sm text-muted-foreground">
                 <Link
-                  href="/"
+                  href="/records"
                   className="transition-colors hover:text-foreground"
                 >
                   レコード
