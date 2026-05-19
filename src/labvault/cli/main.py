@@ -244,61 +244,108 @@ def search(
 
 @cli.command()
 def doctor() -> None:
-    """設定の健全性をチェックする。"""
+    """設定の健全性をチェックする。
+
+    出力凡例:
+      [OK] = 設定済 / 疎通 OK
+      [--] = 未設定だが代替手段があるため致命ではない
+      [!!] = 設定不整合 or 疎通失敗。要対処
+    """
     from labvault.core.config import Settings
 
     click.echo("labvault doctor\n")
-    all_ok = True
+    issues = 0
+    home = Path.home() / ".labvault"
 
-    # config.toml
-    config_path = Path.home() / ".labvault" / "config.toml"
+    # --- 設定ファイル群 (すべて optional。env / .env / credentials で代替可) ---
+    config_path = home / "config.toml"
     if config_path.exists():
         click.echo(f"  [OK] config.toml: {config_path}")
     else:
-        click.echo(f"  [!!] config.toml: not found ({config_path})")
-        all_ok = False
+        click.echo(
+            "  [--] config.toml: not present "
+            "(env / .env / credentials で代替可)"
+        )
 
-    # Settings
+    creds_path = home / "credentials"
+    if creds_path.exists():
+        click.echo(f"  [OK] credentials: {creds_path}")
+    else:
+        click.echo("  [--] credentials: not present (PAT モードを使う場合のみ必要)")
+
+    # --- Settings ロード ---
+    settings: Settings | None
     try:
         settings = Settings()
         click.echo(f"  [OK] team: {settings.team or '(not set)'}")
         click.echo(f"  [OK] user: {settings.user or '(not set)'}")
     except Exception as e:
         click.echo(f"  [!!] Settings: {e}")
-        all_ok = False
+        issues += 1
         settings = None
 
-    # Python
     click.echo(f"  [OK] Python: {sys.version.split()[0]}")
 
-    # Nextcloud
-    if settings and settings.nextcloud_url:
-        try:
-            import httpx
+    if settings is not None:
+        # --- Platform URL (Web UI backend、PAT / Nextcloud credentials の源) ---
+        if settings.platform_url:
+            click.echo(f"  [OK] platform URL: {settings.platform_url}")
+        else:
+            click.echo("  [--] platform URL: not set (direct backend モード)")
 
-            resp = httpx.get(f"{settings.nextcloud_url}/status.php", timeout=5)
-            if resp.status_code == 200:
-                click.echo(f"  [OK] Nextcloud: {settings.nextcloud_url}")
-            else:
-                click.echo(f"  [!!] Nextcloud: HTTP {resp.status_code}")
-                all_ok = False
-        except Exception as e:
-            click.echo(f"  [!!] Nextcloud: {e}")
-            all_ok = False
-    else:
-        click.echo("  [--] Nextcloud: not configured")
+        # --- PAT ---
+        if settings.token:
+            click.echo(f"  [OK] PAT: configured ({settings.token[:8]}...)")
+        else:
+            click.echo("  [--] PAT: not set (ADC を使用)")
 
-    # GCP
-    if settings and settings.gcp_project:
-        click.echo(f"  [OK] GCP project: {settings.gcp_project}")
-    else:
-        click.echo("  [--] GCP project: not configured")
+        # --- GCP project ---
+        if settings.gcp_project:
+            click.echo(f"  [OK] GCP project: {settings.gcp_project}")
+        else:
+            click.echo("  [--] GCP project: not set")
+
+        # --- Nextcloud ---
+        if settings.nextcloud_url:
+            try:
+                import httpx
+
+                resp = httpx.get(f"{settings.nextcloud_url}/status.php", timeout=5)
+                if resp.status_code == 200:
+                    click.echo(f"  [OK] Nextcloud: {settings.nextcloud_url}")
+                else:
+                    click.echo(f"  [!!] Nextcloud: HTTP {resp.status_code}")
+                    issues += 1
+            except Exception as e:
+                click.echo(f"  [!!] Nextcloud: {e}")
+                issues += 1
+        elif settings.platform_url:
+            click.echo(
+                "  [OK] Nextcloud: via platform "
+                "(credentials は runtime に取得)"
+            )
+        else:
+            click.echo("  [--] Nextcloud: not configured")
+
+        # --- 推定 backend モード ---
+        # Lab.__init__ の _build_platform_client / _auto_* と同じロジック。
+        # 実際に Lab() を作らずに表示することで firestore / vertex 等の
+        # 重い初期化を回避する。
+        if settings.token and settings.platform_url:
+            mode = "PAT mode — 全 backend が Platform* に切替 (Google アカウント不要)"
+        elif settings.platform_url:
+            mode = (
+                "Mixed mode — Firestore/Vertex は ADC、Nextcloud は platform 経由"
+            )
+        else:
+            mode = "Direct mode — Firestore/Nextcloud/Vertex を直接呼出"
+        click.echo(f"  [OK] mode: {mode}")
 
     click.echo()
-    if all_ok:
+    if issues == 0:
         click.echo("All checks passed.")
     else:
-        click.echo("Some checks failed. See above.")
+        click.echo(f"{issues} issue(s) found. See above.")
 
 
 @cli.command()
