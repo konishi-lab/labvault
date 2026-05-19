@@ -9,44 +9,7 @@
 
 ## 🔥 すぐ着手したい (smoke test で見えた付随 issue)
 
-### 1. `labvault doctor` の判定を実態に合わせる
-**規模**: 30 分
-
-`docs/install_onboarding` で「動作確認に doctor を使ってください」と書いたが、
-実機 smoke で以下の過剰判定が露呈:
-
-- `~/.labvault/config.toml` が無いだけで `[!!]` (failed) になる
-  → `.env` / `~/.labvault/credentials` / 環境変数で設定できるのに足切り
-  → `[--]` (optional, info) に格下げ
-- `LABVAULT_PLATFORM_URL` を見ていない
-  → PAT モードの主軸なので、設定/未設定を `[OK]`/`[--]` で表示
-- `LABVAULT_NEXTCLOUD_URL` が未設定 = `[--] Nextcloud: not configured`
-  → 実は `LABVAULT_PLATFORM_URL` がある場合は platform 経由で取得するので
-    「Nextcloud は platform 経由 (`[OK]`)」と区別表示したい
-- `LABVAULT_TOKEN` の有無もチェック (PAT モード判定)
-- (任意) `Lab()` を 1 回作って `_metadata` の型名を表示すれば backend
-  判別行を doctor 内で完結できる
-
-**ファイル**: `src/labvault/cli/main.py:245` (`def doctor`)
-
-### 2. `labvault.__version__` を `pyproject.toml` と同期
-**規模**: 10 分
-
-現状:
-- `labvault --version` → 0.1.2 (正)
-- `labvault.__version__` → 0.1.0 (古い hardcoded)
-
-修正案: `src/labvault/__init__.py` で
-
-```python
-from importlib.metadata import version as _v
-__version__ = _v("labvault")
-```
-
-`__version__` 直書きは pyproject と二重管理で必ずズレるので、
-`importlib.metadata` 経由にすれば一本化される。
-
-### 3. PAT 経路の venv smoke
+### 1. PAT 経路の venv smoke
 **規模**: 5 分 (PAT 発行を Web UI で 1 つもらえれば)
 
 今回の smoke は ADC モードだけ。PAT モードも本番で動くか同じ手順で確認:
