@@ -44,6 +44,7 @@ class InMemoryMetadataBackend:
         status: str | None = None,
         record_type: str | None = None,
         created_by: str | None = None,
+        conditions: dict[str, Any] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
@@ -60,6 +61,11 @@ class InMemoryMetadataBackend:
             records = [r for r in records if r.get("type") == record_type]
         if created_by:
             records = [r for r in records if r.get("created_by") == created_by]
+        # top-level field の等値フィルタ (idx_* を想定)。Firestore の where と
+        # 振る舞いを揃えるため、key が record に無ければ無条件で除外する。
+        if conditions:
+            for key, value in conditions.items():
+                records = [r for r in records if r.get(key) == value]
 
         # updated_at 降順ソート
         records.sort(key=lambda r: r.get("updated_at", ""), reverse=True)
@@ -121,6 +127,9 @@ class InMemorySearchBackend:
 
     Firestore Vector Search とはセマンティクスが異なる。
     テストでは API の呼び出し契約と基本フィルタを検証する。
+
+    filters の `idx_*` 等の任意 key は post-filter で扱えないため、テストでは
+    Lab.search の post-filter 側のパスでカバーすること。
     """
 
     def __init__(self) -> None:
