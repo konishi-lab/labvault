@@ -30,52 +30,10 @@ create it here: https://console.firebase.google.com/..." というエラーを
 返す。エラーリンクから個別に作っても良いが、CI / 別環境に展開するときに
 辛いので `firestore.indexes.json` で一括宣言しておく。
 
-## apply 手順 (推奨: gcloud スクリプト)
+## apply 手順 (推奨: firebase CLI)
 
-firebase-tools v14 系では multi-database 配列形式の `firestore.indexes.json`
-で `firebase deploy --only firestore:indexes:<db>` が
-`Cannot read properties of undefined (reading 'map')` で落ちる既知の
-不具合がある。当面は同梱の gcloud スクリプトを使う:
-
-```bash
-./scripts/apply_firestore_indexes.sh
-```
-
-新規 8 個 (`idx_<key>` 対応) のみ async submit する。既存と等価な index は
-ALREADY_EXISTS で skip。既存 index は触らないので overwrite 事故は起きない。
-
-State 確認:
-
-```bash
-gcloud firestore indexes composite list \
-  --project=klab-laser-process --database=labvault
-```
-
-## apply 手順 (将来: firebase CLI)
-
-firebase-tools の bug が直ったら、`firestore.indexes.json` を一括 apply
-する方が宣言性が高い。`labvault` database に対して:
-
-```bash
-gcloud firestore indexes composite create \
-  --collection-group=records \
-  --query-scope=COLLECTION \
-  --field-config=field-path=deleted_at,order=ascending \
-  --field-config=field-path=idx_target,order=ascending \
-  --field-config=field-path=updated_at,order=descending \
-  --database=labvault \
-  --project=klab-laser-process
-```
-
-…のように 1 個ずつ叩くのは現実的でないので、firebase-tools が入っているなら
-
-```bash
-firebase deploy --only firestore:indexes
-```
-
-で `firestore.indexes.json` を一括 apply する。リポジトリ root に
-すでに `firebase.json` と `.firebaserc` がコミットされており、labvault
-database (default ではない名前付き database) を指している:
+リポジトリ root に `firebase.json` と `.firebaserc` がコミットされており、
+`labvault` database (default ではない名前付き database) を指している:
 
 ```jsonc
 // firebase.json
@@ -93,15 +51,56 @@ database (default ではない名前付き database) を指している:
 }
 ```
 
+deploy は **`--only firestore`** で全 firestore リソースを apply する:
+
+```bash
+firebase deploy --only firestore
+```
+
 別 project を扱うなら `--project` で上書き:
 
 ```bash
-firebase deploy --only firestore:indexes --project klab-laser-process
+firebase deploy --only firestore --project klab-laser-process
 ```
 
 `firebase` CLI が無い場合は `npm i -g firebase-tools` か
 `brew install firebase-cli` で導入し、`firebase login` 済の Google
 account が GCP project の Firebase / Editor 権限を持っている必要がある。
+
+### ハマりどころ: `--only firestore:indexes` は使えない
+
+multi-database の配列形式 (`firestore: [ { database, indexes } ]`)
+で `--only firestore:indexes` や `--only firestore:indexes:<db>` を
+指定すると、`firebase deploy` は
+
+```
+TypeError: Cannot read properties of undefined (reading 'map')
+```
+
+で落ちる。これは bug ではなく **CLI の仕様**: `--only firestore:<X>`
+の `<X>` 部分は **database 名 (もしくは `firebase target:apply` で
+設定した target alias)** として解釈されるため、`indexes` という名前の
+database を探して見つからず、empty config で prepare が early return、
+deploy 側で undefined.map() に至る (`lib/firestore/fsConfig.js` を読むと
+分かる)。
+
+対策:
+- **シンプル**: `--only firestore` で全 firestore リソースを apply
+- **target で絞る**: 先に `firebase target:apply firestore <alias>
+  <database>` で alias を切ってから `--only firestore:<alias>`
+
+## apply 手順 (代替: gcloud スクリプト)
+
+firebase CLI が使えない環境用に、新規 `idx_<key>` 系 8 個のみを
+gcloud で async submit するスクリプトを同梱している:
+
+```bash
+./scripts/apply_firestore_indexes.sh
+```
+
+既存 index は触らないので overwrite 事故は起きない。等価 index がある
+場合は ALREADY_EXISTS で skip。既存と新規を統合した宣言ファイルが既に
+あるなら、こちらより上の firebase CLI ルートのほうが宣言性が高い。
 
 ## 確認
 
@@ -111,12 +110,15 @@ gcloud firestore indexes composite list \
   --project=klab-laser-process
 ```
 
-`State: READY` になっていれば使える状態。`Building` の間はクエリが
+`State: READY` になっていれば使える状態。`CREATING` の間はクエリが
 未インデックスエラーで弾かれる可能性あり。レコード数次第で数分〜数十分。
+
+`firebase firestore:indexes --database labvault` でも宣言形式と同じ
+JSON で現状を取得できる (diff 取りやすい)。
 
 ## 重要: deploy は overwrite
 
-`firebase deploy --only firestore:indexes` は差分 deploy ではなく、
+`firebase deploy --only firestore` は差分 deploy ではなく、
 **宣言ファイル = 本番のあるべき姿** として扱う overwrite なので、
 `firestore.indexes.json` に書いていない index は (確認プロンプト後に)
 **削除される**。
