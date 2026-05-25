@@ -92,6 +92,28 @@ gcloud firestore indexes composite list \
 `State: READY` になっていれば使える状態。`Building` の間はクエリが
 未インデックスエラーで弾かれる可能性あり。レコード数次第で数分〜数十分。
 
+## 重要: deploy は overwrite
+
+`firebase deploy --only firestore:indexes` は差分 deploy ではなく、
+**宣言ファイル = 本番のあるべき姿** として扱う overwrite なので、
+`firestore.indexes.json` に書いていない index は (確認プロンプト後に)
+**削除される**。
+
+特に Firestore Console や `gcloud` から手動で追加した index、
+vector index (`embedding`) などは忘れがちなので、追記漏れに注意する。
+
+新しい index を追加する前に必ず:
+
+```bash
+firebase firestore:indexes --database labvault
+```
+
+で現状を取得し、`firestore.indexes.json` の内容と diff を取って漏れが
+無いか確認する。差分があれば本番が真なので取り込んでからコミットする。
+
+`firebase deploy` 実行時には「これらが削除されます」の確認プロンプトが
+出るので、想定外の削除リストがあれば中断する。
+
 ## 追加するとき
 
 新しい template を作って `indexed_fields` を追加した場合、対応する
