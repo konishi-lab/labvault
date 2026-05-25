@@ -30,9 +30,31 @@ create it here: https://console.firebase.google.com/..." というエラーを
 返す。エラーリンクから個別に作っても良いが、CI / 別環境に展開するときに
 辛いので `firestore.indexes.json` で一括宣言しておく。
 
-## apply 手順
+## apply 手順 (推奨: gcloud スクリプト)
 
-`gcloud firestore` の indexes コマンドを使う。`labvault` database に対して:
+firebase-tools v14 系では multi-database 配列形式の `firestore.indexes.json`
+で `firebase deploy --only firestore:indexes:<db>` が
+`Cannot read properties of undefined (reading 'map')` で落ちる既知の
+不具合がある。当面は同梱の gcloud スクリプトを使う:
+
+```bash
+./scripts/apply_firestore_indexes.sh
+```
+
+新規 8 個 (`idx_<key>` 対応) のみ async submit する。既存と等価な index は
+ALREADY_EXISTS で skip。既存 index は触らないので overwrite 事故は起きない。
+
+State 確認:
+
+```bash
+gcloud firestore indexes composite list \
+  --project=klab-laser-process --database=labvault
+```
+
+## apply 手順 (将来: firebase CLI)
+
+firebase-tools の bug が直ったら、`firestore.indexes.json` を一括 apply
+する方が宣言性が高い。`labvault` database に対して:
 
 ```bash
 gcloud firestore indexes composite create \
