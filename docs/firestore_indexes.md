@@ -48,19 +48,38 @@ gcloud firestore indexes composite create \
 …のように 1 個ずつ叩くのは現実的でないので、firebase-tools が入っているなら
 
 ```bash
+firebase deploy --only firestore:indexes
+```
+
+で `firestore.indexes.json` を一括 apply する。リポジトリ root に
+すでに `firebase.json` と `.firebaserc` がコミットされており、labvault
+database (default ではない名前付き database) を指している:
+
+```jsonc
+// firebase.json
+{
+  "firestore": [
+    { "database": "labvault", "indexes": "firestore.indexes.json" }
+  ]
+}
+```
+
+```jsonc
+// .firebaserc
+{
+  "projects": { "default": "klab-laser-process" }
+}
+```
+
+別 project を扱うなら `--project` で上書き:
+
+```bash
 firebase deploy --only firestore:indexes --project klab-laser-process
 ```
 
-で `firestore.indexes.json` を一括 apply する (Firebase Console から
-`labvault` database を選んで firebase.json の database 設定を `labvault`
-に向けるか、`firebase use --add` で別の Firestore database を切替える)。
-
-`firebase.json` がまだ無いので、initial 1 回だけ:
-
-```bash
-firebase init firestore   # firestore.indexes.json を選んで rules はスキップ
-firebase deploy --only firestore:indexes
-```
+`firebase` CLI が無い場合は `npm i -g firebase-tools` か
+`brew install firebase-cli` で導入し、`firebase login` 済の Google
+account が GCP project の Firebase / Editor 権限を持っている必要がある。
 
 ## 確認
 
