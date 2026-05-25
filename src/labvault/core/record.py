@@ -673,8 +673,69 @@ class Record:
                 sha256=sha,
             )
         )
+        # template に file_parsers が宣言されていれば、拡張子マッチで起動して
+        # conditions を自動充填する。手動入力は parser 値で上書きしない。
+        self._auto_extract_conditions(file_name, data)
         self._persist()
         return self
+
+    def _auto_extract_conditions(self, file_name: str, data: bytes) -> None:
+        """template の file_parsers を引いて拡張子一致 parser を起動する。
+
+        - template 未指定 / file_parsers 未定義 / 拡張子不一致 → no-op
+        - parser_name が PARSER_REGISTRY に未登録 → UserWarning でスキップ
+        - parser が例外を投げる → UserWarning でスキップ (add 自体は成功させる)
+        - parser が返した key のうち、既に self._conditions に入っているものは
+          スキップ (= 手動入力を優先)
+        """
+        tpl = self._resolve_template()
+        if tpl is None or not tpl.file_parsers:
+            return
+
+        ext = Path(file_name).suffix.lower()
+        target = next(
+            (fp for fp in tpl.file_parsers if fp.extension.lower() == ext),
+            None,
+        )
+        if target is None or not target.auto_extract_conditions:
+            return
+
+        from labvault.parsers import PARSER_REGISTRY
+
+        parser = PARSER_REGISTRY.get(target.parser_name)
+        if parser is None:
+            import warnings
+
+            warnings.warn(
+                f"file parser {target.parser_name!r} が未登録です "
+                f"(template={self._template_name}, file={file_name})",
+                UserWarning,
+                stacklevel=3,
+            )
+            return
+
+        try:
+            extracted = parser(data, file_name)
+        except Exception as e:
+            import warnings
+
+            warnings.warn(
+                f"file parser {target.parser_name} が {file_name} の解析中に "
+                f"失敗しました: {e}",
+                UserWarning,
+                stacklevel=3,
+            )
+            return
+
+        if not isinstance(extracted, dict) or not extracted:
+            return
+
+        for key, value in extracted.items():
+            if value is None:
+                continue
+            # 手動入力 (=既に conditions に入っている key) は parser 値で上書きしない
+            if key not in self._conditions:
+                self._conditions[key] = value
 
     def save(
         self,
