@@ -90,6 +90,10 @@ class Lab:
         # template lookup の簡易キャッシュ。Record._to_dict が _persist のたびに
         # 引くので、毎回 backend に問い合わせると遅い。define_template で無効化。
         self._template_cache: dict[str, TemplateV10] = {}
+        # 全 template の indexed_fields の union。Lab.search / Lab.list で
+        # conditions の key が含まれているか判定し、含まれていれば Firestore
+        # 側に idx_<key> として push down するために使う。lazy build。
+        self._indexed_keys_cache: set[str] | None = None
         self._sync_manager: Any | None = None
 
         if settings.auto_sync:
@@ -189,6 +193,9 @@ class Lab:
             self._team, template.name, template_to_dict(template)
         )
         self._template_cache[template.name] = template
+        # indexed_keys は新しい template の追加で増える可能性があるので invalidate。
+        # 次回 _get_indexed_keys() で再構築される。
+        self._indexed_keys_cache = None
 
     def templates(self) -> builtins.list[TemplateV10]:
         """この team に登録された template の一覧。
@@ -222,6 +229,7 @@ class Lab:
             try:
                 tpl = template_from_dict(raw)
                 self._template_cache[name] = tpl
+                self._indexed_keys_cache = None
                 return tpl
             except (KeyError, TypeError):
                 pass
@@ -240,7 +248,35 @@ class Lab:
             self.define_template(builtin)
         # define_template が失敗しても cache にだけは入れて返す
         self._template_cache[name] = builtin
+        self._indexed_keys_cache = None
         return builtin
+
+    def _get_indexed_keys(self) -> set[str]:
+        """この team で indexed_fields に登録されている key の union を返す。
+
+        Lab.search / Lab.list で conditions の key がこの集合に含まれていれば、
+        Firestore に `idx_<key>` として push down できる (PR #11 で追加された
+        top-level promotion 機能と対になる)。含まれない key は post-filter。
+
+        cache は define_template / get_template で invalidate される。
+        """
+        if self._indexed_keys_cache is not None:
+            return self._indexed_keys_cache
+
+        keys: set[str] = set()
+        # in-memory cache 分
+        for tpl in self._template_cache.values():
+            keys.update(tpl.indexed_fields)
+        # backend 側 (まだ cache に来てない template も含む)
+        try:
+            for raw in self._metadata.list_templates(self._team):
+                for k in raw.get("indexed_fields") or []:
+                    if isinstance(k, str):
+                        keys.add(k)
+        except Exception:
+            pass
+        self._indexed_keys_cache = keys
+        return keys
 
     # --- Record 取得 ---
 
@@ -282,12 +318,40 @@ class Lab:
         status: str | Status | None = None,
         type: str | RecordType | None = None,
         created_by: str | None = None,
+        conditions: dict[str, Any] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> builtins.list[Record]:
-        """レコード一覧を取得する。"""
+        """レコード一覧を取得する。
+
+        conditions は scalar の等値フィルタのみサポート。indexed_fields に
+        挙がっている key は Firestore に push down される (`idx_<key>` で
+        where filter)。dict 値や indexed でない key は post-filter。
+        """
         status_str = str(status) if status else None
         type_str = str(type) if type else None
+
+        push_down: dict[str, Any] | None = None
+        post_filter: dict[str, Any] = {}
+        if conditions:
+            indexed_keys = self._get_indexed_keys()
+            push_down = {}
+            for key, value in conditions.items():
+                if (
+                    key in indexed_keys
+                    and not isinstance(value, dict)
+                    and isinstance(value, (str, int, float, bool))
+                ):
+                    push_down[f"idx_{key}"] = value
+                else:
+                    post_filter[key] = value
+            if not push_down:
+                push_down = None
+
+        # push down が効いていれば backend 側で絞り込まれているはずだが、
+        # 念のため多めに取って post-filter する (Platform backend がサーバー未
+        # 対応な場合の保険)。
+        fetch_limit = limit * 5 if conditions else limit
 
         rows = self._metadata.list_records(
             self._team,
@@ -295,10 +359,24 @@ class Lab:
             status=status_str,
             record_type=type_str,
             created_by=created_by,
-            limit=limit,
+            conditions=push_down,
+            limit=fetch_limit,
             offset=offset,
         )
-        return [Record._from_dict(r, lab=self) for r in rows]
+
+        results: builtins.list[Record] = []
+        for r in rows:
+            rec = Record._from_dict(r, lab=self)
+            if conditions:
+                rec_cond = rec.get_conditions()
+                if not all(
+                    _match_condition(rec_cond.get(k), v) for k, v in conditions.items()
+                ):
+                    continue
+            results.append(rec)
+            if len(results) >= limit:
+                break
+        return results
 
     def recent(self, n: int = 10) -> builtins.list[Record]:
         """最新 n 件を返す。"""
@@ -343,6 +421,22 @@ class Lab:
             filters["status"] = str(status)
         if type:
             filters["type"] = str(type)
+
+        # conditions のうち template.indexed_fields に挙がっている key は
+        # `idx_<key>` として SearchBackend に push down する (Firestore の
+        # where 句に乗る)。範囲指定 (dict 値) や indexed でない key は
+        # post-filter のまま。push down した key も最終結果には post-filter で
+        # 念のため再チェックする (Platform backend がサーバー未対応の場合の
+        # 正確性保証のため)。
+        if conditions:
+            indexed_keys = self._get_indexed_keys()
+            for key, value in conditions.items():
+                if (
+                    key in indexed_keys
+                    and not isinstance(value, dict)
+                    and isinstance(value, (str, int, float, bool))
+                ):
+                    filters[f"idx_{key}"] = value
 
         # Embedding が利用可能ならクエリを embed
         import contextlib

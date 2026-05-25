@@ -80,9 +80,16 @@ class FirestoreSearchBackend:
         q: Any = self._records_ref(team)
         q = q.where(filter=FieldFilter("deleted_at", "==", None))
         if filters:
+            # 既知の通常 field は等値 push down。
             for key in ("status", "type"):
                 if key in filters:
                     q = q.where(filter=FieldFilter(key, "==", filters[key]))
+            # idx_* (template の indexed_fields を top-level に昇格したもの) も
+            # 等値 push down する。値は scalar 想定。Lab.search 側で
+            # _get_indexed_keys() を引いて prefix を付けて渡している。
+            for key, value in filters.items():
+                if key.startswith("idx_"):
+                    q = q.where(filter=FieldFilter(key, "==", value))
             # tags フィルタ等は post-filter で対応するため find_nearest 後で弾く
 
         q = q.find_nearest(

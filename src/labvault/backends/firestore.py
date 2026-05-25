@@ -77,10 +77,16 @@ class FirestoreMetadataBackend:
         record_type: str | None = None,
         created_by: str | None = None,
         parent_id: str | None = "__unset__",
+        conditions: dict[str, Any] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """レコード一覧を取得する。"""
+        """レコード一覧を取得する。
+
+        conditions は top-level field の等値フィルタ (例: ``{"idx_target": "Cu"}``)。
+        対応する Firestore 複合 index が `firestore.indexes.json` に宣言されて
+        いる必要がある。
+        """
         from google.cloud.firestore_v1.base_query import FieldFilter
 
         q: Any = self._records_ref(team)
@@ -100,6 +106,9 @@ class FirestoreMetadataBackend:
             q = q.where(filter=FieldFilter("type", "==", record_type))
         if created_by:
             q = q.where(filter=FieldFilter("created_by", "==", created_by))
+        if conditions:
+            for key, value in conditions.items():
+                q = q.where(filter=FieldFilter(key, "==", value))
 
         q = q.order_by("updated_at", direction="DESCENDING")
 

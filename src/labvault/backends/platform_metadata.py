@@ -90,9 +90,12 @@ class PlatformMetadataBackend:
         record_type: str | None = None,
         created_by: str | None = None,
         parent_id: str | None = "__unset__",
+        conditions: dict[str, Any] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
+        import json
+
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         if tags:
             params["tags"] = ",".join(tags)
@@ -110,6 +113,11 @@ class PlatformMetadataBackend:
             params["parent_unset"] = "true"
         elif parent_id != "__unset__":
             params["parent_id"] = parent_id
+        # conditions: top-level field の等値フィルタを JSON で送る。
+        # サーバーが未対応な間は無視され、Lab.search 側の post-filter が
+        # 結果の正確性を保証する。
+        if conditions:
+            params["conditions"] = json.dumps(conditions)
         return self._client.get_list("/api/metadata/records", team=team, params=params)
 
     # --- CellLog ---

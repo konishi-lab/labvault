@@ -26,9 +26,20 @@ class MetadataBackend(Protocol):
         status: str | None = None,
         record_type: str | None = None,
         created_by: str | None = None,
+        conditions: dict[str, Any] | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[dict[str, Any]]:
+        """レコード一覧を取得する。
+
+        Args:
+            conditions: top-level field の等値フィルタ (key → value)。
+                呼び出し側 (Lab.search / Lab.list) が `idx_<key>` の prefix を
+                付けて渡すことで、template の indexed_fields を Firestore の
+                where 句に push down する。値は scalar (str/int/float/bool) のみ
+                想定。範囲指定や dict 値は post-filter で扱う。
+        """
+        ...
 
     def save_cell_log(
         self, team: str, record_id: str, data: dict[str, Any]
