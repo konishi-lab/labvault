@@ -1,5 +1,4 @@
 {
-  "_comment": "labvault Firestore 複合インデックス宣言。'records' は teams/{team}/records の collection group。idx_<key> は template の indexed_fields を top-level に昇格したフィールド (PR #11)。詳細は docs/firestore_indexes.md。",
   "indexes": [
     {
       "collectionGroup": "records",

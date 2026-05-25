@@ -1,5 +1,4 @@
 {
-  "_comment": "firebase deploy --only firestore:indexes 用。labvault は default database ではないため firestore は配列形式で database 名を明示する。詳細は docs/firestore_indexes.md。",
   "firestore": [
     {
       "database": "labvault",
