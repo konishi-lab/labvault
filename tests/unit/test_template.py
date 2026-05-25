@@ -254,3 +254,74 @@ def test_alias_map_helper() -> None:
     assert m["x_ray_target"] == "target"
     assert m["wavelength"] == "wavelength_A"
     assert m["sample"] == "sample_name"
+
+
+# --- indexed_fields の top-level 昇格 ---
+
+
+def test_indexed_fields_promoted_to_idx_top_level(lab: Lab) -> None:
+    # XRD の indexed_fields = ["target", "method", "sample_name"]
+    exp = lab.new(
+        "x",
+        template="XRD",
+        target="Cu",
+        method="thin_film",
+        sample_name="FeCr-001",
+        two_theta_start_deg=10.0,
+        two_theta_end_deg=80.0,
+    )
+    d = exp._to_dict()
+    assert d["idx_target"] == "Cu"
+    assert d["idx_method"] == "thin_film"
+    assert d["idx_sample_name"] == "FeCr-001"
+    # indexed_fields に含まれない key は昇格しない
+    assert "idx_two_theta_start_deg" not in d
+    assert "idx_wavelength_A" not in d
+
+
+def test_indexed_fields_skips_unset_keys(lab: Lab) -> None:
+    # indexed_fields の一部しか conditions に入っていない場合
+    exp = lab.new("partial", template="XRD", target="Mo")
+    d = exp._to_dict()
+    assert d["idx_target"] == "Mo"
+    # 未入力なら top-level に出さない (Firestore で null を index しないため)
+    assert "idx_method" not in d
+    assert "idx_sample_name" not in d
+
+
+def test_indexed_fields_empty_when_no_template(lab: Lab) -> None:
+    exp = lab.new("no-template")  # template 未指定
+    d = exp._to_dict()
+    assert not any(k.startswith("idx_") for k in d)
+
+
+def test_indexed_fields_follow_condition_updates(lab: Lab) -> None:
+    exp = lab.new("x", template="XRD", target="Cu")
+    assert exp._to_dict().get("idx_target") == "Cu"
+    exp.conditions(target="Mo")
+    assert exp._to_dict().get("idx_target") == "Mo"
+    # 後から追加した indexed_fields も追従
+    assert "idx_method" not in exp._to_dict()
+    exp.conditions(method="powder")
+    assert exp._to_dict().get("idx_method") == "powder"
+
+
+def test_template_cache_avoids_repeated_backend_lookups(lab: Lab) -> None:
+    # _to_dict は何度呼んでも backend.get_template が増えないこと
+    # (template_cache が効いている指標)
+    exp = lab.new("x", template="XRD", target="Cu")
+    backend = lab._metadata  # InMemoryMetadataBackend
+    # _to_dict を 1 回呼んで cache を温める (もし無ければ最初の呼出しで温まる)
+    exp._to_dict()
+    # Backend を spy 化: get_template の呼出し回数をカウント
+    original = backend.get_template
+    calls = []
+
+    def spy(team: str, name: str):
+        calls.append((team, name))
+        return original(team, name)
+
+    backend.get_template = spy  # type: ignore[method-assign]
+    for _ in range(5):
+        exp._to_dict()
+    assert calls == [], "template_cache が効いていれば backend を再度引かない"

@@ -9,23 +9,9 @@
 
 ## 🔥 すぐ着手したい (smoke test で見えた付随 issue)
 
-### 1. PAT 経路の venv smoke
-**規模**: 5 分 (PAT 発行を Web UI で 1 つもらえれば)
-
-今回の smoke は ADC モードだけ。PAT モードも本番で動くか同じ手順で確認:
-
-1. Web UI `/account/tokens` で「装置 PC smoke (Token 2026-05-18)」等を発行
-2. 一時的に `~/.labvault/credentials` に書く (`LABVAULT_TOKEN` + `LABVAULT_PLATFORM_URL`)
-3. venv で `python -c "from labvault import Lab; lab=Lab(); print(type(lab._metadata).__name__)"`
-   → `PlatformMetadataBackend` と出ること
-4. record 1 件作成→削除
-5. 終わったら token を `/account/tokens` で revoke
-
----
-
 ## M3 続編 (template 基盤の上に乗せる)
 
-### 4. `file_parsers` 経由の `Record.add()` 自動 parse
+### 1. `file_parsers` 経由の `Record.add()` 自動 parse
 **規模**: 半日〜1 日
 
 template に宣言された `FileParserConfig` を見て、`record.add("data.ras")` の
@@ -37,16 +23,12 @@ template に宣言された `FileParserConfig` を見て、`record.add("data.ras
 - `Record.add()` から `_template.file_parsers` を引いて拡張子マッチ
 - テスト: parser 未定義の拡張子は no-op、手動 conditions が parser 値で上書きされないこと
 
-### 5. `indexed_fields` の Firestore top-level 昇格
-**規模**: 1〜2 時間
+### 2. 既存 record の `idx_*` backfill スクリプト (任意)
+**規模**: 30 分
 
-`TemplateV10.indexed_fields` (例: XRD なら `["target", "method", "sample_name"]`)
-の値を、`FirestoreMetadataBackend.create_record` / `update_record` 時に
-`idx_<field>` として top-level に複製。Firestore の where filter / 複合 index
-で使えるようにする。
-
-- `record._to_dict()` に `_template_indexed_fields()` のような hook
-- 既存 record の backfill scriptは別途検討 (やる場合)
+`indexed_fields` 昇格 (PR で実装済) は新規 / 更新 record にのみ効く。既存 record
+を一括で再 set する script を `scripts/` に追加すると、検索クエリで既存データも
+hit するようになる。当面は新規分のみで運用可。
 
 ---
 

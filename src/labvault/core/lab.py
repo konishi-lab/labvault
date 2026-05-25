@@ -87,6 +87,9 @@ class Lab:
         self._settings = settings
         self._active_tracker: Any | None = None
         self._buffer: Any | None = None
+        # template lookup の簡易キャッシュ。Record._to_dict が _persist のたびに
+        # 引くので、毎回 backend に問い合わせると遅い。define_template で無効化。
+        self._template_cache: dict[str, TemplateV10] = {}
         self._sync_manager: Any | None = None
 
         if settings.auto_sync:
@@ -180,11 +183,12 @@ class Lab:
         """テンプレートを定義 / 上書き保存する。
 
         backend.save_template(team, name, dict) に永続化される。同名 template が
-        既にあれば内容を置き換える (冪等)。
+        既にあれば内容を置き換える (冪等)。in-memory キャッシュも上書きする。
         """
         self._metadata.save_template(
             self._team, template.name, template_to_dict(template)
         )
+        self._template_cache[template.name] = template
 
     def templates(self) -> builtins.list[TemplateV10]:
         """この team に登録された template の一覧。
@@ -205,13 +209,20 @@ class Lab:
     def get_template(self, name: str) -> TemplateV10 | None:
         """名前で template を取得する (見つからなければ None)。
 
-        探索順: backend に保存済 → ビルトイン (BUILTIN_TEMPLATES)。
+        探索順: in-memory cache → backend に保存済 → ビルトイン (BUILTIN_TEMPLATES)。
         ビルトインがヒットした場合は backend に自動 upsert する (次回参照を高速化)。
+        Record._persist のたびに引かれるので cache hit パスが効く。
         """
+        cached = self._template_cache.get(name)
+        if cached is not None:
+            return cached
+
         raw = self._metadata.get_template(self._team, name)
         if raw is not None:
             try:
-                return template_from_dict(raw)
+                tpl = template_from_dict(raw)
+                self._template_cache[name] = tpl
+                return tpl
             except (KeyError, TypeError):
                 pass
 
@@ -224,8 +235,11 @@ class Lab:
             return None
         # 初回参照時に backend に lazy save (冪等)。backend 側の不具合があっても
         # in-memory のビルトインは返したいので、ここでは黙って吸収する。
+        # define_template が cache 更新も兼ねる。
         with contextlib.suppress(Exception):
             self.define_template(builtin)
+        # define_template が失敗しても cache にだけは入れて返す
+        self._template_cache[name] = builtin
         return builtin
 
     # --- Record 取得 ---
