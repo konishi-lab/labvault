@@ -83,6 +83,7 @@ export async function fetchRecords(params?: {
   tags?: string;
   status?: string;
   type?: string;
+  conditions?: Record<string, unknown>;
   limit?: number;
   offset?: number;
 }): Promise<RecordListResponse> {
@@ -90,6 +91,11 @@ export async function fetchRecords(params?: {
   if (params?.tags) searchParams.set("tags", params.tags);
   if (params?.status) searchParams.set("status", params.status);
   if (params?.type) searchParams.set("type", params.type);
+  if (params?.conditions && Object.keys(params.conditions).length > 0) {
+    // backend は conditions を JSON 文字列で受ける。indexed_fields に
+    // 挙がっている key は Firestore に push down される (PR #14)。
+    searchParams.set("conditions", JSON.stringify(params.conditions));
+  }
   if (params?.limit) searchParams.set("limit", String(params.limit));
   if (params?.offset) searchParams.set("offset", String(params.offset));
 

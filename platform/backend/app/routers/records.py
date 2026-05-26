@@ -87,12 +87,50 @@ def list_records(
     tags: str | None = None,
     status: str | None = None,
     type: str | None = None,
+    conditions: str | None = None,
     limit: int = 20,
     offset: int = 0,
     lab: Lab = Depends(get_lab),
 ) -> RecordListResponse:
-    """レコード一覧を取得する。"""
+    """レコード一覧を取得する。
+
+    conditions は JSON 文字列で渡す (例: `{"target": "Cu"}` を URL encode)。
+    template の indexed_fields に挙がっている key は `idx_<key>` として
+    Firestore に push down され、それ以外は post-filter される (PR #14)。
+    """
+    import json
+
     tag_list = tags.split(",") if tags else None
+
+    parsed_conditions: dict[str, Any] = {}
+    if conditions:
+        try:
+            loaded = json.loads(conditions)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"conditions must be valid JSON: {e}",
+            ) from e
+        if not isinstance(loaded, dict):
+            raise HTTPException(
+                status_code=400, detail="conditions must be a JSON object"
+            )
+        parsed_conditions = loaded
+
+    # push down 対象 (idx_<key>) の振り分け。Lab._get_indexed_keys() は
+    # template cache + backend templates の union。scalar 等値だけが対象。
+    push_down: dict[str, Any] = {}
+    if parsed_conditions:
+        indexed_keys = lab._get_indexed_keys()
+        for key, value in parsed_conditions.items():
+            if (
+                key in indexed_keys
+                and not isinstance(value, dict)
+                and isinstance(value, (str, int, float, bool))
+            ):
+                push_down[f"idx_{key}"] = value
+
+    fetch_limit = limit * 5 if parsed_conditions else limit
     # Firestore に parent_id==None フィルタを直接渡す
     if hasattr(lab._metadata, "list_records"):
         records = lab._metadata.list_records(
@@ -101,17 +139,34 @@ def list_records(
             status=status,
             record_type=type,
             parent_id=None,  # ルートレコードのみ
-            limit=limit,
+            conditions=push_down or None,
+            limit=fetch_limit,
             offset=offset,
         )
-        from labvault.core.record import Record
+        from labvault.core.record import Record as _Record
 
-        items = [Record._from_dict(r, lab=lab) for r in records]
+        items = [_Record._from_dict(r, lab=lab) for r in records]
     else:
         items = lab.list(
-            tags=tag_list, status=status, type=type, limit=limit, offset=offset
+            tags=tag_list, status=status, type=type, limit=fetch_limit, offset=offset
         )
         items = [r for r in items if r.parent_id is None]
+
+    # post-filter: push down に乗らない条件 + Platform backend がサーバー未
+    # 対応の場合の正確性保証。Lab.search と同じ _match_condition を使う。
+    if parsed_conditions:
+        from labvault.core.lab import _match_condition
+
+        filtered: list[Any] = []
+        for rec in items:
+            cond = rec.get_conditions()
+            if all(
+                _match_condition(cond.get(k), v) for k, v in parsed_conditions.items()
+            ):
+                filtered.append(rec)
+                if len(filtered) >= limit:
+                    break
+        items = filtered
 
     return RecordListResponse(
         items=[_to_summary(r) for r in items],
