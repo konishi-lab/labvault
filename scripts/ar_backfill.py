@@ -33,7 +33,11 @@ AR reader (`roles/artifactregistry.reader`) を自動付与する
     # 特定 team のメンバーだけ対象にする
     python scripts/ar_backfill.py --team konishi-lab
 
-環境変数:
+設定の読み込み:
+    `.env` (カレントディレクトリ) / `~/.labvault/credentials` /
+    `~/.labvault/config.toml` から labvault SDK の Settings 経由で取得する。
+    環境変数で上書きも可能 (Settings の優先順位どおり)。
+
     LABVAULT_GCP_PROJECT       (必須)
     LABVAULT_FIRESTORE_DATABASE (省略時 "(default)")
     LABVAULT_AR_REPO           (必須。例: projects/.../repositories/labvault-pypi)
@@ -52,6 +56,25 @@ from typing import Any
 _BACKEND = Path(__file__).resolve().parents[1] / "platform" / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
+
+
+def _load_settings_into_env() -> None:
+    """labvault SDK の Settings 経由で .env / credentials / config.toml を読み、
+    backend の artifact_registry が見る os.environ に橋渡しする。
+
+    既に環境変数が立っていれば上書きしない (env 優先)。
+    """
+    from labvault.core.config import Settings
+
+    s = Settings()
+    pairs = {
+        "LABVAULT_GCP_PROJECT": s.gcp_project,
+        "LABVAULT_FIRESTORE_DATABASE": s.firestore_database,
+        "LABVAULT_AR_REPO": s.ar_repo,
+    }
+    for key, value in pairs.items():
+        if value and not os.environ.get(key):
+            os.environ[key] = value
 
 
 def _firestore_client() -> Any:
@@ -159,6 +182,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    _load_settings_into_env()
     db = _firestore_client()
     users = _list_active_users(db, args.team)
     print(

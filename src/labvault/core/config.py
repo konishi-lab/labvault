@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     nextcloud_password: str = ""
     nextcloud_group_folder: str = ""
     platform_url: str = ""
+    # Artifact Registry repo の full resource name (運用スクリプト用)。
+    # 例: projects/<proj>/locations/<region>/repositories/labvault-pypi
+    ar_repo: str = ""
     # PAT (Personal Access Token, lv_*)。設定されていれば SDK は backend HTTP
     # 経由で動作 (GCP ADC 不要)。
     token: str = ""
