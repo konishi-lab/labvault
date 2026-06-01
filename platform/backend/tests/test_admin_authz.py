@@ -1,20 +1,19 @@
 """admin endpoint の認可境界テスト。
 
 カバー範囲:
-- /api/admin/pending (require_super_admin)
-- /api/admin/teams  (require_any_team_admin + team admin は自 team のみ)
-- /api/admin/users  (require_any_team_admin + team admin は restrict_to で
-                     他 team の所属を隠す + 他 team only の user は除外)
+- /api/admin/pending             (require_super_admin)
+- /api/admin/teams               (any team admin; team admin は自 team のみ)
+- /api/admin/users               (any team admin; restrict_to で他 team を隠す)
+- /api/admin/approve             (assign=対象 team の admin / create_team=super)
+- /api/admin/users/{e}/teams     (POST: 追加先 team の admin)
+- /api/admin/users/{e}/teams/{t} (DELETE: 対象 team の admin)
+- /api/admin/users/{email}       (PATCH: super-admin only)
 
-期待:
-- super-admin → 200 / 全件 / teams[] フル
-- team admin → /pending は 403、/teams は 200 で自 team のみ、
-              /users は自 team に所属する user のみ & 各 user の
-              teams[] は restrict_to で他 team が隠れる
-- member → 403
-- unauth → 401
-
-future work: /api/admin/approve / users/{email}/teams など。
+期待 (共通):
+- super-admin → 200 / 全件 / 全許可
+- team admin → 自 team に関する操作のみ通る、他 team は 403
+- member → 全 endpoint で 403
+- unauth → 全 endpoint で 401
 """
 
 from __future__ import annotations
@@ -193,4 +192,249 @@ def test_users_member_403(as_member: TestClient) -> None:
 
 def test_users_unauth_401(as_unauth: TestClient) -> None:
     res = as_unauth.get("/api/admin/users")
+    assert res.status_code == 401
+
+
+# ----------------------------------------------------------------------
+# /api/admin/approve  (POST)
+# - action="assign":     super-admin OR target team の admin
+# - action="create_team": super-admin only
+# ----------------------------------------------------------------------
+
+
+def _seed_for_approve(fake_db: FakeDB) -> None:
+    """pending_users に 1 件、teamA/B を用意。"""
+    _seed_teams(fake_db)
+    fake_db.collection("pending_users")._docs.update(
+        {
+            "dave@example.com": {
+                "email": "dave@example.com",
+                "display_name": "Dave",
+                "requested_team_name": "teamA",
+            }
+        }
+    )
+
+
+def _assign_body(team_id: str = "teamA") -> dict[str, str]:
+    return {
+        "email": "dave@example.com",
+        "action": "assign",
+        "team_id": team_id,
+        "role": "member",
+    }
+
+
+def _create_team_body() -> dict[str, object]:
+    return {
+        "email": "dave@example.com",
+        "action": "create_team",
+        "role": "member",
+        "new_team": {
+            "team_id": "teamNew",
+            "name": "New Team",
+            "nextcloud_group_folder": "large/new",
+        },
+    }
+
+
+def test_approve_assign_super_ok(as_super: TestClient, fake_db: FakeDB) -> None:
+    _seed_for_approve(fake_db)
+    res = as_super.post("/api/admin/approve", json=_assign_body("teamA"))
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "ok"
+    assert body["team_id"] == "teamA"
+    # pending entry が消えて allowed_users に移行
+    assert "dave@example.com" not in fake_db.collection("pending_users")._docs
+    assert "dave@example.com" in fake_db.collection("allowed_users")._docs
+
+
+def test_approve_assign_team_admin_own_ok(
+    as_team_admin: TestClient, fake_db: FakeDB
+) -> None:
+    _seed_for_approve(fake_db)
+    # teamA admin が teamA に assign → 通る
+    res = as_team_admin.post("/api/admin/approve", json=_assign_body("teamA"))
+    assert res.status_code == 200
+
+
+def test_approve_assign_team_admin_other_403(
+    as_team_admin_other: TestClient, fake_db: FakeDB
+) -> None:
+    _seed_for_approve(fake_db)
+    # teamB admin が teamA に assign しようとして弾かれる
+    res = as_team_admin_other.post("/api/admin/approve", json=_assign_body("teamA"))
+    assert res.status_code == 403
+
+
+def test_approve_assign_member_403(as_member: TestClient, fake_db: FakeDB) -> None:
+    _seed_for_approve(fake_db)
+    res = as_member.post("/api/admin/approve", json=_assign_body("teamA"))
+    assert res.status_code == 403
+
+
+def test_approve_assign_unauth_401(as_unauth: TestClient) -> None:
+    res = as_unauth.post("/api/admin/approve", json=_assign_body("teamA"))
+    assert res.status_code == 401
+
+
+def test_approve_create_team_super_ok(as_super: TestClient, fake_db: FakeDB) -> None:
+    _seed_for_approve(fake_db)
+    res = as_super.post("/api/admin/approve", json=_create_team_body())
+    assert res.status_code == 200
+    # 新 team が作られて allowed_users に dave が入る
+    assert "teamNew" in fake_db.collection("teams")._docs
+    assert "dave@example.com" in fake_db.collection("allowed_users")._docs
+
+
+def test_approve_create_team_team_admin_403(
+    as_team_admin: TestClient, fake_db: FakeDB
+) -> None:
+    _seed_for_approve(fake_db)
+    # team admin は create_team を呼べない (super-admin only)
+    res = as_team_admin.post("/api/admin/approve", json=_create_team_body())
+    assert res.status_code == 403
+
+
+# ----------------------------------------------------------------------
+# /api/admin/users/{email}/teams  (POST)  team 追加
+# 認可: super-admin OR 追加先 team の admin
+# ----------------------------------------------------------------------
+
+
+def test_add_team_super_ok(as_super: TestClient, fake_db: FakeDB) -> None:
+    _seed_users(fake_db)
+    # bob (teamA only) に teamB を追加
+    res = as_super.post(
+        "/api/admin/users/bob@example.com/teams",
+        json={"team_id": "teamB", "role": "member"},
+    )
+    assert res.status_code == 200
+    team_ids = {t["team_id"] for t in res.json()["teams"]}
+    assert team_ids == {"teamA", "teamB"}
+
+
+def test_add_team_admin_of_target_ok(
+    as_team_admin_other: TestClient, fake_db: FakeDB
+) -> None:
+    """teamB admin は bob に teamB を追加できる (追加先の admin だから)。"""
+    _seed_users(fake_db)
+    res = as_team_admin_other.post(
+        "/api/admin/users/bob@example.com/teams",
+        json={"team_id": "teamB", "role": "member"},
+    )
+    assert res.status_code == 200
+
+
+def test_add_team_admin_of_other_403(
+    as_team_admin: TestClient, fake_db: FakeDB
+) -> None:
+    """teamA admin は bob に teamB を追加できない (teamB の admin ではない)。"""
+    _seed_users(fake_db)
+    res = as_team_admin.post(
+        "/api/admin/users/bob@example.com/teams",
+        json={"team_id": "teamB", "role": "member"},
+    )
+    assert res.status_code == 403
+
+
+def test_add_team_member_403(as_member: TestClient, fake_db: FakeDB) -> None:
+    _seed_users(fake_db)
+    res = as_member.post(
+        "/api/admin/users/bob@example.com/teams",
+        json={"team_id": "teamA", "role": "member"},
+    )
+    assert res.status_code == 403
+
+
+def test_add_team_unauth_401(as_unauth: TestClient) -> None:
+    res = as_unauth.post(
+        "/api/admin/users/bob@example.com/teams",
+        json={"team_id": "teamA", "role": "member"},
+    )
+    assert res.status_code == 401
+
+
+# ----------------------------------------------------------------------
+# /api/admin/users/{email}/teams/{team_id}  (DELETE)  team 削除
+# 認可: super-admin OR 対象 team の admin
+# ----------------------------------------------------------------------
+
+
+def test_remove_team_super_ok(as_super: TestClient, fake_db: FakeDB) -> None:
+    _seed_users(fake_db)
+    # alice (teamA + teamB) から teamB を外す
+    res = as_super.delete("/api/admin/users/alice@example.com/teams/teamB")
+    assert res.status_code == 200
+    team_ids = {t["team_id"] for t in res.json()["teams"]}
+    assert team_ids == {"teamA"}
+
+
+def test_remove_team_admin_of_target_ok(
+    as_team_admin_other: TestClient, fake_db: FakeDB
+) -> None:
+    _seed_users(fake_db)
+    res = as_team_admin_other.delete("/api/admin/users/alice@example.com/teams/teamB")
+    assert res.status_code == 200
+
+
+def test_remove_team_admin_of_other_403(
+    as_team_admin: TestClient, fake_db: FakeDB
+) -> None:
+    """teamA admin は alice から teamB を外せない。"""
+    _seed_users(fake_db)
+    res = as_team_admin.delete("/api/admin/users/alice@example.com/teams/teamB")
+    assert res.status_code == 403
+
+
+def test_remove_team_member_403(as_member: TestClient, fake_db: FakeDB) -> None:
+    _seed_users(fake_db)
+    res = as_member.delete("/api/admin/users/alice@example.com/teams/teamA")
+    assert res.status_code == 403
+
+
+def test_remove_team_unauth_401(as_unauth: TestClient) -> None:
+    res = as_unauth.delete("/api/admin/users/alice@example.com/teams/teamA")
+    assert res.status_code == 401
+
+
+# ----------------------------------------------------------------------
+# /api/admin/users/{email}  (PATCH)  — super-admin only
+# ----------------------------------------------------------------------
+
+
+def test_patch_user_super_ok(as_super: TestClient, fake_db: FakeDB) -> None:
+    _seed_users(fake_db)
+    res = as_super.patch(
+        "/api/admin/users/bob@example.com",
+        json={"display_name": "Bobby"},
+    )
+    assert res.status_code == 200
+    assert res.json()["display_name"] == "Bobby"
+
+
+def test_patch_user_team_admin_403(as_team_admin: TestClient, fake_db: FakeDB) -> None:
+    _seed_users(fake_db)
+    res = as_team_admin.patch(
+        "/api/admin/users/bob@example.com",
+        json={"display_name": "Bobby"},
+    )
+    assert res.status_code == 403
+
+
+def test_patch_user_member_403(as_member: TestClient, fake_db: FakeDB) -> None:
+    _seed_users(fake_db)
+    res = as_member.patch(
+        "/api/admin/users/bob@example.com",
+        json={"display_name": "Bobby"},
+    )
+    assert res.status_code == 403
+
+
+def test_patch_user_unauth_401(as_unauth: TestClient) -> None:
+    res = as_unauth.patch(
+        "/api/admin/users/bob@example.com",
+        json={"display_name": "Bobby"},
+    )
     assert res.status_code == 401

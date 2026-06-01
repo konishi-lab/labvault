@@ -170,6 +170,14 @@ def fake_db(monkeypatch: pytest.MonkeyPatch) -> FakeDB:
     return db
 
 
+@pytest.fixture(autouse=True)
+def stub_artifact_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """approve / add team / patch user は AR (Artifact Registry) を grant/revoke
+    する副作用を持つ。テストでは常に成功扱いに固定する。"""
+    monkeypatch.setattr("app.main.grant_reader", lambda email: True)
+    monkeypatch.setattr("app.main.revoke_reader", lambda email: True)
+
+
 @pytest.fixture()
 def client(fake_db: FakeDB) -> Iterator[TestClient]:
     with TestClient(app) as c:
