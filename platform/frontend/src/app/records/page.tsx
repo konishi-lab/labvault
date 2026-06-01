@@ -10,7 +10,11 @@ import {
   ConditionFilterPanel,
   type ConditionFilter,
 } from "@/components/condition-filter";
-import { fetchRecords, searchRecords } from "@/lib/api";
+import {
+  fetchIndexedFieldSuggestions,
+  fetchRecords,
+  searchRecords,
+} from "@/lib/api";
 import type { RecordSummary } from "@/lib/api";
 
 function _parseFilters(raw: string | null): ConditionFilter[] {
@@ -44,6 +48,19 @@ function RecordsContent() {
   const [records, setRecords] = useState<RecordSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [keySuggestions, setKeySuggestions] = useState<string[]>([]);
+
+  // 条件 chip の key 候補 (template の indexed_fields union)。team が変わら
+  // ないうちは 1 度だけ取得すれば良い。失敗時は空配列のまま (自由入力で動く)。
+  useEffect(() => {
+    let cancelled = false;
+    fetchIndexedFieldSuggestions().then((suggestions) => {
+      if (!cancelled) setKeySuggestions(suggestions);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filters = useMemo(() => _parseFilters(rawConditions), [rawConditions]);
   const conditionsObj = useMemo<Record<string, unknown>>(() => {
@@ -95,7 +112,11 @@ function RecordsContent() {
 
   return (
     <div className="space-y-4">
-      <ConditionFilterPanel filters={filters} onChange={handleFiltersChange} />
+      <ConditionFilterPanel
+        filters={filters}
+        onChange={handleFiltersChange}
+        keySuggestions={keySuggestions}
+      />
       {loading ? (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (

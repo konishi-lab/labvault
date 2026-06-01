@@ -445,3 +445,28 @@ export async function revokeToken(id: string): Promise<void> {
     throw new Error(`Revoke token failed: ${res.status} ${text}`);
   }
 }
+
+/**
+ * 現 team の template から indexed_fields の union を取得する。
+ * 条件 chip の key 候補 (push down 可能な key) として WebUI で suggest する。
+ *
+ * 失敗時は空配列を返す (chip 自体は自由入力で使えるためフェイルクローズ)。
+ */
+export async function fetchIndexedFieldSuggestions(): Promise<string[]> {
+  try {
+    const res = await authFetch(`${API_BASE}/api/metadata/templates`);
+    if (!res.ok) return [];
+    const templates = (await res.json()) as Array<{
+      indexed_fields?: string[];
+    }>;
+    const all = new Set<string>();
+    for (const t of templates) {
+      for (const k of t.indexed_fields ?? []) {
+        if (typeof k === "string") all.add(k);
+      }
+    }
+    return Array.from(all).sort();
+  } catch {
+    return [];
+  }
+}
