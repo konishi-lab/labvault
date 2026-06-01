@@ -30,7 +30,12 @@ from fastapi.testclient import TestClient
 # init_firebase_admin() 呼び出しを止めるためのもの。
 os.environ.setdefault("LABVAULT_DEV_SKIP_AUTH", "1")
 
-from app.auth import User, current_user
+from app.auth import (
+    AuthenticatedUser,
+    User,
+    current_authenticated_user,
+    current_user,
+)
 from app.main import app
 
 # --------------------------------------------------------------------------
@@ -213,3 +218,51 @@ def as_member(client: TestClient) -> TestClient:
 @pytest.fixture()
 def as_unauth(client: TestClient) -> TestClient:
     return _bind(client, _raise_401)
+
+
+# --------------------------------------------------------------------------
+# Authenticated-but-not-allowed user (for /api/auth/request-access)
+# --------------------------------------------------------------------------
+
+
+def _bind_authed(c: TestClient, factory: Any) -> TestClient:
+    """`current_authenticated_user` を差し替える (Firebase auth は通っているが
+    allowed_users 未登録のシナリオ用)。"""
+    app.dependency_overrides[current_authenticated_user] = factory
+    return c
+
+
+def authed_new_user() -> AuthenticatedUser:
+    """サインアップ申請を出そうとしている新規ユーザー。"""
+    return AuthenticatedUser(
+        uid="uid-newcomer",
+        email="newcomer@example.com",
+        display_name="Newcomer",
+    )
+
+
+@pytest.fixture()
+def as_authed_new(client: TestClient) -> TestClient:
+    return _bind_authed(client, authed_new_user)
+
+
+@pytest.fixture()
+def as_authed_existing_allowed(client: TestClient, fake_db: FakeDB) -> TestClient:
+    """既に allowed_users にいる user として認証だけ通った状態。
+    `request-access` を叩くと `already_allowed` 応答が返るシナリオ。"""
+    fake_db.collection("allowed_users")._docs["existing@example.com"] = {
+        "email": "existing@example.com",
+        "display_name": "Existing",
+        "role": "member",
+        "teams": [{"team_id": "teamA", "role": "member"}],
+        "default_team": "teamA",
+        "active": True,
+    }
+    return _bind_authed(
+        client,
+        lambda: AuthenticatedUser(
+            uid="uid-existing",
+            email="existing@example.com",
+            display_name="Existing",
+        ),
+    )
