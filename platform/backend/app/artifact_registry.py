@@ -67,6 +67,11 @@ def _modify_policy(email: str, *, add: bool) -> bool:
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+    # User credentials の ADC で叩く場合、consumer project を明示しないと
+    # AR API が 404 を返す。SA 認証では不要 (SA が project に紐づくため)。
+    quota_project = (os.environ.get("LABVAULT_AR_QUOTA_PROJECT") or "").strip()
+    if quota_project:
+        headers["X-Goog-User-Project"] = quota_project
 
     try:
         resp = httpx.post(

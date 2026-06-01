@@ -71,6 +71,9 @@ def _load_settings_into_env() -> None:
         "LABVAULT_GCP_PROJECT": s.gcp_project,
         "LABVAULT_FIRESTORE_DATABASE": s.firestore_database,
         "LABVAULT_AR_REPO": s.ar_repo,
+        # User-credential ADC で AR を叩く際の consumer project header 用。
+        # 通常は GCP project と同じ値で OK。SA 認証では不要 (header 空でも動く)。
+        "LABVAULT_AR_QUOTA_PROJECT": s.gcp_project,
     }
     for key, value in pairs.items():
         if value and not os.environ.get(key):
@@ -137,12 +140,18 @@ def _ar_reader_members() -> set[str] | None:
 
     creds, _ = google.auth.default(scopes=[AR_SCOPE])
     creds.refresh(google.auth.transport.requests.Request())
+    headers = {
+        "Authorization": f"Bearer {creds.token}",
+        "Content-Type": "application/json",
+    }
+    # User credentials の ADC で叩く場合、consumer project を明示しないと
+    # AR API が 404 を返す。
+    quota_project = (os.environ.get("LABVAULT_AR_QUOTA_PROJECT") or "").strip()
+    if quota_project:
+        headers["X-Goog-User-Project"] = quota_project
     resp = httpx.post(
         _api_url(repo, "getIamPolicy"),
-        headers={
-            "Authorization": f"Bearer {creds.token}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         json={},
         timeout=10.0,
     )
