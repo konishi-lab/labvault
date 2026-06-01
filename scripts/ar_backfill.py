@@ -18,9 +18,15 @@ AR reader (`roles/artifactregistry.reader`) を自動付与する
 このスクリプトは:
 
 - `allowed_users` を走査して active なユーザーをリストアップ
-- AR repo の IAM policy を 1 回取得して reader binding の members 集合を作る
+- `gcloud artifacts repositories get-iam-policy` で AR repo の reader 一覧を取得
 - 漏れている email を表示
-- `--apply` を付けたら漏れている email に `grant_reader` を呼ぶ (冪等)
+- `--apply` を付けたら `gcloud artifacts repositories add-iam-policy-binding`
+  を 1 件ずつ呼んで reader を付与 (冪等)
+
+gcloud 経由にしているのは、user-credential ADC で REST 直叩きすると
+consumer project の解決が OAuth flow と噛み合わず 404 になるため。
+gcloud は内部で正しい認証フローを扱ってくれる。実行環境に gcloud が
+PATH 上にある前提。
 
 使い方:
 
@@ -48,14 +54,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from pathlib import Path
 from typing import Any
-
-# platform/backend/app の artifact_registry を import するため sys.path に追加。
-# 既存スクリプト (scripts/migrate_to_multitenant.py) と同じ relative 関係。
-_BACKEND = Path(__file__).resolve().parents[1] / "platform" / "backend"
-if str(_BACKEND) not in sys.path:
-    sys.path.insert(0, str(_BACKEND))
 
 
 def _load_settings_into_env() -> None:
@@ -71,9 +70,6 @@ def _load_settings_into_env() -> None:
         "LABVAULT_GCP_PROJECT": s.gcp_project,
         "LABVAULT_FIRESTORE_DATABASE": s.firestore_database,
         "LABVAULT_AR_REPO": s.ar_repo,
-        # User-credential ADC で AR を叩く際の consumer project header 用。
-        # 通常は GCP project と同じ値で OK。SA 認証では不要 (header 空でも動く)。
-        "LABVAULT_AR_QUOTA_PROJECT": s.gcp_project,
     }
     for key, value in pairs.items():
         if value and not os.environ.get(key):
@@ -115,53 +111,122 @@ def _list_active_users(db: Any, team: str | None) -> list[dict[str, Any]]:
     return users
 
 
-def _ar_reader_members() -> set[str] | None:
-    """AR repo の現在の reader member 一覧 (例: ``user:foo@bar``)。
+def _parse_repo_path(repo: str) -> tuple[str, str, str]:
+    """``projects/<p>/locations/<l>/repositories/<r>`` を (project, location, name)
+    に分解する。"""
+    parts = repo.split("/")
+    if (
+        len(parts) != 6
+        or parts[0] != "projects"
+        or parts[2] != "locations"
+        or parts[4] != "repositories"
+    ):
+        msg = (
+            "LABVAULT_AR_REPO must look like "
+            "projects/<p>/locations/<l>/repositories/<r>"
+        )
+        raise ValueError(msg)
+    return parts[1], parts[3], parts[5]
 
-    取得に失敗したら None を返す (LABVAULT_AR_REPO 未設定など)。
+
+def _gcloud_args_for_repo() -> tuple[list[str], str] | None:
+    """LABVAULT_AR_REPO を gcloud 共通フラグに変換する。
+
+    Returns (共通フラグ, repo_name) or None (env 未設定)。
     """
-    import google.auth
-    import google.auth.transport.requests
-    import httpx
-    from app.artifact_registry import (  # type: ignore[import-not-found]
-        AR_SCOPE,
-        READER_ROLE,
-        _api_url,
-        _repo_resource,
-    )
-
-    repo = _repo_resource()
+    repo = (os.environ.get("LABVAULT_AR_REPO") or "").strip()
     if not repo:
         print(
-            "LABVAULT_AR_REPO not set; cannot read AR IAM policy",
+            "LABVAULT_AR_REPO not set; cannot manage AR IAM policy",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        project, location, name = _parse_repo_path(repo)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return None
+    return (
+        [f"--project={project}", f"--location={location}"],
+        name,
+    )
+
+
+def _ar_reader_members() -> set[str] | None:
+    """AR repo の現在の reader member 一覧を gcloud 経由で取得する。
+
+    REST 直叩きだと user-credential ADC で 404 になる (consumer project の
+    解決が OAuth flow と噛み合わない)。gcloud は内部で正しい認証 flow を
+    扱うので、ローカル運用ツールとしてはこれが最も確実。
+    """
+    import json as _json
+    import subprocess
+
+    READER_ROLE = "roles/artifactregistry.reader"
+
+    parsed = _gcloud_args_for_repo()
+    if parsed is None:
+        return None
+    common, name = parsed
+    try:
+        out = subprocess.check_output(
+            [
+                "gcloud",
+                "artifacts",
+                "repositories",
+                "get-iam-policy",
+                name,
+                *common,
+                "--format=json",
+            ],
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        print("gcloud CLI not found in PATH", file=sys.stderr)
+        return None
+    except subprocess.CalledProcessError as e:
+        print(
+            "gcloud get-iam-policy failed:\n"
+            + (e.stderr.decode(errors="replace") if e.stderr else ""),
             file=sys.stderr,
         )
         return None
 
-    creds, _ = google.auth.default(scopes=[AR_SCOPE])
-    creds.refresh(google.auth.transport.requests.Request())
-    headers = {
-        "Authorization": f"Bearer {creds.token}",
-        "Content-Type": "application/json",
-    }
-    # User credentials の ADC で叩く場合、consumer project を明示しないと
-    # AR API が 404 を返す。
-    quota_project = (os.environ.get("LABVAULT_AR_QUOTA_PROJECT") or "").strip()
-    if quota_project:
-        headers["X-Goog-User-Project"] = quota_project
-    resp = httpx.post(
-        _api_url(repo, "getIamPolicy"),
-        headers=headers,
-        json={},
-        timeout=10.0,
-    )
-    resp.raise_for_status()
-    policy = resp.json()
+    policy = _json.loads(out)
     members: set[str] = set()
     for binding in policy.get("bindings") or []:
         if binding.get("role") == READER_ROLE:
             members.update(binding.get("members") or [])
     return members
+
+
+def _grant_reader_gcloud(email: str) -> bool:
+    """gcloud で reader role binding を追加する (冪等; gcloud がメンバー重複を
+    検出して no-op で済ませる)。"""
+    import subprocess
+
+    parsed = _gcloud_args_for_repo()
+    if parsed is None:
+        return False
+    common, name = parsed
+    try:
+        subprocess.check_call(
+            [
+                "gcloud",
+                "artifacts",
+                "repositories",
+                "add-iam-policy-binding",
+                name,
+                *common,
+                f"--member=user:{email}",
+                "--role=roles/artifactregistry.reader",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+    return True
 
 
 def classify_missing(
@@ -217,14 +282,12 @@ def main() -> int:
         print("dry-run のため書き込みは行いません。--apply で実行してください。")
         return 0
 
-    from app.artifact_registry import grant_reader  # type: ignore[import-not-found]
-
     print()
     print("Applying grants...")
     granted = 0
     failed = 0
     for u in missing:
-        ok = grant_reader(u["email"])
+        ok = _grant_reader_gcloud(u["email"])
         if ok:
             granted += 1
             print(f"  [OK]   {u['email']}")
