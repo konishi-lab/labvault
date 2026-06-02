@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { BackButton } from "@/components/back-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,11 +49,7 @@ export default function AdminUsersPage() {
   if (!isAdmin) {
     return (
       <div className="space-y-4">
-        <Link href="/records">
-          <Button variant="ghost" className="cursor-pointer">
-            ← 一覧に戻る
-          </Button>
-        </Link>
+        <BackButton />
         <p className="text-destructive">admin 権限が必要です。</p>
       </div>
     );
@@ -75,11 +72,7 @@ export default function AdminUsersPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/records">
-          <Button variant="ghost" className="cursor-pointer">
-            ← 一覧
-          </Button>
-        </Link>
+        <BackButton />
         <h1 className="text-2xl font-bold tracking-tight">ユーザー管理</h1>
         <Button variant="outline" onClick={reload} className="ml-auto">
           再読込
