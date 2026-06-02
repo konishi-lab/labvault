@@ -159,39 +159,70 @@ labvault auth status
 
 ---
 
-## 4. 最初の record を 1 つ作る (5 分)
+## 4. 最初の record を作る (5 分)
 
-Notebook を起動 (`jupyter lab` など) して、まず「自分のテスト record」
-を作ってみる。
+Notebook を起動 (`jupyter lab` など) して、**実験シリーズ = 親 record**
++ **各測定 = 子 record** を作ってみる。labvault では「同じテーマの
+複数測定」をこの親子関係で表現する。
+
+### 4.1 親 record (シリーズ)
 
 ```python
 from labvault import Lab
 
 lab = Lab()
-exp = lab.new("はじめての record", tags=["onboarding", "your-name"])
 
-# 何か計算
-import numpy as np
-x = np.linspace(0, 1, 100)
-y = np.sin(x * 10)
-
-# 条件 / 結果を記録
-exp.conditions(power=10, frequency=1.0)
-exp.results["max_y"] = float(y.max())
-exp.results["min_y"] = float(y.min())
-
-# ファイル添付
-import matplotlib.pyplot as plt
-fig, ax = plt.subplots()
-ax.plot(x, y)
-exp.save("plot.png", fig)
-
-# 完了
-exp.status = "success"
-
-# id をメモる
-print(exp.id)  # 例: P2BV1M
+# 親 record (実験シリーズ全体)
+series = lab.new(
+    "はじめての record (パラメータ scan)",
+    tags=["onboarding", "your-name"],
+)
+print(series.id)  # 例: P2BV1M
 ```
+
+### 4.2 子 record を 3 つ (パラメータ scan)
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+for power in [5, 10, 20]:
+    # 親.sub() で子レコードを作成。条件もここで渡せる
+    child = series.sub(f"power={power}W", power=power)
+
+    # 何か計算
+    x = np.linspace(0, 1, 100)
+    y = np.sin(x * power)
+
+    # 結果 + ファイル添付
+    child.results["max_y"] = float(y.max())
+    child.results["min_y"] = float(y.min())
+
+    fig, ax = plt.subplots()
+    ax.plot(x, y)
+    child.save("plot.png", fig)
+    plt.close(fig)
+
+    child.status = "success"
+
+# シリーズ全体も完了マーク
+series.status = "success"
+
+# 子レコード一覧を確認
+for c in series.children():
+    print(c.id, c.title, c.results.to_dict())
+```
+
+### ポイント
+
+- **`parent.sub(title, **conditions)`** で子を作る。`lab.new(...)` の
+  ような top-level 呼び出しではなく **親オブジェクトから生やす**
+- 子の `parent_id` には自動で親の id が入り、Web UI で「親詳細 → 子
+  レコード」セクションに表示される
+- 子も親と同じく `conditions / results / save / status` が使える
+- **使い分け**: 「1 サンプル / 1 測定 = 子」「シリーズ全体 = 親」が
+  典型。条件 scan (power, target, temperature 等を変えた繰り返し測定)
+  や、装置別の連続測定で重宝する
 
 セルを順番に実行すると **各セルのコードと出力も自動で記録される**
 (IPython hooks が動いている)。
@@ -202,14 +233,22 @@ print(exp.id)  # 例: P2BV1M
 
 Web UI を開く (or リロード) →
 
-1. Dashboard 「最近のレコード」に **「はじめての record」** が新着で出る
+1. Dashboard 「最近のレコード」に **「はじめての record (パラメータ
+   scan)」** が新着で出る (= 親 series)
 2. クリック → 詳細:
-   - 条件 (`power: 10`, `frequency: 1.0`)
-   - 結果 (`max_y`, `min_y`)
-   - 添付ファイル `plot.png` がプレビュー表示される
    - タグ `onboarding`, `your-name`
-3. 「メモ」を追加してみる: 「初回テスト」など
-4. **タグでフィルタ**: 一覧で `?tags=your-name` を試すと自分のだけ抽出
+   - **「子レコード」セクション** に 3 件並ぶ
+     (`power=5W` / `power=10W` / `power=20W`)
+   - **散布図** が自動表示: X 軸 = `power`、Y 軸 = `max_y` を選ぶと
+     子の結果が点として並ぶ
+   - 点を hover でラベル表示、クリックで子の詳細に飛べる
+3. 子の 1 つ (`power=10W`) を開く:
+   - 条件 (`power: 10`)
+   - 結果 (`max_y`, `min_y`)
+   - 添付ファイル `plot.png` プレビュー表示
+   - `parent_id` に親 series の id が入っている (詳細上部)
+4. 「メモ」を追加してみる: 「初回テスト」など
+5. **タグでフィルタ**: 一覧で `?tags=your-name` を試すと自分のだけ抽出
 
 ここまで来れば一通り回ったことになる 🎉
 
