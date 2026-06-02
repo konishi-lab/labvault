@@ -124,7 +124,28 @@ def auth_me(
       - "unregistered": どこにもいない (申請フォームへ誘導)
 
     AuthGate がこれで分岐できる。teams[].name は teams/{team_id}.name から解決。
+
+    dev_skip モード (LABVAULT_DEV_SKIP_AUTH=1) では Firestore を引かずに
+    固定の admin / konishi-lab で authorized を返す。Firestore 接続 (ADC)
+    が無いローカルでも UI を起動できるようにするため。
     """
+    from .auth import _dev_skip
+
+    if _dev_skip():
+        return {
+            "status": "authorized",
+            "uid": auth_user.uid,
+            "email": auth_user.email,
+            "display_name": auth_user.display_name,
+            "role": "admin",
+            "teams": [
+                {"team_id": "konishi-lab", "role": "admin", "name": "Konishi Lab"}
+            ],
+            "default_team": "konishi-lab",
+            "is_admin": True,
+            "show_welcome": False,
+        }
+
     email = auth_user.email
     db = get_firestore_db()
 
