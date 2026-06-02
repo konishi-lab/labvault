@@ -39,51 +39,151 @@ Node:        20.x.x
 
 ## 1. インストール
 
-### 1.1 SDK インストール (PAT モード)
+未承認の新規ユーザー向け体感確認は backlog #5 (人間オペレータ案件) を参照。
+ここでは **承認済ユーザーが新しい環境にセットアップする** ケース。
 
-未承認の新規ユーザー向け体感確認は backlog #5 (人間オペレータ案件) を
-参照。ここでは **承認済ユーザーが新しい環境にセットアップする** ケース。
+セットアップは 2 段階:
+1. **pip install** (1 回だけ): 必ず Google アカウントで Artifact Registry
+   にアクセスする (= `gcloud auth` 必須)。PAT では install できない
+2. **SDK ランタイム認証**: 「PAT 方式」(推奨) か「ADC 方式」のいずれかを選ぶ
 
-- [ ] **clean venv を作る**:
-  ```bash
-  python -m venv .venv && source .venv/bin/activate
-  # Windows PowerShell: .venv\Scripts\Activate.ps1
-  ```
-- [ ] **AR repo を pip index に指定して install**:
-  ```bash
-  pip install --index-url https://_json_key_base64:... \
-              --extra-index-url https://pypi.org/simple \
-              labvault
-  ```
-  またはユーザー向け簡略コマンド (README 記載のもの)
-- [ ] `pip show labvault` で installed version が pyproject.toml と一致
-- [ ] `python -c "import labvault; print(labvault.__version__)"` が成功
+### 1.1 pip install (Mac / Linux)
+
+承認済 Google アカウント (Artifact Registry reader 権限あり) で
+`gcloud auth application-default login` を済ませた状態から:
+
+```bash
+# clean venv
+python -m venv .venv && source .venv/bin/activate
+
+# 一度だけ: GCP 認証 (Artifact Registry にアクセスする Google アカウント)
+gcloud auth login
+gcloud auth application-default login
+
+# AR 認証 helper (これが無いと pip が AR の credentials を取れない)
+pip install keyring keyrings.google-artifactregistry-auth
+
+# labvault 本体
+pip install \
+  --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
+  "labvault[gcp,nextcloud]"
+```
+
+- [ ] `pip show labvault` の version が pyproject.toml と一致
+- [ ] `python -c "import labvault; print(labvault.__version__)"` 成功
 - [ ] `labvault --version` が同じ version を表示
 
-### 1.2 SDK インストール (ADC モード, Mac/Linux のみ)
+### 1.2 pip install (Windows / PowerShell)
 
-- [ ] `gcloud auth application-default login` 済の状態
-- [ ] AR repo に reader 権限がある email でログイン
-- [ ] `pip install labvault` が AR 認証経由で成功
-- [ ] backend を呼ぶ操作 (例: `labvault list`) が ADC 経由で動く
+PowerShell で同じ手順。改行は `` ` `` (バックティック)、角括弧はクオート
+が必要。
 
-### 1.3 Windows 装置 PC 想定
+```powershell
+# clean venv
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 
-- [ ] PowerShell で venv 作成 → `.venv\Scripts\Activate.ps1` 通る
-- [ ] `pip install labvault` で wheel が取れる (sdist にフォールバックしない)
+# 一度だけ: GCP 認証
+gcloud auth login
+gcloud auth application-default login
+
+# AR 認証 helper
+pip install keyring keyrings.google-artifactregistry-auth
+
+# labvault 本体
+pip install `
+  --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ `
+  "labvault[gcp,nextcloud]"
+```
+
+- [ ] `.venv\Scripts\Activate.ps1` の実行ポリシー (Set-ExecutionPolicy) で
+      止められないか確認 (止められたら `-ExecutionPolicy Bypass` で
+      起動 or RemoteSigned を user スコープで許可)
+- [ ] `pip install` で **wheel** が取れる (sdist にフォールバックしない)。
+      ログに `Downloading labvault-X.Y.Z-py3-none-any.whl` が出るか
 - [ ] **長いパス対応**: `C:\Users\...\OneDrive\研究\実験\...` のような
-      日本語混じり deep path で `lab.new()` → `add()` → 同期が壊れない
+      OneDrive 同期下 + 日本語混じり deep path で `lab.new()` →
+      `add()` → buffer 同期が壊れない
+- [ ] Windows Defender / Antivirus に `.venv` 配下を除外しないと
+      pip インストールが極端に遅い場合がある (要確認)
 
-### 1.4 doctor
+### 1.3 SDK ランタイム認証 — PAT 方式 (推奨)
+
+Web UI からトークンを発行する方式。**GCP 認証セッションが切れても
+動き続ける** ので装置 PC・CI・長時間運用に向く。
+
+ブラウザで Web UI を開く: <https://labvault-web-355809880738.asia-northeast1.run.app>
+
+- [ ] ログイン → 右上のヘッダー or Dashboard QuickLink で
+      **「API トークン」 (`/account/tokens`)** に移動
+- [ ] **ラベル必須** (PR #28 で必須化): 「装置 PC: XRD A 号機」など
+      識別可能な名前を入れる
+- [ ] 「発行」を押す → `lv_xxxx...` が表示される。**この画面を離れると
+      再表示できない** ので必ずコピー or 安全な場所にメモ
+
+PAT を `~/.labvault/credentials` に書く:
+
+```bash
+# Mac / Linux
+mkdir -p ~/.labvault
+cat > ~/.labvault/credentials << 'EOF'
+LABVAULT_TOKEN=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+LABVAULT_TEAM=konishi-lab
+EOF
+chmod 600 ~/.labvault/credentials
+```
+
+```powershell
+# Windows PowerShell
+New-Item -ItemType Directory -Force -Path "$HOME\.labvault" | Out-Null
+@"
+LABVAULT_TOKEN=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+LABVAULT_TEAM=konishi-lab
+"@ | Set-Content -NoNewline "$HOME\.labvault\credentials"
+# 必要なら NTFS ACL で本人のみ読書可に絞る (icacls)
+```
+
+- [ ] `labvault doctor` で `[OK] PAT: configured` と `mode: PAT mode` が
+      表示される
+- [ ] `python -c "from labvault import Lab; lab = Lab();
+      print(type(lab._metadata).__name__)"` が `PlatformMetadataBackend`
+      を返す
+- [ ] `labvault list` が空でも 200 で返る (例外を吐かない)
+- [ ] 試しに作った record を Web UI で確認できる
+
+### 1.4 SDK ランタイム認証 — ADC 方式 (Mac / Linux で開発するとき向け)
+
+`gcloud auth application-default login` の credential を SDK ランタイム
+からも直接使う方式。Windows 装置 PC では PAT 方式を推奨。
+
+カレントディレクトリの `.env`:
+
+```bash
+LABVAULT_TEAM=konishi-lab
+LABVAULT_USER=your-name
+LABVAULT_GCP_PROJECT=klab-laser-process
+LABVAULT_FIRESTORE_DATABASE=labvault
+LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+```
+
+- [ ] `labvault doctor` で `mode: Direct mode` か `Mixed mode` と表示
+- [ ] `type(lab._metadata).__name__` が `FirestoreMetadataBackend`
+- [ ] ADC 期限切れ時に挙動が安定 (`labvault list` がはっきりした
+      エラーメッセージで落ちる、フリーズしない)
+
+### 1.5 doctor
 
 - [ ] `.env` も `~/.labvault/credentials` も無い状態:
-  - [ ] `labvault doctor` が `[!!] config` を 1 件報告して exit code != 0
+  - [ ] `labvault doctor` の `[!!]` 個数を確認 (現状 0 件で
+        「All checks passed」になる仕様。要件は環境次第)
 - [ ] PAT を `~/.labvault/credentials` に置く:
-  - [ ] `labvault doctor` が `[OK]` 多数 + `mode: PAT` を表示
+  - [ ] `labvault doctor` が `[OK] PAT: configured` + `mode: PAT mode` を表示
+- [ ] 凡例の `[OK] / [--] / [!!]` 1 行が末尾に出る (PR #26)
 - [ ] `LABVAULT_PLATFORM_URL` を未設定にする:
-  - [ ] `Nextcloud` 行が `[!!]` ではなく `[OK] (direct)` または `[--]`
-        どちらが出るか実機確認 (現状仕様の確認)
-- [ ] `labvault doctor --json` が valid JSON を吐く (parseable)
+  - [ ] `[--] platform URL: not set (direct backend モード)` が出る
+  - [ ] `Nextcloud` が `[OK]` か `[!!]` か実機確認
 
 ---
 
