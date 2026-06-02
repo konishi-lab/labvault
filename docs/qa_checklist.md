@@ -422,3 +422,155 @@ Node:        20.x.x
   そのまま残し、issue リンクをメモする
 - 「これ毎回確認するのダルい」と感じる項目は、自動テストに昇格させる候補
   (例: §8.3 入力系は SDK ユニットテストで網羅できる)
+
+---
+
+## 11. 自動 QA セットアップ (ローカル)
+
+2026-06-02 の round-2 QA で得た知見をベースに、Playwright で踏み込んだ
+観察ができる起動構成を 1 セットにまとめた。本番 Firestore に少しだけ
+接続するので注意事項も合わせて。
+
+### 11.1 backend (dev_skip + 本番 Firestore)
+
+```bash
+cd platform/backend
+env $(grep -v '^#' /Users/.../labvault/.env | xargs) \
+  LABVAULT_DEV_SKIP_AUTH=1 \
+  LABVAULT_CORS_ORIGINS="http://localhost:3765" \
+  uvicorn app.main:app --port 8765 --no-access-log
+```
+
+- `LABVAULT_DEV_SKIP_AUTH=1` で `/api/auth/me` だけ Firestore を引かず
+  固定の admin / konishi-lab を返す ([§3.1 / PR #26](#3-web-ui-frontend))
+- `LABVAULT_CORS_ORIGINS` に frontend dev port を追加 (default は
+  `localhost:3000` のみ)。`.env` 注入手順は
+  `platform/backend/CLAUDE.md` に書いてある。
+- それ以外の handler (records / admin) は **依然として本番 Firestore に
+  接続する** ので、dev 中の操作が本番に反映されることに注意。
+  特に `POST /api/auth/tokens` は dev_skip では 403 で塞いだ (PR #28)。
+
+### 11.2 frontend (dev_skip)
+
+```bash
+cd platform/frontend
+NEXT_PUBLIC_API_URL=http://localhost:8765 \
+NEXT_PUBLIC_DEV_SKIP_AUTH=1 \
+npx next dev --port 3765
+```
+
+- `NEXT_PUBLIC_DEV_SKIP_AUTH=1` で `AuthProvider` が Firebase に
+  一切触らず `dev@local` (admin / konishi-lab) を context に注入する
+  (PR #27 で導入)。
+- 本番 build では env を立てないこと (`next build` 時に bundle される)。
+
+### 11.3 Playwright で踏み込む
+
+- [ ] `http://localhost:3765/` で Dashboard が出る
+- [ ] header に「申請承認」「ユーザー」が出る (dev は admin 扱い)
+- [ ] `/records` の検索バーが `/records?q=...` に遷移する (§12.1.1)
+- [ ] `/account/tokens` で「発行」ボタンを押すと **403 が返る** (PR #28)。
+      レスポンス body の文言に "dev_skip" が入っているか確認
+- [ ] `← 戻る` ボタンが history.back の挙動 (PR #28)
+- [ ] 空 record (条件・結果・ファイル・子なし) で破線カード「未投入です」
+      表示 (PR #28)
+
+### 11.4 注意事項
+
+- **本番 Firestore に書き込まれ得る操作**:
+  - 条件・結果・タグ・メモ編集
+  - tag 追加 / 削除
+  - admin の team add/remove、ユーザー無効化
+  - 一括アップロード (Nextcloud にもファイルが上がる)
+- これらは原則 dev_skip 中は触らないこと。読み取りのみで観察する。
+- やむを得ず触る場合は対象 record を `[smoke-test]` 等の prefix で
+  作成し、QA 終了後に削除する。
+
+---
+
+## 12. 過去所見の追跡 (round-1 → round-2 で見つかったもの)
+
+各項目の最後に **修正状態** を記す:
+- ✅ = 修正済 (PR # 記載)
+- 🟡 = 修正済だがフォロー要
+- 🔵 = backlog / 設計議論待ち
+- ❌ = 未対応
+
+### 12.1 round-1 (2026-06-02 午前)
+
+| 所見 | 状態 |
+|---|---|
+| §3.2 invalid Authorization で 500 (実は dev_skip + Firestore 不可) | ✅ PR #26 (`auth_me` に dev_skip ガード) |
+| §3.3 CORS default が `localhost:3000` 固定 (docs に未記載) | ✅ PR #26 (CLAUDE.md に env table 追記) |
+| §1.5 `labvault doctor` の `[--]` 凡例が分かりにくい | ✅ PR #26 (出力末尾に凡例を追加) |
+| §3.4 ヘッダー「レコード」リンクが未ログインでも押せる | 🔵 設計議論 (今は AuthGate で内側だけ block) |
+| §3.5 ログアウト後も form に email/password が残る | 🔵 (autocomplete 適正化要、未着手) |
+| §3.7 `/welcome` 永続 URL を未ログインで踏むと login form | 🔵 設計議論 |
+| §1.1 `labvault init` に PAT / platform URL オプション無し | 🔵 backlog |
+| §1.3 各 CLI サブコマンドの `--help` が薄い | ❌ |
+| §1.2 `-t` / `-T` の慣習違い | 🔵 (破壊的変更注意) |
+
+### 12.2 round-2 (2026-06-02 午後、frontend dev_skip 投入後)
+
+| 所見 | 状態 |
+|---|---|
+| §1.1 `/records` 検索バーが `/?q=` に飛んで結果が出ない (Critical) | ✅ PR #28 |
+| §3.2 dev_skip で token 発行すると本番 Firestore に dev@local 名義 (Critical) | ✅ PR #28 (backend 403 ガード) |
+| §2.1 条件値の単位二重表示 (`10 deg`) (Major) | ✅ PR #28 |
+| §3.1 token 発行ラベル空で「(無題)」 (Major) | ✅ PR #28 |
+| §1.4 タイトル超長文で横スクロール (Major) | ✅ PR #28 (truncate + tooltip) |
+| §1.3 一覧の日付に年なし (Minor) | ✅ PR #28 (`2024/11/17`) |
+| §5.1 「← 一覧」が Records 固定 (Minor) | ✅ PR #28 (`BackButton` + history.back) |
+| §2.2 子なし record で空白表示 (Minor) | ✅ PR #28 (案内カード) |
+| **§4.2 destructive action に確認なし** (Minor) | ✅ **誤検知** (実は `confirm()` 実装済、Playwright が auto-cancel で snapshot に出なかった) |
+| §1.2 record ID 桁数混在 (4/6) | 🔵 視覚整え未着手 |
+| §1.5 条件 chip パネル説明文が常時表示 | 🔵 折り畳み未着手 |
+| §2.3 「クリックして単位・説明を編集」が tooltip だけ | 🔵 アイコン化未着手 |
+| §2.4 / §4.4 status / role が badge 化されていない | 🔵 |
+| §4.1 `/admin/pending` 空メッセージが技術寄り | 🔵 |
+| §4.3 `default: konishi-lab` 表記が冗長 (1 team のみ) | 🔵 |
+| §5.2 header の `Dev User` が clickable に見えない | 🔵 |
+| §6.1 dev_skip でも records / admin handler は本番 Firestore を引く (Major DX) | 🔵 InMemoryBackend / read-only モードの検討 |
+| §6.2 `.env` が backend dir で読まれない | 🟡 PR #26 で docs 記載済 (実装上の対応は別途) |
+
+---
+
+## 13. 未検証エリア (次回 round)
+
+round-2 で deep dive できなかった画面 / 機能:
+
+- [ ] **散布図 (scatter chart)**: 子レコード持ち record (MDG 移行データの
+      `MDG carbide1 kkonishi` 等) で X / Y 軸切替・点 hover tooltip・点
+      クリックで子 record に遷移
+- [ ] **ファイルプレビュー**: CSV (テーブル表示) / JSON / テキスト /
+      PNG / 大きい .npy はダウンロードのみ
+- [ ] **一括アップロード** (`/records/{id}` の bulk upload): NxM グリッド
+      でファイルをドロップ、グリッドの行・列ラベルが各子 record の
+      conditions に入る
+- [ ] **multi-team selector**: header の team 切替が出るのは 2 team
+      以上に所属するユーザーだけ。実機テスト用に dev_skip でも
+      multi-team モードに切替えられる手段が欲しい
+- [ ] **welcome 1 回だけ表示**: 新規 user が初回ログインで `welcomed_at`
+      が無い → welcome 画面 → 「始める」で push → 2 回目以降は飛ばす
+- [ ] **mobile (iOS Safari)**: `/records` 一覧が縦スクロール、詳細
+      ページが responsive (現状 desktop only と思われる)
+- [ ] **長時間 SDK ワークフロー**: 装置制御スクリプトを 30 分以上回した
+      ときの buffer + sync の挙動
+- [ ] **同時アクセス**: 2 名が同じ record の condition を同時編集
+      した時の race condition (last-write-wins か optimistic locking か)
+
+---
+
+## 14. 次回 round の流れ (推奨)
+
+1. 開発が止まっているタイミングで `LABVAULT_DEV_SKIP_AUTH=1` で
+   両 server を起動 (§11)
+2. Playwright で §13 の未検証エリアに踏み込む
+3. 観察した所見を `docs/qa_findings_YYYY-MM-DD.md` に書き出す
+   (深刻度別 + 修正提案)
+4. Critical / Major は 1 PR でまとめて修正、Minor / Nit は backlog に
+5. 本 checklist の §12 に状態 (✅ / 🟡 / 🔵 / ❌) を更新
+
+「触りに行く動機」を maintain するため、round ごとの実施記録は
+`docs/qa_results/YYYY-MM-DD_round-N.md` 等で軽く残すと、次回の重複
+作業を減らせる。
