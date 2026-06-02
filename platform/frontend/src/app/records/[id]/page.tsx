@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { BackButton } from "@/components/back-button";
 import {
   Card,
   CardContent,
@@ -290,11 +290,7 @@ export default function RecordDetailPage() {
   if (error || !record) {
     return (
       <div className="space-y-4">
-        <Link href="/records">
-          <Button variant="ghost" className="cursor-pointer">
-            ← 一覧に戻る
-          </Button>
-        </Link>
+        <BackButton />
         <p className="text-destructive">
           {error || "レコードが見つかりません"}
         </p>
@@ -310,11 +306,7 @@ export default function RecordDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/records">
-          <Button variant="ghost" className="cursor-pointer">
-            ← 一覧
-          </Button>
-        </Link>
+        <BackButton />
         <h1 className="text-2xl font-bold tracking-tight">{record.title}</h1>
         <Badge variant="secondary" className={statusColor[record.status]}>
           {record.status}
@@ -396,6 +388,25 @@ export default function RecordDetailPage() {
         {record.files.length > 0 && (
           <FileSection recordId={id} files={record.files} />
         )}
+
+        {/* 条件 / 結果 / ファイル / 子レコードが全て空のときの案内。
+            ローディングミスではなく単に未投入であることを明示する。 */}
+        {conditions.length === 0 &&
+          results.length === 0 &&
+          record.files.length === 0 &&
+          children.length === 0 && (
+            <Card className="md:col-span-2 border-dashed">
+              <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                このレコードには条件・結果・ファイル・子レコードがまだ
+                投入されていません。SDK ({" "}
+                <code className="rounded bg-muted px-1 py-0.5">
+                  exp.conditions(...) / exp.results[...] / exp.add(...) /
+                  exp.subrecord(...)
+                </code>
+                ) や Web UI から追加できます。
+              </CardContent>
+            </Card>
+          )}
 
         {/* メモ */}
         <Card className="md:col-span-2">

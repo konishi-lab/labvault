@@ -349,8 +349,24 @@ def create_token(
 
     raw token はこのレスポンスでのみ返却 (Firestore には hash のみ保存、
     再表示不可)。SDK / curl で `Authorization: Bearer <token>` として使う。
+
+    dev_skip モードでは Firestore に書かずに 403 を返す。ローカル開発で
+    気軽に押した「発行」ボタンが本番 Firestore に `dev@local` 名義の
+    token を残してしまう事故を防ぐ。
     """
     import uuid
+
+    from .auth import _dev_skip
+
+    if _dev_skip():
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Token issuance is disabled in dev_skip mode "
+                "(LABVAULT_DEV_SKIP_AUTH=1) to avoid polluting the real "
+                "Firestore with 'dev@local' tokens."
+            ),
+        )
 
     label = body.label.strip()[:100]
     raw, h, prefix = _generate_pat()

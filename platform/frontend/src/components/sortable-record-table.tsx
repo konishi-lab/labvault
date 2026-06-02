@@ -22,9 +22,12 @@ const statusColor: Record<string, string> = {
 };
 
 function formatDate(iso: string): string {
+  // 年を含めて表示。MDG 移行などで数年前のレコードが混ざるとき、年が
+  // 無いと判別不能になるため。
   return new Date(iso).toLocaleDateString("ja-JP", {
-    month: "short",
-    day: "numeric",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -179,8 +182,12 @@ export function SortableRecordTable({
                     {rec.id}
                   </Link>
                 </TableCell>
-                <TableCell>
-                  <Link href={`/records/${rec.id}`} className="hover:underline">
+                <TableCell className="max-w-[40ch]">
+                  <Link
+                    href={`/records/${rec.id}`}
+                    className="block truncate hover:underline"
+                    title={rec.title}
+                  >
                     {rec.title}
                   </Link>
                 </TableCell>
