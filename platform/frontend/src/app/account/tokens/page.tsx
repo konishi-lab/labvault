@@ -26,6 +26,7 @@ export default function AccountTokensPage() {
   const [copied, setCopied] = useState(false);
 
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -167,48 +168,7 @@ export default function AccountTokensPage() {
                 (gcloud 不要)。下に使い方の例を貼っているので、必要な部分を
                 コピーしてください。
               </p>
-              <p className="font-semibold">1. pip install (Mac / Linux)</p>
-              <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
-{`pip install \\
-  --index-url https://pypi.org/simple/ \\
-  --extra-index-url "https://__token__:${justCreated.token}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/" \\
-  "labvault[gcp,nextcloud]"`}
-              </pre>
-              <p className="font-semibold">2. pip install (Windows PowerShell)</p>
-              <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
-{`pip install \`
-  --index-url https://pypi.org/simple/ \`
-  --extra-index-url "https://__token__:${justCreated.token}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/" \`
-  "labvault[gcp,nextcloud]"`}
-              </pre>
-              <p className="font-semibold">
-                3. SDK ランタイム認証 (
-                <code className="rounded bg-background px-1">
-                  ~/.labvault/credentials
-                </code>
-                )
-              </p>
-              <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
-{`LABVAULT_TOKEN=${justCreated.token}
-LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
-LABVAULT_TEAM=konishi-lab`}
-              </pre>
-              <p>
-                Windows なら{" "}
-                <code className="rounded bg-background px-1">
-                  %USERPROFILE%\.labvault\credentials
-                </code>
-                。詳細は{" "}
-                <a
-                  className="underline"
-                  href="https://github.com/konishi-lab/labvault/blob/main/docs/instrument_pc_setup.md"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  装置 PC セットアップ手順
-                </a>
-                。
-              </p>
+              <UsageSnippets token={justCreated.token} />
             </div>
             <div className="flex justify-end">
               <Button
@@ -244,37 +204,144 @@ LABVAULT_TEAM=konishi-lab`}
             </p>
           ) : (
             <ul className="divide-y">
-              {tokens.map((t) => (
-                <li
-                  key={t.id}
-                  className="flex flex-wrap items-center gap-3 py-2 text-sm"
-                >
-                  <div className="flex-1 space-y-0.5">
-                    <div className="font-medium">{t.label || "(無題)"}</div>
-                    <div className="text-xs text-muted-foreground">
-                      <code className="rounded bg-muted px-1 py-0.5">
-                        {t.prefix}...
-                      </code>
-                      {" — 作成: "}
-                      {new Date(t.created_at).toLocaleString("ja-JP")}
-                      {t.last_used_at &&
-                        ` — 最終利用: ${new Date(t.last_used_at).toLocaleString("ja-JP")}`}
+              {tokens.map((t) => {
+                const expanded = expandedId === t.id;
+                return (
+                  <li key={t.id} className="py-2 text-sm">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedId(expanded ? null : t.id)
+                        }
+                        className="flex-1 min-w-0 text-left rounded px-1 -mx-1 py-0.5 hover:bg-muted/40 cursor-pointer transition-colors"
+                        aria-expanded={expanded}
+                        aria-controls={`token-usage-${t.id}`}
+                        title="クリックして使い方の例を表示"
+                      >
+                        <div className="font-medium flex items-center gap-1">
+                          <span
+                            className="inline-block w-3 text-muted-foreground"
+                            aria-hidden
+                          >
+                            {expanded ? "▾" : "▸"}
+                          </span>
+                          {t.label || "(無題)"}
+                        </div>
+                        <div className="text-xs text-muted-foreground pl-4">
+                          <code className="rounded bg-muted px-1 py-0.5">
+                            {t.prefix}...
+                          </code>
+                          {" — 作成: "}
+                          {new Date(t.created_at).toLocaleString("ja-JP")}
+                          {t.last_used_at &&
+                            ` — 最終利用: ${new Date(t.last_used_at).toLocaleString("ja-JP")}`}
+                        </div>
+                      </button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => handleRevoke(t)}
+                        disabled={revoking === t.id}
+                      >
+                        {revoking === t.id ? "失効中..." : "失効"}
+                      </Button>
                     </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => handleRevoke(t)}
-                    disabled={revoking === t.id}
-                  >
-                    {revoking === t.id ? "失効中..." : "失効"}
-                  </Button>
-                </li>
-              ))}
+                    {expanded && (
+                      <div
+                        id={`token-usage-${t.id}`}
+                        className="mt-2 ml-4 rounded border bg-muted/30 px-3 py-2 space-y-2 text-xs"
+                      >
+                        <p className="text-muted-foreground">
+                          このトークンの raw 文字列は <strong>発行直後の
+                          画面でしか表示されない</strong> ため、ここでは
+                          表示できません。コピーしたものを以下の{" "}
+                          <code className="rounded bg-background px-1">
+                            &lt;YOUR_TOKEN&gt;
+                          </code>{" "}
+                          に置き換えて使ってください。失くしたら新しく
+                          発行 + 古い方は「失効」してください。
+                        </p>
+                        <UsageSnippets token="<YOUR_TOKEN>" />
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+const PLATFORM_URL =
+  "https://labvault-api-355809880738.asia-northeast1.run.app";
+
+/**
+ * トークンの使い方サンプル (pip install + labvault auth set-token +
+ * credentials 手書き) を一括表示するコンポーネント。
+ *
+ * - 発行成功カードでは `token` に raw 文字列を入れて完成形を表示する
+ * - 発行済リストの expand では `token` を `<YOUR_TOKEN>` のような
+ *   placeholder にしてテンプレ表示する (raw token はもう取れないため)
+ */
+function UsageSnippets({ token }: { token: string }) {
+  const proxy = `https://__token__:${token}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/`;
+  return (
+    <div className="space-y-2">
+      <p className="font-semibold">
+        1. SDK ランタイム認証 (推奨: <code>labvault auth set-token</code>)
+      </p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`# Mac / Linux / Windows 共通。--token-stdin で shell 履歴に残らない
+echo "${token}" | labvault auth set-token --token-stdin
+
+# 装置 PC では識別子を付ける
+echo "${token}" | labvault auth set-token --token-stdin --user instrument-xrd-1`}
+      </pre>
+
+      <p className="font-semibold">2. pip install (Mac / Linux)</p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`pip install \\
+  --index-url https://pypi.org/simple/ \\
+  --extra-index-url "${proxy}" \\
+  "labvault[gcp,nextcloud]"`}
+      </pre>
+
+      <p className="font-semibold">3. pip install (Windows PowerShell)</p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`pip install \`
+  --index-url https://pypi.org/simple/ \`
+  --extra-index-url "${proxy}" \`
+  "labvault[gcp,nextcloud]"`}
+      </pre>
+
+      <p className="font-semibold">
+        4. (代替) 手書きで <code>~/.labvault/credentials</code>
+      </p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`LABVAULT_TOKEN=${token}
+LABVAULT_PLATFORM_URL=${PLATFORM_URL}
+LABVAULT_TEAM=konishi-lab`}
+      </pre>
+      <p>
+        Windows なら{" "}
+        <code className="rounded bg-background px-1">
+          %USERPROFILE%\.labvault\credentials
+        </code>
+        。詳細は{" "}
+        <a
+          className="underline"
+          href="https://github.com/konishi-lab/labvault/blob/main/docs/instrument_pc_setup.md"
+          target="_blank"
+          rel="noreferrer"
+        >
+          装置 PC セットアップ手順
+        </a>
+        。
+      </p>
     </div>
   );
 }
