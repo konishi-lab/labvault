@@ -42,12 +42,19 @@ Node:        20.x.x
 未承認の新規ユーザー向け体感確認は backlog #5 (人間オペレータ案件) を参照。
 ここでは **承認済ユーザーが新しい環境にセットアップする** ケース。
 
-セットアップは 2 段階:
-1. **pip install** (1 回だけ): 必ず Google アカウントで Artifact Registry
-   にアクセスする (= `gcloud auth` 必須)。PAT では install できない
-2. **SDK ランタイム認証**: 「PAT 方式」(推奨) か「ADC 方式」のいずれかを選ぶ
+認証方式の選び方:
 
-### 1.1 pip install (Mac / Linux)
+| 環境 | 推奨 | 備考 |
+|---|---|---|
+| Mac / Linux 開発機 / Notebook | **ADC** | 監査ログが個人 Google アカウントと紐付き、token 流出時の被害が小さい。組織側で一括失効可。`gcloud` が前提 |
+| Windows 装置 PC (gcloud 不可) | PAT | gcloud が入らない環境向けの代替 |
+| CI で Workload Identity / SA | ADC (SA) | 同上、SA で |
+| CI で gcloud が立たない | PAT | 同上 |
+
+以下、§1.1〜1.3 が **ADC 経路 (推奨)**、§1.4〜1.6 が **PAT 経路
+(装置 PC / CI 等)**。§1.7 doctor は両方で確認する。
+
+### 1.1 ADC: pip install (Mac / Linux)
 
 承認済 Google アカウント (Artifact Registry reader 権限あり) で
 `gcloud auth application-default login` を済ませた状態から:
@@ -73,7 +80,7 @@ pip install \
 - [ ] `python -c "import labvault; print(labvault.__version__)"` 成功
 - [ ] `labvault --version` が同じ version を表示
 
-### 1.2 pip install (Windows / PowerShell)
+### 1.2 ADC: pip install (Windows / PowerShell)
 
 PowerShell で同じ手順。改行は `` ` `` (バックティック)、角括弧はクオート
 が必要。
@@ -101,62 +108,8 @@ pip install `
       起動 or RemoteSigned を user スコープで許可)
 - [ ] `pip install` で **wheel** が取れる (sdist にフォールバックしない)。
       ログに `Downloading labvault-X.Y.Z-py3-none-any.whl` が出るか
-- [ ] **長いパス対応**: `C:\Users\...\OneDrive\研究\実験\...` のような
-      OneDrive 同期下 + 日本語混じり deep path で `lab.new()` →
-      `add()` → buffer 同期が壊れない
-- [ ] Windows Defender / Antivirus に `.venv` 配下を除外しないと
-      pip インストールが極端に遅い場合がある (要確認)
 
-### 1.3 SDK ランタイム認証 — PAT 方式 (推奨)
-
-Web UI からトークンを発行する方式。**GCP 認証セッションが切れても
-動き続ける** ので装置 PC・CI・長時間運用に向く。
-
-ブラウザで Web UI を開く: <https://labvault-web-355809880738.asia-northeast1.run.app>
-
-- [ ] ログイン → 右上のヘッダー or Dashboard QuickLink で
-      **「API トークン」 (`/account/tokens`)** に移動
-- [ ] **ラベル必須** (PR #28 で必須化): 「装置 PC: XRD A 号機」など
-      識別可能な名前を入れる
-- [ ] 「発行」を押す → `lv_xxxx...` が表示される。**この画面を離れると
-      再表示できない** ので必ずコピー or 安全な場所にメモ
-
-PAT を `~/.labvault/credentials` に書く:
-
-```bash
-# Mac / Linux
-mkdir -p ~/.labvault
-cat > ~/.labvault/credentials << 'EOF'
-LABVAULT_TOKEN=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
-LABVAULT_TEAM=konishi-lab
-EOF
-chmod 600 ~/.labvault/credentials
-```
-
-```powershell
-# Windows PowerShell
-New-Item -ItemType Directory -Force -Path "$HOME\.labvault" | Out-Null
-@"
-LABVAULT_TOKEN=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
-LABVAULT_TEAM=konishi-lab
-"@ | Set-Content -NoNewline "$HOME\.labvault\credentials"
-# 必要なら NTFS ACL で本人のみ読書可に絞る (icacls)
-```
-
-- [ ] `labvault doctor` で `[OK] PAT: configured` と `mode: PAT mode` が
-      表示される
-- [ ] `python -c "from labvault import Lab; lab = Lab();
-      print(type(lab._metadata).__name__)"` が `PlatformMetadataBackend`
-      を返す
-- [ ] `labvault list` が空でも 200 で返る (例外を吐かない)
-- [ ] 試しに作った record を Web UI で確認できる
-
-### 1.4 SDK ランタイム認証 — ADC 方式 (Mac / Linux で開発するとき向け)
-
-`gcloud auth application-default login` の credential を SDK ランタイム
-からも直接使う方式。Windows 装置 PC では PAT 方式を推奨。
+### 1.3 ADC: SDK ランタイム認証
 
 カレントディレクトリの `.env`:
 
@@ -170,20 +123,98 @@ LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
 
 - [ ] `labvault doctor` で `mode: Direct mode` か `Mixed mode` と表示
 - [ ] `type(lab._metadata).__name__` が `FirestoreMetadataBackend`
+- [ ] `labvault list` が空でも 200 で返る (例外を吐かない)
+- [ ] 試しに作った record を Web UI で確認できる
 - [ ] ADC 期限切れ時に挙動が安定 (`labvault list` がはっきりした
       エラーメッセージで落ちる、フリーズしない)
 
-### 1.5 doctor
+### 1.4 PAT: Web UI で発行 (装置 PC / CI 等)
+
+ブラウザで Web UI を開く: <https://labvault-web-355809880738.asia-northeast1.run.app>
+
+- [ ] ログイン → 右上のヘッダー or Dashboard QuickLink で
+      **「API トークン」 (`/account/tokens`)** に移動
+- [ ] **ラベル必須** (PR #28 で必須化): 「装置 PC: XRD A 号機」など
+      識別可能な名前を入れる
+- [ ] 「発行」を押す → `lv_xxxx...` が表示される。**この画面を離れると
+      再表示できない** ので必ずコピー or 安全な場所にメモ
+- [ ] 発行成功カードに pip install サンプル + credentials サンプルが
+      埋め込み表示される (PR #32)
+
+### 1.5 PAT: pip install (gcloud 不要)
+
+PyPI proxy (PR #31) 経由で同じ PAT で install できる。
+
+**Mac / Linux**:
+
+```bash
+PAT=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+PROXY=https://__token__:${PAT}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/
+
+python -m venv .venv && source .venv/bin/activate
+pip install \
+  --index-url https://pypi.org/simple/ \
+  --extra-index-url "${PROXY}" \
+  "labvault[gcp,nextcloud]"
+```
+
+**Windows (PowerShell)**:
+
+```powershell
+$env:PAT = "lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+$PROXY = "https://__token__:${env:PAT}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/"
+
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install `
+  --index-url https://pypi.org/simple/ `
+  --extra-index-url "$PROXY" `
+  "labvault[gcp,nextcloud]"
+```
+
+- [ ] gcloud / keyring_helper を入れずに install できる
+- [ ] **wheel** が取れる (sdist にフォールバックしない)
+- [ ] **長いパス対応 (Windows)**: `C:\Users\...\OneDrive\研究\実験\...` の
+      ような OneDrive 同期下 + 日本語混じり deep path で `lab.new()` →
+      `add()` → buffer 同期が壊れない
+- [ ] Windows Defender / Antivirus 除外 (`.venv` 配下) で pip が極端に
+      遅くなっていないか
+
+### 1.6 PAT: SDK ランタイム認証
+
+`labvault auth set-token` で 1 行設定。OS 差分 (chmod / icacls) と
+backend verify を CLI 側で吸収する。
+
+```bash
+# Mac / Linux / Windows 共通。--token-stdin で shell 履歴に残らない:
+echo "lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" | labvault auth set-token --token-stdin
+
+# 装置 PC では識別子を付ける:
+echo "$PAT" | labvault auth set-token --token-stdin --user instrument-xrd-1
+```
+
+- [ ] `labvault auth status` で credentials 内容が表示される (token は伏字)
+- [ ] `labvault doctor` で `mode: PAT mode` が表示される
+- [ ] `python -c "from labvault import Lab; lab = Lab();
+      print(type(lab._metadata).__name__)"` が `PlatformMetadataBackend`
+      を返す
+- [ ] 試しに作った record を Web UI で確認できる
+- [ ] PAT を revoke した後に `labvault list` が即座に 401 で失敗する
+      (発行画面 → 失効ボタン → 別シェルで実行)
+
+### 1.7 doctor
 
 - [ ] `.env` も `~/.labvault/credentials` も無い状態:
-  - [ ] `labvault doctor` の `[!!]` 個数を確認 (現状 0 件で
-        「All checks passed」になる仕様。要件は環境次第)
-- [ ] PAT を `~/.labvault/credentials` に置く:
-  - [ ] `labvault doctor` が `[OK] PAT: configured` + `mode: PAT mode` を表示
+  - [ ] `labvault doctor` の末尾「次のステップ:」が **「推奨は ADC」+
+        装置 PC 向け PAT 代替** の両案内を出す (PR #33)
+- [ ] ADC 設定済 (LABVAULT_GCP_PROJECT セット):
+  - [ ] `[OK] GCP project: ...` + `mode: Direct mode` or `Mixed mode`
+  - [ ] 「次のステップ」は動作確認 1-liner のみ
+- [ ] PAT 設定済:
+  - [ ] `[OK] PAT: configured` + `mode: PAT mode`
+- [ ] PAT と GCP project の両方ある (Mixed):
+  - [ ] 「次のステップ」に「ADC のみに寄せる方が推奨」の警告
 - [ ] 凡例の `[OK] / [--] / [!!]` 1 行が末尾に出る (PR #26)
-- [ ] `LABVAULT_PLATFORM_URL` を未設定にする:
-  - [ ] `[--] platform URL: not set (direct backend モード)` が出る
-  - [ ] `Nextcloud` が `[OK]` か `[!!]` か実機確認
 
 ---
 
