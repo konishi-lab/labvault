@@ -342,6 +342,74 @@ def doctor() -> None:
     else:
         click.echo(f"{issues} issue(s) found. See above.")
 
+    # --- 次のステップ ---
+    # 設定状態と推奨パスを案内する。「推奨 = ADC (gcloud)」を強調し、
+    # 装置 PC や gcloud が使えない環境では PAT、という位置付け。
+    hints: list[str] = []
+    if settings is None:
+        # Settings ロード自体が失敗した時は既に上で [!!] が出ているので、
+        # ヒントは出さずに終わる。
+        return
+
+    if not settings.team:
+        hints.append(
+            "team が未設定。`labvault init` で入力するか、.env に "
+            "`LABVAULT_TEAM=konishi-lab` を書く。"
+        )
+    if not settings.user:
+        hints.append(
+            "user が未設定。Record の created_by が空になる。"
+            "`labvault init` で入力するか、.env に `LABVAULT_USER=<your-name>` を書く。"
+        )
+
+    has_pat = bool(settings.token)
+    has_gcp = bool(settings.gcp_project)
+
+    if not has_pat and not has_gcp:
+        # 認証ゼロ
+        hints.append(
+            "認証が未設定。**推奨は ADC**: "
+            "`gcloud auth application-default login` + "
+            ".env に `LABVAULT_GCP_PROJECT=klab-laser-process` を書く。"
+        )
+        hints.append(
+            "装置 PC など gcloud を使えない環境では PAT: "
+            "Web UI で発行 → `labvault auth set-token --token-stdin`。"
+        )
+    elif has_pat and not settings.platform_url:
+        # PAT あるが platform_url 無し
+        hints.append(
+            "PAT が設定されているが LABVAULT_PLATFORM_URL が空。"
+            "`labvault auth set-token --force` で credentials を再作成すると "
+            "platform_url も埋まる。"
+        )
+    elif has_pat and has_gcp:
+        # 両方ある (Mixed)。PAT が優先される。
+        hints.append(
+            "PAT と GCP project の両方が設定されている。Settings の優先順位上 "
+            "PAT が使われる。ADC の方が監査ログが個人と紐付くので、可能なら "
+            "PAT を外して ADC のみに寄せる方が推奨。"
+        )
+    # has_pat=False, has_gcp=True は ADC モード = 推奨状態。hint なし。
+
+    if not settings.nextcloud_url and not settings.platform_url:
+        hints.append(
+            "Nextcloud / platform URL のどちらも未設定。"
+            "ファイル保存は InMemory フォールバックになり、再起動で消える。"
+        )
+
+    if issues == 0 and not hints:
+        hints.append(
+            '動作確認: `python -c "from labvault import Lab; '
+            'lab = Lab(); print(type(lab._metadata).__name__)"`'
+        )
+
+    if hints:
+        click.echo()
+        click.echo("次のステップ:")
+        for h in hints:
+            click.echo(f"  • {h}")
+
 
 @cli.command()
 @click.argument("record_id")
