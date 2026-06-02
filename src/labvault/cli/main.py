@@ -336,6 +336,7 @@ def doctor() -> None:
         click.echo(f"  [OK] mode: {mode}")
 
     click.echo()
+    click.echo("凡例: [OK]=設定済 / [--]=未設定だが代替可 (致命でない) / [!!]=要対処")
     if issues == 0:
         click.echo("All checks passed.")
     else:
