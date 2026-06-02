@@ -181,28 +181,31 @@ pip install `
 
 ### 4. SDK ランタイムに PAT を渡す
 
-install と同じ PAT で SDK も認証する。`~/.labvault/credentials` に書くだけ。
+install と同じ PAT で SDK も認証する。CLI コマンドが付属するので 1 行で済む:
 
 ```bash
-# Mac / Linux
-mkdir -p ~/.labvault
-cat > ~/.labvault/credentials << 'EOF'
-LABVAULT_TOKEN=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
-LABVAULT_TEAM=konishi-lab
-EOF
-chmod 600 ~/.labvault/credentials
+# Mac / Linux / Windows 共通。--token-stdin で shell 履歴に残さない:
+echo "lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" | labvault auth set-token --token-stdin
+
+# 装置 PC では識別子を付ける:
+echo "$PAT" | labvault auth set-token --token-stdin --user instrument-xrd-1
 ```
 
-```powershell
-# Windows PowerShell
-New-Item -ItemType Directory -Force -Path "$HOME\.labvault" | Out-Null
-@"
-LABVAULT_TOKEN=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
-LABVAULT_TEAM=konishi-lab
-"@ | Set-Content -NoNewline "$HOME\.labvault\credentials"
+挙動:
+- `~/.labvault/credentials` に `LABVAULT_TOKEN` / `LABVAULT_PLATFORM_URL` / `LABVAULT_TEAM` を書く
+- 既存の credentials があれば `--force` を要求
+- backend に `/api/auth/me` を投げて token が valid か検証 (`--no-verify` で skip)
+- Unix では `chmod 600`、Windows では `icacls` で本人のみに絞る
+
+設定後の確認:
+
+```bash
+labvault auth status   # token 末尾は伏字
+labvault doctor        # mode: PAT mode と出れば OK
 ```
+
+> 手書きで `~/.labvault/credentials` を作っても同じ。`labvault auth set-token` は
+> 「OS 差分の吸収 + 検証 + パーミッション設定」を一括でやるラッパーです。
 
 → `Lab()` 1 行で Firestore/Nextcloud/Vertex AI に Platform 経由でアクセス。Google ライブラリ無しでも動く。詳細: [docs/instrument_pc_setup.md](docs/instrument_pc_setup.md)。
 

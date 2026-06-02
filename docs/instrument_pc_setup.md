@@ -74,23 +74,52 @@ pip install `
 
 ### 3. 装置 PC の `~/.labvault/credentials` に設定
 
+`labvault auth set-token` で 1 行で書ける (chmod / token 検証も自動):
+
 ```bash
-mkdir -p ~/.labvault
-cat > ~/.labvault/credentials << 'EOF'
-LABVAULT_TOKEN=lv_ここに先ほどの token を貼り付け
-LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
-LABVAULT_TEAM=konishi-lab
-LABVAULT_USER=instrument-xrd-1
-EOF
-chmod 600 ~/.labvault/credentials
+# Mac / Linux / Windows 共通。--token-stdin で shell 履歴に残らない:
+echo "lv_ここに先ほどの token を貼り付け" \
+  | labvault auth set-token --token-stdin --user instrument-xrd-1
 ```
+
+挙動:
+- `~/.labvault/credentials` に書く (内容は下記)
+- backend に `/api/auth/me` を投げて token を検証
+- Unix では `chmod 600`、Windows では `icacls` で本人のみに絞る
+- 既存ファイルがあると拒否 (`--force` で上書き)
+
+設定後に `labvault auth status` で確認:
+
+```
+$ labvault auth status
+  credentials file: /home/you/.labvault/credentials
+  LABVAULT_TOKEN:        lv_abcde...
+  LABVAULT_PLATFORM_URL: https://labvault-api-355809880738.asia-northeast1.run.app
+  LABVAULT_TEAM:         konishi-lab
+  LABVAULT_USER:         instrument-xrd-1
+```
+
+書かれる内容:
 
 - `LABVAULT_TOKEN` — 認証に使う PAT
 - `LABVAULT_PLATFORM_URL` — backend の URL (固定)
 - `LABVAULT_TEAM` — 書き込む team。複数 team 所属の場合のみ意味あり (single team なら省略可)
 - `LABVAULT_USER` — Record の `created_by` に入る装置識別子。後で「どの装置から投入されたか」を絞り込むのに使う。`instrument-xrd-1` `sputter-A` 等、装置単位の名前を推奨
 
-`chmod 600` は他ユーザーから読めなくするための重要なステップ。
+> **手書きで作りたい場合** (CLI が使えない最小環境など):
+>
+> ```bash
+> mkdir -p ~/.labvault
+> cat > ~/.labvault/credentials << 'EOF'
+> LABVAULT_TOKEN=lv_xxxxx...
+> LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+> LABVAULT_TEAM=konishi-lab
+> LABVAULT_USER=instrument-xrd-1
+> EOF
+> chmod 600 ~/.labvault/credentials
+> ```
+>
+> `chmod 600` は他ユーザーから読めなくするための重要なステップ。
 
 ### 4. 動作確認
 

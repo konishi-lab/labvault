@@ -574,6 +574,236 @@ def overview(parent_id: str) -> None:
     lab.close()
 
 
+@cli.group()
+def auth() -> None:
+    """認証 (Personal Access Token) 関連のコマンド。"""
+
+
+_DEFAULT_PLATFORM_URL = "https://labvault-api-355809880738.asia-northeast1.run.app"
+_DEFAULT_TEAM = "konishi-lab"
+
+
+def _credentials_path() -> Path:
+    return Path.home() / ".labvault" / "credentials"
+
+
+def _verify_token_against_backend(token: str, platform_url: str) -> tuple[bool, str]:
+    """PAT を backend に投げて検証する。`(ok, message)` を返す。
+
+    `requests`/`httpx` の重い依存を避けるため、標準ライブラリの
+    `urllib` を使う。タイムアウト 10 秒。
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    url = platform_url.rstrip("/") + "/api/auth/me"
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code}: {e.reason}"
+    except (urllib.error.URLError, TimeoutError) as e:
+        return False, f"network error: {e}"
+
+    try:
+        data = _json.loads(body)
+    except ValueError:
+        return False, "invalid JSON response"
+    status = data.get("status", "?")
+    if status != "authorized":
+        return False, f"token accepted but status={status!r}"
+    email = data.get("email", "?")
+    teams = ", ".join(
+        t.get("team_id", "?") for t in (data.get("teams") or []) if isinstance(t, dict)
+    )
+    return True, f"verified: {email} (teams: {teams or '(none)'})"
+
+
+@auth.command("set-token")
+@click.option(
+    "--token",
+    default=None,
+    help=(
+        "Personal Access Token (lv_*)。省略時は対話プロンプトで非表示入力。"
+        " --token-stdin と排他。"
+    ),
+)
+@click.option(
+    "--token-stdin",
+    is_flag=True,
+    help="stdin から token を 1 行で受け取る (shell 履歴に残らない)。",
+)
+@click.option(
+    "--platform-url",
+    default=_DEFAULT_PLATFORM_URL,
+    show_default=True,
+    help="labvault platform API の URL。",
+)
+@click.option(
+    "--team",
+    default=_DEFAULT_TEAM,
+    show_default=True,
+    help="LABVAULT_TEAM に書き込む team 識別子。",
+)
+@click.option(
+    "--user",
+    default="",
+    help=(
+        "LABVAULT_USER に書き込む装置 / ユーザー識別子 (例: instrument-xrd-1)。"
+        " Record の created_by に入る。"
+    ),
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="既存 ~/.labvault/credentials を確認なしで上書きする。",
+)
+@click.option(
+    "--verify/--no-verify",
+    default=True,
+    show_default=True,
+    help="書き込み前に backend に問い合わせて token が有効か確認する。",
+)
+def auth_set_token(
+    token: str | None,
+    token_stdin: bool,
+    platform_url: str,
+    team: str,
+    user: str,
+    force: bool,
+    verify: bool,
+) -> None:
+    """Personal Access Token を ~/.labvault/credentials に書き込む。
+
+    1 つの PAT で pip install (PyPI proxy 経由) と SDK ランタイム認証の
+    両方を賄える。発行は Web UI: <PLATFORM_URL>/account/tokens から。
+    """
+    import getpass
+    import os
+    import sys
+
+    if token is not None and token_stdin:
+        raise click.UsageError("--token と --token-stdin は同時指定不可")
+
+    if token_stdin:
+        token_value = sys.stdin.readline().strip()
+    elif token is not None:
+        token_value = token.strip()
+    else:
+        # 対話プロンプト (非表示入力)
+        token_value = getpass.getpass("Personal Access Token (lv_*): ").strip()
+
+    if not token_value:
+        raise click.UsageError("token is empty")
+    if not token_value.startswith("lv_"):
+        raise click.UsageError("token must start with 'lv_'")
+
+    # 検証 (backend 到達 + 有効性確認)
+    if verify:
+        click.echo(f"Verifying token against {platform_url} ... ", nl=False)
+        ok, msg = _verify_token_against_backend(token_value, platform_url)
+        click.echo(msg)
+        if not ok:
+            raise click.ClickException(
+                "token verification failed. "
+                "Use --no-verify to skip if you know it's OK."
+            )
+
+    # 上書き保護
+    creds_path = _credentials_path()
+    if creds_path.exists() and not force:
+        raise click.ClickException(
+            f"{creds_path} already exists. Re-run with --force to overwrite."
+        )
+
+    # ディレクトリ作成 + ファイル書き込み + パーミッション設定。
+    # 0o700/0o600 は POSIX。Windows では ACL で本人のみ読書可になるように
+    # 試みるが、失敗しても警告のみで継続 (NTFS でも user フォルダ配下なら
+    # 通常は他ユーザーから見えない)。
+    creds_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f"LABVAULT_TOKEN={token_value}",
+        f"LABVAULT_PLATFORM_URL={platform_url}",
+        f"LABVAULT_TEAM={team}",
+    ]
+    if user:
+        lines.append(f"LABVAULT_USER={user}")
+    creds_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    if os.name == "posix":
+        try:
+            os.chmod(creds_path.parent, 0o700)
+            os.chmod(creds_path, 0o600)
+        except OSError as e:
+            click.echo(f"  warning: chmod failed: {e}", err=True)
+    elif os.name == "nt":
+        # Windows: icacls で本人 (UserName) のみに絞る。失敗時は警告のみ。
+        import subprocess
+
+        try:
+            user_name = os.environ.get("USERNAME") or ""
+            if user_name:
+                subprocess.run(
+                    [
+                        "icacls",
+                        str(creds_path),
+                        "/inheritance:r",
+                        "/grant:r",
+                        f"{user_name}:F",
+                    ],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        except OSError as e:
+            click.echo(f"  warning: icacls failed: {e}", err=True)
+
+    click.echo(f"[OK] credentials saved: {creds_path}")
+    click.echo("Try: labvault doctor")
+
+
+@auth.command("status")
+def auth_status() -> None:
+    """`~/.labvault/credentials` の状況を表示する (token 全体は出さない).
+
+    Settings 経由で env / .env もマージ表示するのは便利だが、副次的に
+    「いまファイルに何が書かれているか」と一致しなくなる場合があるため、
+    本コマンドは credentials ファイルを直接 parse する。
+    """
+    creds_path = _credentials_path()
+    if not creds_path.exists():
+        click.echo(f"  credentials file: (not present at {creds_path})")
+        return
+    click.echo(f"  credentials file: {creds_path}")
+
+    pairs: dict[str, str] = {}
+    for raw in creds_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        if key:
+            pairs[key.strip()] = value.strip()
+
+    token = pairs.get("LABVAULT_TOKEN", "")
+    if token:
+        masked = token[:8] + "..." if len(token) > 12 else "***"
+        click.echo(f"  LABVAULT_TOKEN:        {masked}")
+    else:
+        click.echo("  LABVAULT_TOKEN:        (not in credentials)")
+    click.echo(
+        f"  LABVAULT_PLATFORM_URL: {pairs.get('LABVAULT_PLATFORM_URL', '(not set)')}"
+    )
+    click.echo(f"  LABVAULT_TEAM:         {pairs.get('LABVAULT_TEAM', '(not set)')}")
+    click.echo(f"  LABVAULT_USER:         {pairs.get('LABVAULT_USER', '(not set)')}")
+
+
 @cli.command("mcp")
 def mcp_cmd() -> None:
     """MCP サーバーを起動する (stdio)."""
