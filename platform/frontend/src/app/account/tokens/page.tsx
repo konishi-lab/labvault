@@ -110,7 +110,7 @@ export default function AccountTokensPage() {
           <div className="flex flex-wrap items-end gap-2">
             <label className="flex flex-1 flex-col gap-1 text-sm">
               <span className="text-xs font-medium text-muted-foreground">
-                ラベル (用途のメモ)
+                ラベル (用途のメモ・必須)
               </span>
               <Input
                 value={label}
@@ -119,7 +119,7 @@ export default function AccountTokensPage() {
                   if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    void handleCreate();
+                    if (label.trim()) void handleCreate();
                   }
                 }}
                 placeholder="例: 装置 PC, ノート PC, CI"
@@ -127,7 +127,15 @@ export default function AccountTokensPage() {
                 maxLength={100}
               />
             </label>
-            <Button onClick={handleCreate} disabled={creating}>
+            <Button
+              onClick={handleCreate}
+              disabled={creating || !label.trim()}
+              title={
+                !label.trim()
+                  ? "ラベルを入力してください (後でどの token がどの用途かわかるように)"
+                  : undefined
+              }
+            >
               {creating ? "発行中..." : "発行"}
             </Button>
           </div>

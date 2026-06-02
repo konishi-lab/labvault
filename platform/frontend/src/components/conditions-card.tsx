@@ -138,14 +138,10 @@ export function ConditionsCard({
                     </span>
                   )}
                 </div>
-                <span className="font-mono">
-                  {String(value)}
-                  {units[key] && (
-                    <span className="text-muted-foreground ml-1">
-                      {units[key]}
-                    </span>
-                  )}
-                </span>
+                {/* 単位は label の [unit] 側で表示済なので、値は数字だけ。
+                    以前は値の隣にも単位を付けていたが、"two_theta_start_deg
+                    [deg]: 10 deg" のように二重に見えるため削除。 */}
+                <span className="font-mono">{String(value)}</span>
               </div>
             )}
           </div>

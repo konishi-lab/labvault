@@ -14,7 +14,9 @@ export function SearchBar() {
     e.preventDefault();
     const params = new URLSearchParams();
     if (query.trim()) params.set("q", query.trim());
-    router.push(`/?${params.toString()}`);
+    // 検索結果は /records 一覧でしか表示できないため、submit 時は常に
+    // /records に遷移する (Dashboard の `?q=` は無視される問題があった)。
+    router.push(`/records?${params.toString()}`);
   };
 
   return (
