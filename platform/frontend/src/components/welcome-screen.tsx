@@ -79,19 +79,35 @@ export function WelcomeScreen() {
       <Card className="border-primary/30 bg-primary/5">
         <CardHeader>
           <CardTitle className="text-base">
-            SDK / 装置 PC で使うなら API トークンを発行
+            SDK / 装置 PC で使うなら API トークン (PAT) を発行
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           <p>
-            Python SDK (Notebook / CLI / MCP) や装置 PC から labvault に書き込む
-            には、Personal Access Token (PAT) を発行して
-            <code className="ml-1 mr-1 rounded bg-muted px-1 py-0.5">
-              ~/.labvault/credentials
-            </code>
-            に置いてください。Google アカウント無しでも動作します。
+            Python SDK (Notebook / CLI / MCP) や装置 PC から labvault に
+            アクセスするには、Personal Access Token (PAT) を発行します。
+            <strong>1 つの PAT で pip install もランタイム認証も完了</strong>
+            し、Google アカウント / gcloud は不要です。
           </p>
-          <div className="flex flex-wrap gap-2">
+          <ol className="list-decimal space-y-1 pl-5">
+            <li>下の「トークンを発行」を押し、ラベル (用途のメモ) を
+              入れて発行 → <code>lv_xxx</code> をコピー</li>
+            <li>
+              端末で <code className="rounded bg-muted px-1">pip install</code> :
+              <pre className="mt-1 overflow-x-auto rounded bg-muted px-2 py-1 text-[11px]">
+{`pip install \\
+  --index-url https://pypi.org/simple/ \\
+  --extra-index-url "https://__token__:lv_xxx@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/" \\
+  "labvault[gcp,nextcloud]"`}
+              </pre>
+            </li>
+            <li>
+              同じ PAT を{" "}
+              <code className="rounded bg-muted px-1">~/.labvault/credentials</code>{" "}
+              にも書く (詳細は装置 PC セットアップ手順)
+            </li>
+          </ol>
+          <div className="flex flex-wrap gap-2 pt-1">
             <Button
               size="sm"
               onClick={handleGoToTokens}

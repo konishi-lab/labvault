@@ -20,39 +20,57 @@
 
 ## 手順 (PAT 方式)
 
-### 1. labvault SDK をインストール
-
-`pip install` は private な Artifact Registry から wheel を取得するため、**この 1 ステップだけは GCP 認証が必要**。PAT モードであっても pip 自体は Google 認証で読みに行く (PAT は SDK 実行時の認証であって AR の認証ではない)。
-
-```bash
-# 装置 PC で gcloud が使える場合:
-gcloud auth login
-gcloud auth application-default login
-pip install keyring keyrings.google-artifactregistry-auth
-pip install --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
-  labvault
-```
-
-gcloud が入らない / ブラウザが無くて ADC ログインも難しい装置 PC では:
-
-1. ブラウザのある別マシンで wheel を download
-   ```bash
-   pip download --no-deps --dest ~/wheels \
-     --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
-     labvault
-   ```
-2. `scp ~/wheels/labvault-*.whl instrument-pc:/tmp/`
-3. 装置 PC で `pip install /tmp/labvault-*.whl httpx pydantic pydantic-settings click` (依存も同様に持参)
-
-インストール後は PAT が認証を担うので、GCP credentials は装置 PC に残す必要なし。
-
-### 2. PAT を発行
+### 1. PAT を発行
 
 ブラウザのある別マシン (自分の Mac など) で:
 
 1. <https://labvault-web-355809880738.asia-northeast1.run.app/account/tokens> にアクセス
 2. ラベルを入力 (例: `装置 PC (XRD-1)`) して「発行」
 3. 表示された `lv_xxxxxxxx...` をコピー (**この画面を閉じると再表示できません**)
+
+### 2. labvault SDK をインストール (gcloud 不要)
+
+labvault platform が Artifact Registry を proxy するので、**同じ PAT** で pip install もできる。装置 PC に gcloud / Google 認証は一切不要。
+
+**Mac / Linux**:
+
+```bash
+PAT=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # ↑で発行したもの
+PROXY=https://__token__:${PAT}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/
+
+python -m venv ~/labvault-venv && source ~/labvault-venv/bin/activate
+
+pip install \
+  --index-url https://pypi.org/simple/ \
+  --extra-index-url "${PROXY}" \
+  "labvault[gcp,nextcloud]"
+```
+
+**Windows (PowerShell)**:
+
+```powershell
+$env:PAT = "lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+$PROXY = "https://__token__:${env:PAT}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/"
+
+python -m venv $HOME\labvault-venv
+$HOME\labvault-venv\Scripts\Activate.ps1
+
+pip install `
+  --index-url https://pypi.org/simple/ `
+  --extra-index-url "$PROXY" `
+  "labvault[gcp,nextcloud]"
+```
+
+依存ライブラリ (httpx / pydantic 等) は public PyPI から取られるので、labvault wheel 本体だけが proxy 経由。装置 PC は public PyPI と `labvault-api-...run.app` への HTTPS 到達性があれば OK。
+
+> PAT を shell 履歴 / プロセス一覧に残したくない場合は `~/.config/pip/pip.conf` (Mac/Linux) または `%APPDATA%\pip\pip.ini` (Windows) に書く:
+>
+> ```
+> [global]
+> extra-index-url = https://__token__:lv_xxx@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/
+> ```
+>
+> その上で `pip install "labvault[gcp,nextcloud]"` で済む。
 
 ### 3. 装置 PC の `~/.labvault/credentials` に設定
 
