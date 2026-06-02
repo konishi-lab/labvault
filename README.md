@@ -102,41 +102,60 @@ labvault overview DE9Z7K
 
 ## インストール
 
-新規ユーザーは **3 ステップ**: ① Web UI でアカウント承認 → ② pip install (要 GCP 認証) → ③ SDK 認証 (ADC または PAT)。
+Web UI: **<https://labvault-web-355809880738.asia-northeast1.run.app>**
+
+新規ユーザーは **3 ステップ**: ① Web UI でアカウント承認 → ② Web UI で PAT 発行 → ③ pip install + ランタイムに PAT を渡す (gcloud 不要)。
 
 ```
-[Web UI でログイン]
-       │
-       ▼
-[「申請」フォームから access request]
-       │  (Slack に通知 → admin が approve)
-       ▼
-[承認 = allowed_users 登録 + Artifact Registry reader 自動付与]
-       │
-       ▼
-[pip install] ──► [SDK 認証 (ADC or PAT)] ──► lab = Lab() が動く
+[Web UI でログイン] ──► [申請フォーム] ──► (admin が approve)
+                                                │
+                                                ▼
+                                  [Web UI /account/tokens で PAT 発行]
+                                                │
+                                                ▼
+                          [pip install (PAT 1 つ)] ──► lab = Lab() が動く
 ```
 
 ### 1. アカウント承認 (初回のみ)
 
-Web UI <https://labvault-web-355809880738.asia-northeast1.run.app> にログインして「申請」フォームを送信。admin が approve すると Slack 通知が飛び、自動で Artifact Registry reader 権限が付与される。承認前に下の手順を試しても `pip install` が 403 で落ちる。
+Web UI <https://labvault-web-355809880738.asia-northeast1.run.app> にログインして「申請」フォームを送信。admin が approve すると、Slack に通知が飛び、ログイン後の Dashboard から API 機能が使えるようになる。
 
-### 2. pip install
+### 2. Web UI で Personal Access Token (PAT) を発行
 
-`pip install` は private な Artifact Registry から wheel を取得するため、**GCP 認証が必要** (PAT ではなく Google 認証)。
+Dashboard 右上の「トークン」または `/account/tokens` から発行する。**ラベル必須** (装置 PC: XRD A 号機 など、後で識別できる名前)。発行された `lv_xxx...` は **この画面でしか見えない** ので必ずコピー。
+
+### 3. pip install (PAT 経由、gcloud 不要)
+
+labvault platform が AR を proxy するので、PAT 1 つで install できる。**装置 PC でも CI でも同じ手順** (Google 認証不要)。
+
+**Mac / Linux**:
 
 ```bash
-# 一度だけ: GCP ログイン
-gcloud auth login
-gcloud auth application-default login
+PAT=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Web UI で発行したもの
+PROXY=https://__token__:${PAT}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/
 
-# Artifact Registry の認証 helper
-pip install keyring keyrings.google-artifactregistry-auth
+# clean venv
+python -m venv .venv && source .venv/bin/activate
 
-# labvault 本体
 pip install \
-  --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
-  labvault[gcp,nextcloud]
+  --index-url https://pypi.org/simple/ \
+  --extra-index-url "${PROXY}" \
+  "labvault[gcp,nextcloud]"
+```
+
+**Windows (PowerShell)**:
+
+```powershell
+$env:PAT = "lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+$PROXY = "https://__token__:${env:PAT}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/"
+
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+
+pip install `
+  --index-url https://pypi.org/simple/ `
+  --extra-index-url "$PROXY" `
+  "labvault[gcp,nextcloud]"
 ```
 
 エクストラ:
@@ -148,18 +167,24 @@ pip install \
 | `mcp` | MCP サーバー |
 | `all` | 全部入り |
 
-更新は `pip install -U labvault`。
+更新は同じコマンドの `-U labvault`。
 
-### 3. SDK 認証 — 2 通り
+> PAT を shell 履歴やプロセス一覧に残したくない場合は `pip.conf` (Unix) /
+> `pip.ini` (Windows) に書く方法もある:
+>
+> ```bash
+> # Mac/Linux: ~/.config/pip/pip.conf
+> # Windows: %APPDATA%\pip\pip.ini
+> [global]
+> extra-index-url = https://__token__:lv_xxx@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/
+> ```
 
-| 方式 | 向いている場面 | 設定 |
-|---|---|---|
-| **PAT (推奨)** | 装置 PC・CI・Notebook 問わず全般。Google 認証セッションが切れても動く | Web UI `/account/tokens` で発行 → `~/.labvault/credentials` に書く |
-| ADC | `gcloud auth application-default login` がある環境でそのまま使いたい場合 | 環境変数 (下記) を `.env` に書くだけ |
+### 4. SDK ランタイムに PAT を渡す
 
-#### PAT 方式 (推奨)
+install と同じ PAT で SDK も認証する。`~/.labvault/credentials` に書くだけ。
 
 ```bash
+# Mac / Linux
 mkdir -p ~/.labvault
 cat > ~/.labvault/credentials << 'EOF'
 LABVAULT_TOKEN=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -169,9 +194,21 @@ EOF
 chmod 600 ~/.labvault/credentials
 ```
 
+```powershell
+# Windows PowerShell
+New-Item -ItemType Directory -Force -Path "$HOME\.labvault" | Out-Null
+@"
+LABVAULT_TOKEN=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+LABVAULT_TEAM=konishi-lab
+"@ | Set-Content -NoNewline "$HOME\.labvault\credentials"
+```
+
 → `Lab()` 1 行で Firestore/Nextcloud/Vertex AI に Platform 経由でアクセス。Google ライブラリ無しでも動く。詳細: [docs/instrument_pc_setup.md](docs/instrument_pc_setup.md)。
 
-#### ADC 方式
+### (任意) ADC 方式
+
+開発機で `gcloud auth application-default login` 済の Google 認証を使いたい場合。装置 PC では非推奨 (token expire 管理が面倒)。
 
 カレントディレクトリの `.env`:
 
@@ -183,7 +220,7 @@ LABVAULT_FIRESTORE_DATABASE=labvault
 LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
 ```
 
-→ `gcloud auth application-default login` の credential を直接使って Firestore/Vertex AI にアクセス。Nextcloud credential は backend 経由で都度取得。
+→ ADC credential を直接使って Firestore/Vertex AI にアクセス。Nextcloud credential は backend 経由で都度取得。
 
 ### 4. 動作確認
 

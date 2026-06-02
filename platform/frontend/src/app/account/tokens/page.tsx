@@ -161,14 +161,55 @@ export default function AccountTokensPage() {
                 {copied ? "コピー済み" : "コピー"}
               </Button>
             </div>
-            <p className="text-xs text-amber-900">
-              安全な場所に保存してください。例:{" "}
-              <code className="rounded bg-background px-1">
-                ~/.labvault/credentials
-              </code>{" "}
-              に <code className="rounded bg-background px-1">LABVAULT_TOKEN=...</code>{" "}
-              として配置するなど。
-            </p>
+            <div className="space-y-2 text-xs text-amber-900">
+              <p>
+                <strong>このトークンで pip install もランタイム認証も両方できます</strong>
+                (gcloud 不要)。下に使い方の例を貼っているので、必要な部分を
+                コピーしてください。
+              </p>
+              <p className="font-semibold">1. pip install (Mac / Linux)</p>
+              <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`pip install \\
+  --index-url https://pypi.org/simple/ \\
+  --extra-index-url "https://__token__:${justCreated.token}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/" \\
+  "labvault[gcp,nextcloud]"`}
+              </pre>
+              <p className="font-semibold">2. pip install (Windows PowerShell)</p>
+              <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`pip install \`
+  --index-url https://pypi.org/simple/ \`
+  --extra-index-url "https://__token__:${justCreated.token}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/" \`
+  "labvault[gcp,nextcloud]"`}
+              </pre>
+              <p className="font-semibold">
+                3. SDK ランタイム認証 (
+                <code className="rounded bg-background px-1">
+                  ~/.labvault/credentials
+                </code>
+                )
+              </p>
+              <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`LABVAULT_TOKEN=${justCreated.token}
+LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+LABVAULT_TEAM=konishi-lab`}
+              </pre>
+              <p>
+                Windows なら{" "}
+                <code className="rounded bg-background px-1">
+                  %USERPROFILE%\.labvault\credentials
+                </code>
+                。詳細は{" "}
+                <a
+                  className="underline"
+                  href="https://github.com/konishi-lab/labvault/blob/main/docs/instrument_pc_setup.md"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  装置 PC セットアップ手順
+                </a>
+                。
+              </p>
+            </div>
             <div className="flex justify-end">
               <Button
                 size="sm"
