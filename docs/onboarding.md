@@ -194,10 +194,15 @@ for power in [5, 10, 20]:
     x = np.linspace(0, 1, 100)
     y = np.sin(x * power)
 
-    # 結果 + ファイル添付
-    child.results["max_y"] = float(y.max())
-    child.results["min_y"] = float(y.min())
+    # 計算値も conditions に入れておく。Web UI の条件カラム表示や散布図
+    # の軸候補として扱いやすくなる (results は「最終的な実験結果」用に
+    # 取っておく方針)。後から追加するときは conditions() メソッドを使う。
+    child.conditions(
+        max_y=float(y.max()),
+        min_y=float(y.min()),
+    )
 
+    # ファイル添付
     fig, ax = plt.subplots()
     ax.plot(x, y)
     child.save("plot.png", fig)
@@ -210,7 +215,7 @@ series.status = "success"
 
 # 子レコード一覧を確認
 for c in series.children():
-    print(c.id, c.title, c.results.to_dict())
+    print(c.id, c.title, c.get_conditions())
 ```
 
 ### ポイント
@@ -219,7 +224,10 @@ for c in series.children():
   ような top-level 呼び出しではなく **親オブジェクトから生やす**
 - 子の `parent_id` には自動で親の id が入り、Web UI で「親詳細 → 子
   レコード」セクションに表示される
-- 子も親と同じく `conditions / results / save / status` が使える
+- 子も親と同じく `conditions() / results[...] / save() / status` が使える
+- **`conditions()` は何度でも呼べる** (上書き / 追加)。`sub()` の
+  キーワード引数として渡すのは初期値、後で計算した値は
+  `child.conditions(max_y=..., ...)` で追記する
 - **使い分け**: 「1 サンプル / 1 測定 = 子」「シリーズ全体 = 親」が
   典型。条件 scan (power, target, temperature 等を変えた繰り返し測定)
   や、装置別の連続測定で重宝する
@@ -243,8 +251,7 @@ Web UI を開く (or リロード) →
      子の結果が点として並ぶ
    - 点を hover でラベル表示、クリックで子の詳細に飛べる
 3. 子の 1 つ (`power=10W`) を開く:
-   - 条件 (`power: 10`)
-   - 結果 (`max_y`, `min_y`)
+   - 条件 (`power: 10`, `max_y`, `min_y`)
    - 添付ファイル `plot.png` プレビュー表示
    - `parent_id` に親 series の id が入っている (詳細上部)
 4. 「メモ」を追加してみる: 「初回テスト」など
