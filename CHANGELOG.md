@@ -4,6 +4,48 @@
 で記録する。バージョン番号は [Semantic Versioning](https://semver.org/) に
 従う (`MAJOR.MINOR.PATCH`、SDK API or backend API の破壊的変更は MAJOR)。
 
+## [0.2.1] - 2026-06-03
+
+### Changed
+
+- **`labvault auth set-token` の `--user` default** (PR #38): `--verify`
+  で取れた PAT 発行者 email を `LABVAULT_USER` の default に自動採用
+  する。装置 PC のように複数人で 1 つの credentials を共有する場合は
+  `--user instrument-xrd-1` のように明示する運用を強く推奨 (stdout
+  と docs で警告を出す)。
+- **`labvault doctor` の PAT モード注釈** (PR #38): PAT モード時、
+  GCP project / Nextcloud direct URL の行末に `(PAT モードでは未使用)`
+  を付加し、「未設定でも正常」を視覚的に伝える。
+- **`labvault doctor` の「次のステップ」hints** (PR #38): 0.2.0 で
+  入りそびれていた hints セクションを改めて入れる。認証ゼロ → ADC
+  推奨 + PAT 代替、Mixed → ADC に寄せる警告、team / user / nextcloud
+  個別ヒント。
+
+### Added — Web UI
+
+- **トークン画面の使い方サンプル** (PR #36):
+  - 発行成功カードに `labvault auth set-token` のコマンドを 1 番目に
+    追加 (pip install / credentials は補足扱い)。
+  - 「有効なトークン」リストの行をクリックすると accordion 展開し、
+    使い方サンプルが表示される (raw token は再表示不可なので
+    `<YOUR_TOKEN>` プレースホルダ + 「失くしたら再発行」案内)。
+
+### Docs
+
+- **`docs/onboarding.md`** (PR #37): 新規メンバー向けの 30 分セット
+  アップガイド。Web UI 承認 → SDK install (ADC / PAT) → Notebook で
+  親 + 子レコード作成 → Web UI で確認 → 詰まったら、までを 1 ファイル
+  に集約。
+- **README §3.3 / `docs/instrument_pc_setup.md` §3**: 「装置 PC では
+  `--user` 明示」の注意ブロックを追加。
+
+### Notes
+
+破壊的変更なし。0.2.0 からのアップグレードは `pip install -U` で OK。
+\`labvault auth set-token\` を `--user` 省略で叩いた挙動だけが変わる
+(これまで書かれなかったが、これからは PAT 発行者 email が default で
+書かれる)。
+
 ## [0.2.0] - 2026-06-03
 
 ### Added — オンボーディング動線
