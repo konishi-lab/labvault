@@ -4,6 +4,39 @@
 で記録する。バージョン番号は [Semantic Versioning](https://semver.org/) に
 従う (`MAJOR.MINOR.PATCH`、SDK API or backend API の破壊的変更は MAJOR)。
 
+## [0.2.3] - 2026-06-03
+
+### Added
+
+- **`results[]` の単位記法 (conditions と対称)**:
+  `record.results["peak"] = (0.97, "V")` / `(0.97, "V", "ピーク電圧")`
+  の tuple 記法を受け付けるよう `_ResultsProxy.__setitem__` を拡張。
+  既存のスカラー代入 (`results["lattice_a"] = 2.873`) は引き続き動く
+  ので後方互換。
+- **`Record.get_result_descriptions()`** と内部 `_result_descriptions`
+  辞書を追加 (conditions 側と並列の構造に)。`to_dict` / `from_dict`
+  で永続化。
+- **Backend `PATCH /api/records/{id}/result_units`**: condition 側の
+  `/units` と対称な新エンドポイント。`_result_units` /
+  `_result_descriptions` を更新する。
+- **Web UI 結果カードの単位編集**: ResultsCard を ConditionsCard と
+  同じ「row クリック → 単位 + 説明を編集」インラインフォームに揃え
+  た。`[unit]` 青字 chip と `— 説明` の表示は両カード同形。
+
+### Docs
+
+- **`docs/onboarding.md`**: 4.3 単位の扱いを書き直し、conditions /
+  results 両対応の tuple 記法をメインに案内。results に何を入れて
+  良いか (スカラー + 小リスト) / 入れない方が良いか (画像・大配列は
+  ファイル添付に) のガイドも追加。
+
+### Notes
+
+破壊的変更なし。0.2.2 からのアップグレードは `pip install -U` で OK。
+Frontend / Backend は同タイミングのデプロイで `result_descriptions`
+フィールドを認識する (古い frontend に新 backend を返しても余剰
+フィールドは Pydantic で無視される)。
+
 ## [0.2.2] - 2026-06-03
 
 ### Changed

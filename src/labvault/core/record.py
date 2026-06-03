@@ -26,14 +26,36 @@ if TYPE_CHECKING:
 
 
 class _ResultsProxy:
-    """dict-like proxy. __setitem__ で Record の dirty フラグを立てる。"""
+    """dict-like proxy. __setitem__ で Record の dirty フラグを立てる。
+
+    値は スカラー / (値, 単位) tuple / (値, 単位, 説明) tuple のいずれかを
+    受け付ける。tuple 記法のときは Record._result_units / _result_descriptions
+    にも書き戻す (conditions と対称な API)。
+    """
 
     def __init__(self, record: Record) -> None:
         self._record = record
         self._data: dict[str, Any] = {}
 
     def __setitem__(self, key: str, value: Any) -> None:
-        self._data[key] = value
+        from labvault.core.units import validate_unit
+
+        if isinstance(value, tuple):
+            if len(value) == 2:
+                actual, unit = value
+                self._data[key] = actual
+                validate_unit(unit)
+                self._record._result_units[key] = unit
+            elif len(value) >= 3:
+                actual, unit, desc = value[0], value[1], value[2]
+                self._data[key] = actual
+                validate_unit(unit)
+                self._record._result_units[key] = unit
+                self._record._result_descriptions[key] = str(desc)
+            else:
+                self._data[key] = value[0]
+        else:
+            self._data[key] = value
         self._record._persist()
 
     def __getitem__(self, key: str) -> Any:
@@ -124,6 +146,7 @@ class Record:
         self._condition_units: dict[str, str] = {}
         self._condition_descriptions: dict[str, str] = {}
         self._result_units: dict[str, str] = {}
+        self._result_descriptions: dict[str, str] = {}
         self._results = _ResultsProxy(self)
         if results_data:
             self._results._load(results_data)
@@ -353,6 +376,10 @@ class Record:
     def get_result_units(self) -> dict[str, str]:
         """結果の単位マップを返す。"""
         return dict(self._result_units)
+
+    def get_result_descriptions(self) -> dict[str, str]:
+        """結果の説明マップを返す。"""
+        return dict(self._result_descriptions)
 
     def tag(self, *tags: str) -> Record:
         """タグを追加する。"""
@@ -873,6 +900,7 @@ class Record:
             "condition_descriptions": dict(self._condition_descriptions),
             "results": self._results.to_dict(),
             "result_units": dict(self._result_units),
+            "result_descriptions": dict(self._result_descriptions),
             "events": list(self._events),
             "deleted_at": (self._deleted_at.isoformat() if self._deleted_at else None),
             "parent_id": self._parent_id,
@@ -975,6 +1003,7 @@ class Record:
         rec._condition_units = dict(data.get("condition_units") or {})
         rec._condition_descriptions = dict(data.get("condition_descriptions") or {})
         rec._result_units = dict(data.get("result_units") or {})
+        rec._result_descriptions = dict(data.get("result_descriptions") or {})
         return rec
 
 

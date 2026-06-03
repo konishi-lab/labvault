@@ -61,6 +61,7 @@ export interface RecordDetail extends RecordSummary {
   condition_descriptions: Record<string, string>;
   results: Record<string, unknown>;
   result_units: Record<string, string>;
+  result_descriptions: Record<string, string>;
   notes: NoteResponse[];
   files: FileInfo[];
   links: LinkResponse[];
@@ -198,6 +199,20 @@ export async function updateUnits(
     body: JSON.stringify({ units, descriptions: descriptions || {} }),
   });
   if (!res.ok) throw new Error(`Failed to update units: ${res.status}`);
+  return res.json();
+}
+
+export async function updateResultUnits(
+  id: string,
+  units: Record<string, string>,
+  descriptions?: Record<string, string>
+): Promise<RecordDetail> {
+  const res = await authFetch(`${API_BASE}/api/records/${id}/result_units`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ units, descriptions: descriptions || {} }),
+  });
+  if (!res.ok) throw new Error(`Failed to update result units: ${res.status}`);
   return res.json();
 }
 

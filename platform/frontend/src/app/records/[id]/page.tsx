@@ -395,9 +395,18 @@ export default function RecordDetailPage() {
         {/* 結果 */}
         {results.length > 0 && (
           <ResultsCard
+            recordId={id}
             results={results}
             units={record.result_units || {}}
+            descriptions={record.result_descriptions || {}}
             allResults={record.results}
+            onUpdate={(units, descs) =>
+              setRecord({
+                ...record,
+                result_units: units,
+                result_descriptions: descs,
+              })
+            }
           />
         )}
 

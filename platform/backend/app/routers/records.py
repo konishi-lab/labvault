@@ -18,6 +18,7 @@ from ..schemas import (
     RecordDetail,
     RecordListResponse,
     RecordSummary,
+    ResultUnitsUpdate,
     ResultUpdate,
     StatusUpdate,
     TagsUpdate,
@@ -58,6 +59,7 @@ def _to_detail(rec: Any) -> RecordDetail:
         condition_descriptions=rec.get_condition_descriptions(),
         results=rec.results.to_dict(),
         result_units=rec.get_result_units(),
+        result_descriptions=rec.get_result_descriptions(),
         notes=[
             {"text": n.text, "created_at": n.created_at, "author": n.author}
             for n in rec.notes
@@ -383,6 +385,22 @@ def update_units(
     rec._condition_units.update(body.units)
     if body.descriptions:
         rec._condition_descriptions.update(body.descriptions)
+    rec._persist()
+    return _to_detail(rec)
+
+
+@router.patch("/{record_id}/result_units", response_model=RecordDetail)
+def update_result_units(
+    record_id: str,
+    body: ResultUnitsUpdate,
+    lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
+) -> RecordDetail:
+    """結果の単位と説明を更新する (conditions 側と対称)."""
+    rec = _get_and_stamp(lab, record_id, user)
+    rec._result_units.update(body.units)
+    if body.descriptions:
+        rec._result_descriptions.update(body.descriptions)
     rec._persist()
     return _to_detail(rec)
 

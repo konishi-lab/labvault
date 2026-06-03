@@ -212,10 +212,10 @@ for power in [5, 10, 20]:
 
     # ── 結果側: 「この測定の結論はこれ」という主結果を 1〜数件だけ
     # 詳細ページの「結果」カードに並ぶ。後段の解析の入力にもなる。
-    # results 側は現状 tuple での単位記法が無いので、単位はキー名の
-    # suffix で表現するのが定石 (詳細は 4.3 単位の扱い)。
-    child.results["peak_value_V"] = peak
-    child.results["mean_y_V"] = float(y.mean())
+    # conditions と対称に (値, "単位") / (値, "単位", "説明") の tuple
+    # 記法が使える (0.2.3 以降)。
+    child.results["peak_value"] = (peak, "V", "出力電圧のピーク")
+    child.results["mean_y"] = (float(y.mean()), "V")
 
     # ファイル添付
     fig, ax = plt.subplots()
@@ -227,8 +227,12 @@ for power in [5, 10, 20]:
     peak_values.append(peak)
 
 # シリーズ全体にも代表値を結果として残す (scan の要約)
-series.results["max_peak_V"] = max(peak_values)
-series.results["best_power_W"] = [5, 10, 20][peak_values.index(max(peak_values))]
+series.results["max_peak"] = (max(peak_values), "V")
+series.results["best_power"] = (
+    [5, 10, 20][peak_values.index(max(peak_values))],
+    "W",
+    "最大ピークを出した power",
+)
 series.status = "success"
 
 # 子レコード一覧を確認
@@ -253,7 +257,11 @@ for c in series.children():
     得られた中間値」もここに置くと一覧が見やすい
   - **results** = 「この測定の結論 / headline 値」。詳細ページの
     『結果』カードに並び、後段の解析や論文表でそのまま拾える 1〜
-    数件の主結果を入れる (`peak_value`, `lattice_a`, `phase` 等)
+    数件の主結果を入れる (`peak_value`, `lattice_a`, `phase` 等)。
+    入れていいのはスカラー (int / float / str / bool) + 小さな
+    リスト / dict まで。**画像・大きな配列・生データはファイル添付**
+    (`record.save("plot.png", fig)` / `record.save("data.npy", arr)`)
+    に回す
   - 親 (series) の `results` には scan の要約 (`max_peak`,
     `best_power_W` など) を 1〜数件残しておくと、後から
     Dashboard 検索で「最大ピーク値が高いシリーズ」を絞り込める
@@ -264,50 +272,30 @@ for c in series.children():
 ### 4.3 単位の扱い
 
 数値には **必ず単位** を付ける癖を付けると後の比較・検索・論文化が
-楽になる。labvault では「単位を値と一緒に残す」方法が 3 つある。
-
-labvault の単位は **conditions と results で扱いが非対称** です。
-書き手側 API は conditions に揃っているので、まずは conditions に
-寄せるのがいまの最適解。
-
-#### conditions 側 (公式 API あり)
+楽になる。0.2.3 以降、conditions / results 両方で **同じ tuple 記法**
+が使えます。
 
 | 方法 | 書き方 | 用途 |
 |---|---|---|
-| (a) tuple で値+単位 | `conditions(power=(20, "W"))` | 一番きれい |
-| (b) tuple で値+単位+説明 | `conditions(power=(20, "W", "レーザー出力"))` | hover で説明が出る |
+| (a) tuple で値+単位 | `conditions(power=(20, "W"))` / `results["peak"] = (0.97, "V")` | 一番きれい |
+| (b) tuple で値+単位+説明 | `(20, "W", "レーザー出力")` | hover で説明が出る |
 | (c) template で auto-fill | template の `condition_fields[].unit` | 値だけ書けば template が単位を補完 (例: XRD template の `wavelength_A`) |
-| (d) Web UI で後付け | 詳細ページの条件 row をクリック → 単位 + 説明を編集 | 既存 record の単位を後から直す |
+| (d) Web UI で後付け | 詳細ページの条件 / 結果 row をクリック → 単位 + 説明を編集 | 既存 record の単位を後から直す。両方対応 |
+| (e) パーサーから自動 | `template.file_parsers` 経由で `add()` → parser output の `units` dict が `result_units` に流れ込む | `.ras` / `.vk4` 等の組み込みパーサー |
 
-Web UI では条件カードに `key [unit]: value` の形で青字 chip 付き
-で表示される (`(b)` を使うと `— 説明` も並ぶ)。
-
-#### results 側 (書き手側の公式 API は今のところ無い)
-
-`results["peak_value"] = 0.97` のように **値しか書けない** のが
-現状の SDK API です。tuple 記法は未対応、Web UI の「単位編集」も
-conditions のみ。表示側 (ResultsCard) は `result_units[key]` を
-読んで `[unit]` を render するので、値さえ入れば見える。
-
-書き手としての現実的な選択肢:
-
-- **(e) キー名に単位 suffix を埋め込む** ← オンボーディングではこれを推奨。
-  `peak_value_V`, `lattice_a`, `temperature_C`, `mean_yield_pct`
-  のように、論文表の列名そのまま使える suffix が便利。
-- **(f) パーサーから自動で入れる** — `template.file_parsers` 経由で
-  `add()` した binary がパーサー output に `units` dict を返せば、
-  `_result_units` に流し込まれる (`.analyze()` 内部)。`.ras` /
-  `.vk4` 等の組み込みパーサーがこの経路。
-- **(g) Private attribute に直書き**: `rec._result_units["peak_value"]
-  = "V"` で技術的には可能だが、private API なので将来の breakage を
-  覚悟する人向け。public 化要望は別 issue で。
+Web UI では条件 / 結果カードどちらも `key [unit]: value` の青字 chip
+付きで表示され、`(b)` を使った場合は `— 説明` も並びます。
 
 **実務的なおすすめ**:
 
-- conditions は (a) / (b) の tuple 記法でしっかり単位を残す。
-  template 登録済みキーなら (c) で値だけ書けば自動補完される。
-- results は (e) の suffix が一番安全。パーサー経由で自動充填される
-  template (XRD / Raman 等) を使えば (f) で勝手に入る。
+- 数値は基本 (a) の tuple 記法で書く (`power=(20, "W")`, `results["peak"] = (0.97, "V")`)
+- 後で論文表にしたい / 解析で使い回したい値は (b) で説明も付けておくと self-documenting
+- template に登録した key (XRD の `target` / `wavelength_A` 等) は (c) の auto-fill で値だけ書けば OK
+- 装置パーサーがある測定 (.ras / .vk4) は (e) で勝手に単位が入る
+- 既存 record を後から直すのは (d) (Web UI 詳細ページで row クリック)
+
+> **互換性メモ**: 既存の `results["lattice_a"] = 2.873` のような
+> スカラー代入は引き続き動きます。tuple 記法は追加 API。
 
 ### 4.4 セル自動記録
 
