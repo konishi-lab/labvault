@@ -73,7 +73,7 @@ pip install keyring keyrings.google-artifactregistry-auth
 # labvault 本体
 pip install \
   --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 ```
 
 - [ ] `pip show labvault` の version が pyproject.toml と一致
@@ -100,7 +100,7 @@ pip install keyring keyrings.google-artifactregistry-auth
 # labvault 本体
 pip install `
   --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ `
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 ```
 
 - [ ] `.venv\Scripts\Activate.ps1` の実行ポリシー (Set-ExecutionPolicy) で
@@ -155,7 +155,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install \
   --index-url https://pypi.org/simple/ \
   --extra-index-url "${PROXY}" \
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 ```
 
 **Windows (PowerShell)**:
@@ -169,7 +169,7 @@ python -m venv .venv
 pip install `
   --index-url https://pypi.org/simple/ `
   --extra-index-url "$PROXY" `
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 ```
 
 - [ ] gcloud / keyring_helper を入れずに install できる

@@ -43,7 +43,7 @@ python -m venv ~/labvault-venv && source ~/labvault-venv/bin/activate
 pip install \
   --index-url https://pypi.org/simple/ \
   --extra-index-url "${PROXY}" \
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 ```
 
 **Windows (PowerShell)**:
@@ -58,7 +58,7 @@ $HOME\labvault-venv\Scripts\Activate.ps1
 pip install `
   --index-url https://pypi.org/simple/ `
   --extra-index-url "$PROXY" `
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 ```
 
 依存ライブラリ (httpx / pydantic 等) は public PyPI から取られるので、labvault wheel 本体だけが proxy 経由。装置 PC は public PyPI と `labvault-api-...run.app` への HTTPS 到達性があれば OK。
@@ -70,7 +70,7 @@ pip install `
 > extra-index-url = https://__token__:lv_xxx@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/
 > ```
 >
-> その上で `pip install "labvault[gcp,nextcloud]"` で済む。
+> その上で `pip install "labvault[all]"` で済む。
 
 ### 3. 装置 PC の `~/.labvault/credentials` に設定
 

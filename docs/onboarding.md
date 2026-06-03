@@ -91,7 +91,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install keyring keyrings.google-artifactregistry-auth
 pip install \
   --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 
 # 4. .env をカレントディレクトリに置く (your-name は自分の名前に書き換える)
 #    gcp_project / firestore_database / platform_url / nextcloud_url は
@@ -129,7 +129,7 @@ python -m venv .venv
 pip install `
   --index-url https://pypi.org/simple/ `
   --extra-index-url "$PROXY" `
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 
 # SDK 認証 (~/.labvault/credentials を 1 行で作る)
 echo $env:PAT | labvault auth set-token --token-stdin --user instrument-xrd-1
