@@ -236,7 +236,8 @@ def test_set_token_explicit_user_overrides_email(
 
 
 def test_set_token_no_user_when_no_verify(home: Path) -> None:
-    """`--no-verify` で email が取れないと、--user 未指定なら LABVAULT_USER を書かない。"""
+    """`--no-verify` で email が取れないと、--user 未指定なら
+    LABVAULT_USER を書かない。"""
     code, out = _run(["auth", "set-token", "--token", "lv_xx", "--no-verify"])
     assert code == 0, out
     creds = (home / ".labvault" / "credentials").read_text()
