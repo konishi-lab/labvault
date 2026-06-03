@@ -190,6 +190,8 @@ print(series.id)  # 例: P2BV1M
 import numpy as np
 import matplotlib.pyplot as plt
 
+peak_values: list[float] = []
+
 for power in [5, 10, 20]:
     # 親.sub() で子レコードを作成。条件もここで渡せる
     child = series.sub(f"power={power}W", power=power)
@@ -197,14 +199,19 @@ for power in [5, 10, 20]:
     # 何か計算
     x = np.linspace(0, 1, 100)
     y = np.sin(x * power)
+    peak = float(y.max())
 
-    # 計算値も conditions に入れておく。Web UI の条件カラム表示や散布図
-    # の軸候補として扱いやすくなる (results は「最終的な実験結果」用に
-    # 取っておく方針)。後から追加するときは conditions() メソッドを使う。
+    # ── 条件側: scan 軸 + 散布図の軸候補として残したい数値
+    # 後から追加するときは conditions() メソッドを使う。複数回呼んでも OK。
     child.conditions(
-        max_y=float(y.max()),
+        max_y=peak,
         min_y=float(y.min()),
     )
+
+    # ── 結果側: 「この測定の結論はこれ」という主結果を 1〜数件だけ
+    # 詳細ページの「結果」カードに並ぶ。後段の解析の入力にもなる。
+    child.results["peak_value"] = peak
+    child.results["mean_y"] = float(y.mean())
 
     # ファイル添付
     fig, ax = plt.subplots()
@@ -213,13 +220,16 @@ for power in [5, 10, 20]:
     plt.close(fig)
 
     child.status = "success"
+    peak_values.append(peak)
 
-# シリーズ全体も完了マーク
+# シリーズ全体にも代表値を結果として残す (scan の要約)
+series.results["max_peak"] = max(peak_values)
+series.results["best_power_W"] = [5, 10, 20][peak_values.index(max(peak_values))]
 series.status = "success"
 
 # 子レコード一覧を確認
 for c in series.children():
-    print(c.id, c.title, c.get_conditions())
+    print(c.id, c.title, c.get_conditions(), dict(c.results.items()))
 ```
 
 ### ポイント
@@ -232,6 +242,17 @@ for c in series.children():
 - **`conditions()` は何度でも呼べる** (上書き / 追加)。`sub()` の
   キーワード引数として渡すのは初期値、後で計算した値は
   `child.conditions(max_y=..., ...)` で追記する
+- **conditions と results の使い分け**:
+  - **conditions** = 「scan の入力 + 散布図の軸候補にしたい数値」。
+    Web UI のレコード一覧の条件カラム / 散布図の X / Y 候補に出る。
+    `power` のような scan parameter + `max_y` のような「測定中に
+    得られた中間値」もここに置くと一覧が見やすい
+  - **results** = 「この測定の結論 / headline 値」。詳細ページの
+    『結果』カードに並び、後段の解析や論文表でそのまま拾える 1〜
+    数件の主結果を入れる (`peak_value`, `lattice_a`, `phase` 等)
+  - 親 (series) の `results` には scan の要約 (`max_peak`,
+    `best_power_W` など) を 1〜数件残しておくと、後から
+    Dashboard 検索で「最大ピーク値が高いシリーズ」を絞り込める
 - **使い分け**: 「1 サンプル / 1 測定 = 子」「シリーズ全体 = 親」が
   典型。条件 scan (power, target, temperature 等を変えた繰り返し測定)
   や、装置別の連続測定で重宝する
@@ -255,11 +276,14 @@ Web UI を開く (or リロード) →
      子の結果が点として並ぶ
    - 点を hover でラベル表示、クリックで子の詳細に飛べる
 3. 子の 1 つ (`power=10W`) を開く:
-   - 条件 (`power: 10`, `max_y`, `min_y`)
+   - **条件カード**: `power: 10`, `max_y`, `min_y`
+   - **結果カード**: `peak_value`, `mean_y` (主結果として並ぶ)
    - 添付ファイル `plot.png` プレビュー表示
    - `parent_id` に親 series の id が入っている (詳細上部)
-4. 「メモ」を追加してみる: 「初回テスト」など
-5. **タグでフィルタ**: 一覧で `?tags=your-name` を試すと自分のだけ抽出
+4. 親 series を開き直すと、**結果カード**に `max_peak` /
+   `best_power_W` が並んでいるはず (scan の要約)
+5. 「メモ」を追加してみる: 「初回テスト」など
+6. **タグでフィルタ**: 一覧で `?tags=your-name` を試すと自分のだけ抽出
 
 ここまで来れば一通り回ったことになる 🎉
 
