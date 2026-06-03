@@ -116,9 +116,9 @@ pip install `
 ```bash
 LABVAULT_TEAM=konishi-lab
 LABVAULT_USER=your-name
-LABVAULT_GCP_PROJECT=klab-laser-process
-LABVAULT_FIRESTORE_DATABASE=labvault
-LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+# 0.2.2 以降、gcp_project / firestore_database / platform_url /
+# nextcloud_url / nextcloud_group_folder は SDK 同梱 default で動く。
+# 別 GCP project や別研究室に向けたいときだけ env で上書きする。
 ```
 
 - [ ] `labvault doctor` で `mode: Direct mode` か `Mixed mode` と表示

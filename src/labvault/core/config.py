@@ -32,13 +32,16 @@ class Settings(BaseSettings):
 
     team: str = ""
     user: str = ""
-    gcp_project: str = ""
-    firestore_database: str = "(default)"
-    nextcloud_url: str = ""
+    # 以下 5 つは konishi-lab 本番運用の固定値。env / .env / credentials
+    # で上書きすれば変更可能。他研究室にコピーして使う場合はここを
+    # 書き換えるか、env で明示的に指定する。
+    gcp_project: str = "klab-laser-process"
+    firestore_database: str = "labvault"
+    nextcloud_url: str = "https://arim.mdx.jp/nextcloud"
     nextcloud_user: str = ""
     nextcloud_password: str = ""
-    nextcloud_group_folder: str = ""
-    platform_url: str = ""
+    nextcloud_group_folder: str = "large/24UTARIM004"
+    platform_url: str = "https://labvault-api-355809880738.asia-northeast1.run.app"
     # Artifact Registry repo の full resource name (運用スクリプト用)。
     # 例: projects/<proj>/locations/<region>/repositories/labvault-pypi
     ar_repo: str = ""

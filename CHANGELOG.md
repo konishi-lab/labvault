@@ -4,6 +4,37 @@
 で記録する。バージョン番号は [Semantic Versioning](https://semver.org/) に
 従う (`MAJOR.MINOR.PATCH`、SDK API or backend API の破壊的変更は MAJOR)。
 
+## [0.2.2] - 2026-06-03
+
+### Changed
+
+- **`Settings` に konishi-lab 本番運用の default を組み込み**:
+  `gcp_project="klab-laser-process"` /
+  `firestore_database="labvault"` /
+  `nextcloud_url="https://arim.mdx.jp/nextcloud"` /
+  `nextcloud_group_folder="large/24UTARIM004"` /
+  `platform_url="https://labvault-api-355809880738.asia-northeast1.run.app"`
+  を `src/labvault/core/config.py` の field default に持たせた。
+  これにより `.env` は最小で `LABVAULT_TEAM=konishi-lab` +
+  `LABVAULT_USER=...` の 2 行で動く。他研究室で使う場合 / 別 GCP
+  project に向けたい場合は env で明示的に上書きする。
+- **`labvault doctor` 表示**: PAT モード時の「GCP project: not set
+  (PAT モードでは未使用)」は、default が入っていることで
+  「GCP project: klab-laser-process (PAT モードでは未使用)」になる。
+  値が見えても PAT モードでは使われないことが注釈で伝わる。
+
+### Docs
+
+- **README §2.2 / §セットアップ §2 / `docs/onboarding.md` §3-A /
+  `docs/qa_checklist.md` §1.3**: ADC 用 `.env` の例を 2 行 (team /
+  user) に短縮。残りは default で動くことを補足コメントで案内。
+
+### Notes
+
+破壊的変更なし (default 値は従来 `.env` に書いていたものと同一)。
+本リポジトリで開発する限り、SDK のアップデート (`pip install -U`)
+だけで OK。
+
 ## [0.2.1] - 2026-06-03
 
 ### Changed

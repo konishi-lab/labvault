@@ -159,12 +159,15 @@ pip install \
 ```bash
 LABVAULT_TEAM=konishi-lab
 LABVAULT_USER=your-name
-LABVAULT_GCP_PROJECT=klab-laser-process
-LABVAULT_FIRESTORE_DATABASE=labvault
-LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
 ```
 
 → `gcloud auth application-default login` の credential を使って Firestore/Vertex AI にアクセス。Nextcloud credential は backend 経由で都度取得。`labvault doctor` で `mode: Direct mode` か `Mixed mode` と出れば OK。
+
+> `LABVAULT_GCP_PROJECT` / `LABVAULT_FIRESTORE_DATABASE` /
+> `LABVAULT_PLATFORM_URL` / `LABVAULT_NEXTCLOUD_URL` /
+> `LABVAULT_NEXTCLOUD_GROUP_FOLDER` は **konishi-lab 本番運用の値が SDK の
+> default に組み込まれている** ので、特に他研究室や別 GCP project に向け
+> たい場合だけ env で上書きしてください (0.2.2 以降)。
 
 ---
 
@@ -243,6 +246,21 @@ echo "$PAT" | labvault auth set-token --token-stdin --user instrument-xrd-1
 - 既存の credentials があれば `--force` を要求
 - Unix では `chmod 600`、Windows では `icacls` で本人のみに絞る
 
+> **手書きでも可** (0.2.2 以降): `platform_url` が SDK の default に
+> 入っているので、自分でファイルを書く場合は最小で
+> `LABVAULT_TOKEN=lv_xxx` + `LABVAULT_TEAM=konishi-lab` の 2 行で PAT
+> モードが成立します。`auth set-token` は検証 + 安全な書き込み + 推奨
+> 注釈までやるので CLI 経由を推奨ですが、手書き派の方の最小例は:
+>
+> ```bash
+> cat > ~/.labvault/credentials << 'EOF'
+> LABVAULT_TOKEN=lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+> LABVAULT_TEAM=konishi-lab
+> LABVAULT_USER=your-name
+> EOF
+> chmod 600 ~/.labvault/credentials
+> ```
+
 設定後の確認:
 
 ```bash
@@ -288,18 +306,19 @@ cp .env.example .env
 ```bash
 LABVAULT_TEAM=konishi-lab
 LABVAULT_USER=your-name
-LABVAULT_GCP_PROJECT=klab-laser-process
-LABVAULT_FIRESTORE_DATABASE=labvault
 
-# 推奨: Nextcloud credentials を platform 経由で取得 (ADC 認証)。
-# ローカルに Nextcloud password を置く必要なし。
-LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+# 以下の 5 つは konishi-lab 本番運用の値が SDK の default に組み込
+# まれているため、本リポジトリで開発する限りは設定不要 (上書きしたい
+# ときだけコメントを外す)。
+# LABVAULT_GCP_PROJECT=klab-laser-process
+# LABVAULT_FIRESTORE_DATABASE=labvault
+# LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
+# LABVAULT_NEXTCLOUD_URL=https://arim.mdx.jp/nextcloud
+# LABVAULT_NEXTCLOUD_GROUP_FOLDER=large/24UTARIM004
 
 # 開発用: platform を経由せず直接 Nextcloud に繋ぐ場合のみ設定
-# LABVAULT_NEXTCLOUD_URL=https://arim.mdx.jp/nextcloud
 # LABVAULT_NEXTCLOUD_USER=arim00065
 # LABVAULT_NEXTCLOUD_PASSWORD=...
-# LABVAULT_NEXTCLOUD_GROUP_FOLDER=large/24UTARIM004
 ```
 
 ### 3. GCP (Firestore) セットアップ
