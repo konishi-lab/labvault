@@ -199,6 +199,38 @@ class TestResults:
         fetched = lab.get(rec.id)
         assert fetched.results["val"] == 42
 
+    def test_tuple_value_unit(self, lab: Lab) -> None:
+        """`results[k] = (value, unit)` → 値と単位が分離して格納される。"""
+        rec = lab.new("テスト")
+        rec.results["peak"] = (0.97, "V")
+        assert rec.results["peak"] == 0.97
+        assert rec.get_result_units() == {"peak": "V"}
+        assert rec.get_result_descriptions() == {}
+
+    def test_tuple_value_unit_description(self, lab: Lab) -> None:
+        """`results[k] = (value, unit, description)` → 3 要素も受け付ける。"""
+        rec = lab.new("テスト")
+        rec.results["peak"] = (0.97, "V", "ピーク電圧")
+        assert rec.results["peak"] == 0.97
+        assert rec.get_result_units() == {"peak": "V"}
+        assert rec.get_result_descriptions() == {"peak": "ピーク電圧"}
+
+    def test_tuple_persist_roundtrip(self, lab: Lab) -> None:
+        """tuple 経由で書いた単位・説明が round-trip で復元される。"""
+        rec = lab.new("テスト")
+        rec.results["lattice_a"] = (2.873, "Å", "格子定数")
+        fetched = lab.get(rec.id)
+        assert fetched.results["lattice_a"] == 2.873
+        assert fetched.get_result_units() == {"lattice_a": "Å"}
+        assert fetched.get_result_descriptions() == {"lattice_a": "格子定数"}
+
+    def test_scalar_assignment_still_works(self, lab: Lab) -> None:
+        """既存のスカラー代入は依然として動く (後方互換)."""
+        rec = lab.new("テスト")
+        rec.results["lattice_a"] = 2.873
+        assert rec.results["lattice_a"] == 2.873
+        assert rec.get_result_units() == {}
+
 
 class TestLogValueAndEvent:
     """log_value / log_event のテスト。"""

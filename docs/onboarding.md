@@ -194,7 +194,8 @@ peak_values: list[float] = []
 
 for power in [5, 10, 20]:
     # 親.sub() で子レコードを作成。条件もここで渡せる
-    child = series.sub(f"power={power}W", power=power)
+    # (値, "単位") のタプルで渡すと単位も一緒に記録される
+    child = series.sub(f"power={power}W", power=(power, "W"))
 
     # 何か計算
     x = np.linspace(0, 1, 100)
@@ -203,15 +204,18 @@ for power in [5, 10, 20]:
 
     # ── 条件側: scan 軸 + 散布図の軸候補として残したい数値
     # 後から追加するときは conditions() メソッドを使う。複数回呼んでも OK。
+    # 単位を付けたいときは (値, "単位") or (値, "単位", "説明") の tuple で渡す。
     child.conditions(
-        max_y=peak,
-        min_y=float(y.min()),
+        max_y=(peak, "V", "出力電圧の最大値"),
+        min_y=(float(y.min()), "V"),
     )
 
     # ── 結果側: 「この測定の結論はこれ」という主結果を 1〜数件だけ
     # 詳細ページの「結果」カードに並ぶ。後段の解析の入力にもなる。
-    child.results["peak_value"] = peak
-    child.results["mean_y"] = float(y.mean())
+    # conditions と対称に (値, "単位") / (値, "単位", "説明") の tuple
+    # 記法が使える (0.2.3 以降)。
+    child.results["peak_value"] = (peak, "V", "出力電圧のピーク")
+    child.results["mean_y"] = (float(y.mean()), "V")
 
     # ファイル添付
     fig, ax = plt.subplots()
@@ -223,8 +227,12 @@ for power in [5, 10, 20]:
     peak_values.append(peak)
 
 # シリーズ全体にも代表値を結果として残す (scan の要約)
-series.results["max_peak"] = max(peak_values)
-series.results["best_power_W"] = [5, 10, 20][peak_values.index(max(peak_values))]
+series.results["max_peak"] = (max(peak_values), "V")
+series.results["best_power"] = (
+    [5, 10, 20][peak_values.index(max(peak_values))],
+    "W",
+    "最大ピークを出した power",
+)
 series.status = "success"
 
 # 子レコード一覧を確認
@@ -249,13 +257,85 @@ for c in series.children():
     得られた中間値」もここに置くと一覧が見やすい
   - **results** = 「この測定の結論 / headline 値」。詳細ページの
     『結果』カードに並び、後段の解析や論文表でそのまま拾える 1〜
-    数件の主結果を入れる (`peak_value`, `lattice_a`, `phase` 等)
+    数件の主結果を入れる (`peak_value`, `lattice_a`, `phase` 等)。
+    入れていいのはスカラー (int / float / str / bool) + 小さな
+    リスト / dict まで。**画像・大きな配列・生データはファイル添付**
+    (`record.save("plot.png", fig)` / `record.save("data.npy", arr)`)
+    に回す
   - 親 (series) の `results` には scan の要約 (`max_peak`,
     `best_power_W` など) を 1〜数件残しておくと、後から
     Dashboard 検索で「最大ピーク値が高いシリーズ」を絞り込める
 - **使い分け**: 「1 サンプル / 1 測定 = 子」「シリーズ全体 = 親」が
   典型。条件 scan (power, target, temperature 等を変えた繰り返し測定)
   や、装置別の連続測定で重宝する
+
+### 4.3 単位の扱い
+
+数値には **必ず単位** を付ける癖を付けると後の比較・検索・論文化が
+楽になる。0.2.3 以降、conditions / results 両方で **同じ tuple 記法**
+が使えます。
+
+| 方法 | 書き方 | 用途 |
+|---|---|---|
+| (a) tuple で値+単位 | `conditions(power=(20, "W"))` / `results["peak"] = (0.97, "V")` | 一番きれい |
+| (b) tuple で値+単位+説明 | `(20, "W", "レーザー出力")` | hover で説明が出る |
+| (c) template で auto-fill | template の `condition_fields[].unit` | 値だけ書けば template が単位を補完 (例: XRD template の `wavelength_A`) |
+| (d) Web UI で後付け | 詳細ページの条件 / 結果 row をクリック → 単位 + 説明を編集 | 既存 record の単位を後から直す。両方対応 |
+| (e) パーサーから自動 | `template.file_parsers` 経由で `add()` → parser output の `units` dict が `result_units` に流れ込む | `.ras` / `.vk4` 等の組み込みパーサー |
+
+Web UI では条件 / 結果カードどちらも `key [unit]: value` の青字 chip
+付きで表示され、`(b)` を使った場合は `— 説明` も並びます。
+
+**実務的なおすすめ**:
+
+- 数値は基本 (a) の tuple 記法で書く (`power=(20, "W")`, `results["peak"] = (0.97, "V")`)
+- 後で論文表にしたい / 解析で使い回したい値は (b) で説明も付けておくと self-documenting
+- template に登録した key (XRD の `target` / `wavelength_A` 等) は (c) の auto-fill で値だけ書けば OK
+- 装置パーサーがある測定 (.ras / .vk4) は (e) で勝手に単位が入る
+- 既存 record を後から直すのは (d) (Web UI 詳細ページで row クリック)
+
+> **互換性メモ**: 既存の `results["lattice_a"] = 2.873` のような
+> スカラー代入は引き続き動きます。tuple 記法は追加 API。
+
+### 4.4 データの置き場所: `results` / `save` / `add` の使い分け
+
+1 つの測定で出てくるデータは、サイズと用途で 3 つの置き場所を使い
+分けます。
+
+| 置き場所 | API | 入れるもの | フォーマット変換 |
+|---|---|---|---|
+| **metadata field** | `record.results["key"] = ...` | スカラー / 小リスト / 小 dict (論文表に貼れる粒度) | なし |
+| **ファイル添付 (自動変換あり)** | `record.save(name, obj)` | Python オブジェクト全般 | 自動 (dict/list→JSON, ndarray→.npy, Figure→.png, DataFrame→.csv) |
+| **ファイル添付 (生バイト)** | `record.add(path_or_bytes)` | 既存ファイル / 装置出力バイナリ | なし |
+
+> `save` は **内部で `add` を呼ぶラッパー** です。違いは「型変換を
+> labvault に任せる (save) か、自分で済ませる (add) か」だけ。
+> `record.save("plot.png", fig)` ≈ `add(fig_to_png_bytes(fig), name="plot.png", content_type="image/png")`。
+
+選び方 (上から順に試す):
+
+1. **論文表の 1 行に貼れる小さな値か?** → `results["key"] = value`
+   (検索 / scatter / 結果カード表示で活躍)
+2. **Python オブジェクトを 1 行でファイル化したいか?** →
+   `record.save("plot.png", fig)` / `record.save("data.npy", arr)` /
+   `record.save("table.csv", df)` (内部で自動変換 → `add()`)
+3. **すでにファイルがある (装置出力など)?** →
+   `record.add("xrd_001.ras")` / `record.add("photo.jpg")`
+   (内容はそのまま。template にパーサーが紐付いていれば
+   add 時に自動で results に要約値が入る)
+
+```python
+# 典型例: 1 つの測定で 3 つを使い分ける
+child.results["peak_value"] = (0.97, "V")            # ① 主結果
+child.save("waveform.png", fig)                      # ② Figure を PNG に
+child.add("instrument_log.txt")                      # ③ 装置生ログをそのまま
+```
+
+> どれもファイルは Nextcloud、metadata は Firestore に行きます。
+> Firestore のドキュメントは **1 件 1 MB 上限** なので、画像や
+> 大きな配列は ① に入れず必ず ② / ③ にしてください。
+
+### 4.5 セル自動記録
 
 セルを順番に実行すると **各セルのコードと出力も自動で記録される**
 (IPython hooks が動いている)。
@@ -276,11 +356,15 @@ Web UI を開く (or リロード) →
      子の結果が点として並ぶ
    - 点を hover でラベル表示、クリックで子の詳細に飛べる
 3. 子の 1 つ (`power=10W`) を開く:
-   - **条件カード**: `power: 10`, `max_y`, `min_y`
-   - **結果カード**: `peak_value`, `mean_y` (主結果として並ぶ)
+   - **条件カード**: `power [W]: 10`, `max_y [V]: ...`, `min_y [V]: ...`
+     (tuple で渡した単位が `[ ]` で表示される。`max_y` は説明が入って
+     いるので名前を hover すると「出力電圧の最大値」がツールチップで
+     出る)
+   - **結果カード**: `peak_value_V`, `mean_y_V` (主結果として並ぶ。
+     単位はキー名 suffix で表現)
    - 添付ファイル `plot.png` プレビュー表示
    - `parent_id` に親 series の id が入っている (詳細上部)
-4. 親 series を開き直すと、**結果カード**に `max_peak` /
+4. 親 series を開き直すと、**結果カード**に `max_peak_V` /
    `best_power_W` が並んでいるはず (scan の要約)
 5. 「メモ」を追加してみる: 「初回テスト」など
 6. **タグでフィルタ**: 一覧で `?tags=your-name` を試すと自分のだけ抽出
