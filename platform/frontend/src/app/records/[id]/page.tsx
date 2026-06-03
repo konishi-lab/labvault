@@ -15,6 +15,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchRecord, fetchChildren, fetchChildrenConditions } from "@/lib/api";
 import type { RecordDetail, RecordSummary } from "@/lib/api";
+import { useAuthedBlobUrl, downloadAuthed } from "@/lib/authed-blob";
 import { BulkUploadButton } from "@/components/bulk-upload";
 import { SortableRecordTable } from "@/components/sortable-record-table";
 import { TagEditor } from "@/components/tag-editor";
@@ -100,30 +101,27 @@ function ImageThumbnail({
   label?: string;
   onClickExpand?: () => void;
 }) {
-  const [status, setStatus] = useState<"loading" | "loaded" | "error">(
-    "loading"
-  );
-  const url = imageUrl(recordId, filename);
+  const { src, loading, error } = useAuthedBlobUrl(imageUrl(recordId, filename));
 
   return (
     <div
       className="relative rounded-lg border bg-muted/30 p-1 cursor-pointer hover:ring-2 hover:ring-primary/30 transition-all"
       onClick={onClickExpand}
     >
-      {status === "loading" && <Skeleton className="h-40 w-full rounded" />}
-      {status === "error" && (
+      {loading && <Skeleton className="h-40 w-full rounded" />}
+      {error && (
         <p className="h-40 flex items-center justify-center text-xs text-muted-foreground">
           読み込めません
         </p>
       )}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={url}
-        alt={filename}
-        className={`w-full h-40 object-contain rounded ${status === "loaded" ? "" : "absolute opacity-0 pointer-events-none"}`}
-        onLoad={() => setStatus("loaded")}
-        onError={() => setStatus("error")}
-      />
+      {src && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt={filename}
+          className="w-full h-40 object-contain rounded"
+        />
+      )}
       {label && (
         <p className="text-xs text-center text-muted-foreground mt-1 truncate">
           {label}
@@ -142,15 +140,29 @@ function ImageModal({
   filename: string;
   onClose: () => void;
 }) {
-  const url = imageUrl(recordId, filename);
+  const { src, loading, error } = useAuthedBlobUrl(imageUrl(recordId, filename));
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
       onClick={onClose}
     >
       <div className="relative max-w-[90vw] max-h-[90vh]">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={url} alt={filename} className="max-w-full max-h-[90vh] rounded-lg" />
+        {loading && (
+          <Skeleton className="h-[60vh] w-[60vw] rounded-lg bg-white/20" />
+        )}
+        {error && (
+          <p className="text-sm text-white/80 bg-black/50 px-4 py-3 rounded">
+            読み込めません
+          </p>
+        )}
+        {src && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={src}
+            alt={filename}
+            className="max-w-full max-h-[90vh] rounded-lg"
+          />
+        )}
         <p className="absolute bottom-2 left-2 text-xs text-white/80 bg-black/50 px-2 py-1 rounded">
           {filename}
         </p>
@@ -230,13 +242,18 @@ function FileSection({
                     <span className="text-muted-foreground">
                       {file.size_bytes > 0 ? formatBytes(file.size_bytes) : "-"}
                     </span>
-                    <a
-                      href={`${API_BASE}/api/records/${recordId}/files/${encodeURIComponent(file.name)}?download=1`}
-                      download={file.name}
-                      className="text-xs text-primary hover:underline"
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = `${API_BASE}/api/records/${recordId}/files/${encodeURIComponent(file.name)}?download=1`;
+                        downloadAuthed(url, file.name).catch(() => {
+                          window.alert(`ダウンロードに失敗しました: ${file.name}`);
+                        });
+                      }}
+                      className="text-xs text-primary hover:underline cursor-pointer"
                     >
                       DL
-                    </a>
+                    </button>
                   </div>
                 </div>
               </div>
