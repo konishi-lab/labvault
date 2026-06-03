@@ -194,7 +194,8 @@ peak_values: list[float] = []
 
 for power in [5, 10, 20]:
     # 親.sub() で子レコードを作成。条件もここで渡せる
-    child = series.sub(f"power={power}W", power=power)
+    # (値, "単位") のタプルで渡すと単位も一緒に記録される
+    child = series.sub(f"power={power}W", power=(power, "W"))
 
     # 何か計算
     x = np.linspace(0, 1, 100)
@@ -203,15 +204,18 @@ for power in [5, 10, 20]:
 
     # ── 条件側: scan 軸 + 散布図の軸候補として残したい数値
     # 後から追加するときは conditions() メソッドを使う。複数回呼んでも OK。
+    # 単位を付けたいときは (値, "単位") or (値, "単位", "説明") の tuple で渡す。
     child.conditions(
-        max_y=peak,
-        min_y=float(y.min()),
+        max_y=(peak, "V", "出力電圧の最大値"),
+        min_y=(float(y.min()), "V"),
     )
 
     # ── 結果側: 「この測定の結論はこれ」という主結果を 1〜数件だけ
     # 詳細ページの「結果」カードに並ぶ。後段の解析の入力にもなる。
-    child.results["peak_value"] = peak
-    child.results["mean_y"] = float(y.mean())
+    # results 側は現状 tuple での単位記法が無いので、単位はキー名の
+    # suffix で表現するのが定石 (詳細は 4.3 単位の扱い)。
+    child.results["peak_value_V"] = peak
+    child.results["mean_y_V"] = float(y.mean())
 
     # ファイル添付
     fig, ax = plt.subplots()
@@ -223,7 +227,7 @@ for power in [5, 10, 20]:
     peak_values.append(peak)
 
 # シリーズ全体にも代表値を結果として残す (scan の要約)
-series.results["max_peak"] = max(peak_values)
+series.results["max_peak_V"] = max(peak_values)
 series.results["best_power_W"] = [5, 10, 20][peak_values.index(max(peak_values))]
 series.status = "success"
 
@@ -257,6 +261,56 @@ for c in series.children():
   典型。条件 scan (power, target, temperature 等を変えた繰り返し測定)
   や、装置別の連続測定で重宝する
 
+### 4.3 単位の扱い
+
+数値には **必ず単位** を付ける癖を付けると後の比較・検索・論文化が
+楽になる。labvault では「単位を値と一緒に残す」方法が 3 つある。
+
+labvault の単位は **conditions と results で扱いが非対称** です。
+書き手側 API は conditions に揃っているので、まずは conditions に
+寄せるのがいまの最適解。
+
+#### conditions 側 (公式 API あり)
+
+| 方法 | 書き方 | 用途 |
+|---|---|---|
+| (a) tuple で値+単位 | `conditions(power=(20, "W"))` | 一番きれい |
+| (b) tuple で値+単位+説明 | `conditions(power=(20, "W", "レーザー出力"))` | hover で説明が出る |
+| (c) template で auto-fill | template の `condition_fields[].unit` | 値だけ書けば template が単位を補完 (例: XRD template の `wavelength_A`) |
+| (d) Web UI で後付け | 詳細ページの条件 row をクリック → 単位 + 説明を編集 | 既存 record の単位を後から直す |
+
+Web UI では条件カードに `key [unit]: value` の形で青字 chip 付き
+で表示される (`(b)` を使うと `— 説明` も並ぶ)。
+
+#### results 側 (書き手側の公式 API は今のところ無い)
+
+`results["peak_value"] = 0.97` のように **値しか書けない** のが
+現状の SDK API です。tuple 記法は未対応、Web UI の「単位編集」も
+conditions のみ。表示側 (ResultsCard) は `result_units[key]` を
+読んで `[unit]` を render するので、値さえ入れば見える。
+
+書き手としての現実的な選択肢:
+
+- **(e) キー名に単位 suffix を埋め込む** ← オンボーディングではこれを推奨。
+  `peak_value_V`, `lattice_a`, `temperature_C`, `mean_yield_pct`
+  のように、論文表の列名そのまま使える suffix が便利。
+- **(f) パーサーから自動で入れる** — `template.file_parsers` 経由で
+  `add()` した binary がパーサー output に `units` dict を返せば、
+  `_result_units` に流し込まれる (`.analyze()` 内部)。`.ras` /
+  `.vk4` 等の組み込みパーサーがこの経路。
+- **(g) Private attribute に直書き**: `rec._result_units["peak_value"]
+  = "V"` で技術的には可能だが、private API なので将来の breakage を
+  覚悟する人向け。public 化要望は別 issue で。
+
+**実務的なおすすめ**:
+
+- conditions は (a) / (b) の tuple 記法でしっかり単位を残す。
+  template 登録済みキーなら (c) で値だけ書けば自動補完される。
+- results は (e) の suffix が一番安全。パーサー経由で自動充填される
+  template (XRD / Raman 等) を使えば (f) で勝手に入る。
+
+### 4.4 セル自動記録
+
 セルを順番に実行すると **各セルのコードと出力も自動で記録される**
 (IPython hooks が動いている)。
 
@@ -276,11 +330,15 @@ Web UI を開く (or リロード) →
      子の結果が点として並ぶ
    - 点を hover でラベル表示、クリックで子の詳細に飛べる
 3. 子の 1 つ (`power=10W`) を開く:
-   - **条件カード**: `power: 10`, `max_y`, `min_y`
-   - **結果カード**: `peak_value`, `mean_y` (主結果として並ぶ)
+   - **条件カード**: `power [W]: 10`, `max_y [V]: ...`, `min_y [V]: ...`
+     (tuple で渡した単位が `[ ]` で表示される。`max_y` は説明が入って
+     いるので名前を hover すると「出力電圧の最大値」がツールチップで
+     出る)
+   - **結果カード**: `peak_value_V`, `mean_y_V` (主結果として並ぶ。
+     単位はキー名 suffix で表現)
    - 添付ファイル `plot.png` プレビュー表示
    - `parent_id` に親 series の id が入っている (詳細上部)
-4. 親 series を開き直すと、**結果カード**に `max_peak` /
+4. 親 series を開き直すと、**結果カード**に `max_peak_V` /
    `best_power_W` が並んでいるはず (scan の要約)
 5. 「メモ」を追加してみる: 「初回テスト」など
 6. **タグでフィルタ**: 一覧で `?tags=your-name` を試すと自分のだけ抽出
