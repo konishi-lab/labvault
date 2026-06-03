@@ -98,7 +98,7 @@ export function WelcomeScreen() {
 {`pip install \\
   --index-url https://pypi.org/simple/ \\
   --extra-index-url "https://__token__:lv_xxx@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/" \\
-  "labvault[gcp,nextcloud]"`}
+  "labvault[all]"`}
               </pre>
             </li>
             <li>

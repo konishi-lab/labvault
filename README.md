@@ -138,7 +138,7 @@ pip install keyring keyrings.google-artifactregistry-auth
 # labvault 本体
 pip install \
   --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 ```
 
 エクストラ:
@@ -147,10 +147,13 @@ pip install \
 |---|---|
 | `gcp` | Firestore メタデータ + Vertex AI Embedding |
 | `nextcloud` | Nextcloud ストレージ |
-| `mcp` | MCP サーバー |
-| `all` | 全部入り |
+| `numpy` | `save()` の自動変換 (ndarray / DataFrame / matplotlib Figure) |
+| `mcp` | MCP サーバー (`labvault mcp`) |
+| `keyring` | AR 認証 helper を SDK 経由でも入れたい時 |
+| `all` | 上記まとめて (**研究室メンバーは基本これ**) |
 
-更新は `pip install -U labvault`。
+更新は `pip install -U labvault`。サーバー / CI のように依存を絞り
+たいときだけ `labvault[gcp,nextcloud]` 等を選んでください。
 
 #### 2.2 SDK ランタイム認証
 
@@ -194,7 +197,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install \
   --index-url https://pypi.org/simple/ \
   --extra-index-url "${PROXY}" \
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 ```
 
 **Windows (PowerShell)**:
@@ -209,7 +212,7 @@ python -m venv .venv
 pip install `
   --index-url https://pypi.org/simple/ `
   --extra-index-url "$PROXY" `
-  "labvault[gcp,nextcloud]"
+  "labvault[all]"
 ```
 
 > PAT を shell 履歴やプロセス一覧に残したくない場合は `pip.conf` (Unix) /

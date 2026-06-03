@@ -307,7 +307,7 @@ echo "${token}" | labvault auth set-token --token-stdin --user instrument-xrd-1`
 {`pip install \\
   --index-url https://pypi.org/simple/ \\
   --extra-index-url "${proxy}" \\
-  "labvault[gcp,nextcloud]"`}
+  "labvault[all]"`}
       </pre>
 
       <p className="font-semibold">3. pip install (Windows PowerShell)</p>
@@ -315,7 +315,7 @@ echo "${token}" | labvault auth set-token --token-stdin --user instrument-xrd-1`
 {`pip install \`
   --index-url https://pypi.org/simple/ \`
   --extra-index-url "${proxy}" \`
-  "labvault[gcp,nextcloud]"`}
+  "labvault[all]"`}
       </pre>
 
       <p className="font-semibold">
