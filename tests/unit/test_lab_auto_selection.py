@@ -40,7 +40,13 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _isolate_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """env / .env / ~/.labvault/credentials のすべてを無効化して、テストが他の
-    環境の値を拾わないようにする。"""
+    環境の値を拾わないようにする。
+
+    0.2.2 以降、Settings は konishi-lab 本番運用の値を field default に
+    持っている (gcp_project / platform_url / nextcloud_url / etc.)。
+    auto-selection の挙動を素 (空) の状態でテストしたいので、ここで
+    空文字 env を被せて default を無効化する。
+    """
     _clear_env(monkeypatch)
     # cwd を tmp に切替えて .env 干渉を排除
     monkeypatch.chdir(tmp_path)
@@ -48,6 +54,11 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     # auto_sync を切る (テストでバッファ書き込みを起動させない)
     monkeypatch.setenv("LABVAULT_AUTO_SYNC", "false")
+    # 本番 default を空で上書き (各テストが必要に応じて再 setenv する)
+    monkeypatch.setenv("LABVAULT_GCP_PROJECT", "")
+    monkeypatch.setenv("LABVAULT_PLATFORM_URL", "")
+    monkeypatch.setenv("LABVAULT_NEXTCLOUD_URL", "")
+    monkeypatch.setenv("LABVAULT_NEXTCLOUD_GROUP_FOLDER", "")
 
 
 class TestBuildPlatformClient:

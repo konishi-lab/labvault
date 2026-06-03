@@ -93,13 +93,12 @@ pip install \
   --extra-index-url https://asia-northeast1-python.pkg.dev/klab-laser-process/labvault-pypi/simple/ \
   "labvault[gcp,nextcloud]"
 
-# 4. .env をカレントディレクトリに置く
+# 4. .env をカレントディレクトリに置く (your-name は自分の名前に書き換える)
+#    gcp_project / firestore_database / platform_url / nextcloud_url は
+#    SDK の default に組み込まれているので書かなくて OK (0.2.2 以降)。
 cat > .env << 'EOF'
 LABVAULT_TEAM=konishi-lab
 LABVAULT_USER=your-name
-LABVAULT_GCP_PROJECT=klab-laser-process
-LABVAULT_FIRESTORE_DATABASE=labvault
-LABVAULT_PLATFORM_URL=https://labvault-api-355809880738.asia-northeast1.run.app
 EOF
 
 # 5. 動作確認
