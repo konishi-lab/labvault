@@ -297,7 +297,41 @@ Web UI では条件 / 結果カードどちらも `key [unit]: value` の青字 
 > **互換性メモ**: 既存の `results["lattice_a"] = 2.873` のような
 > スカラー代入は引き続き動きます。tuple 記法は追加 API。
 
-### 4.4 セル自動記録
+### 4.4 データの置き場所: `results` / `save` / `add` の使い分け
+
+1 つの測定で出てくるデータは、サイズと用途で 3 つの置き場所を使い
+分けます。
+
+| 置き場所 | API | 入れるもの | フォーマット変換 |
+|---|---|---|---|
+| **metadata field** | `record.results["key"] = ...` | スカラー / 小リスト / 小 dict (論文表に貼れる粒度) | なし |
+| **ファイル添付 (自動変換あり)** | `record.save(name, obj)` | Python オブジェクト全般 | 自動 (dict/list→JSON, ndarray→.npy, Figure→.png, DataFrame→.csv) |
+| **ファイル添付 (生バイト)** | `record.add(path_or_bytes)` | 既存ファイル / 装置出力バイナリ | なし |
+
+選び方 (上から順に試す):
+
+1. **論文表の 1 行に貼れる小さな値か?** → `results["key"] = value`
+   (検索 / scatter / 結果カード表示で活躍)
+2. **Python オブジェクトを 1 行でファイル化したいか?** →
+   `record.save("plot.png", fig)` / `record.save("data.npy", arr)` /
+   `record.save("table.csv", df)` (内部で自動変換 → `add()`)
+3. **すでにファイルがある (装置出力など)?** →
+   `record.add("xrd_001.ras")` / `record.add("photo.jpg")`
+   (内容はそのまま。template にパーサーが紐付いていれば
+   add 時に自動で results に要約値が入る)
+
+```python
+# 典型例: 1 つの測定で 3 つを使い分ける
+child.results["peak_value"] = (0.97, "V")            # ① 主結果
+child.save("waveform.png", fig)                      # ② Figure を PNG に
+child.add("instrument_log.txt")                      # ③ 装置生ログをそのまま
+```
+
+> どれもファイルは Nextcloud、metadata は Firestore に行きます。
+> Firestore のドキュメントは **1 件 1 MB 上限** なので、画像や
+> 大きな配列は ① に入れず必ず ② / ③ にしてください。
+
+### 4.5 セル自動記録
 
 セルを順番に実行すると **各セルのコードと出力も自動で記録される**
 (IPython hooks が動いている)。
