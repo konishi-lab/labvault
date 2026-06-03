@@ -308,6 +308,10 @@ Web UI では条件 / 結果カードどちらも `key [unit]: value` の青字 
 | **ファイル添付 (自動変換あり)** | `record.save(name, obj)` | Python オブジェクト全般 | 自動 (dict/list→JSON, ndarray→.npy, Figure→.png, DataFrame→.csv) |
 | **ファイル添付 (生バイト)** | `record.add(path_or_bytes)` | 既存ファイル / 装置出力バイナリ | なし |
 
+> `save` は **内部で `add` を呼ぶラッパー** です。違いは「型変換を
+> labvault に任せる (save) か、自分で済ませる (add) か」だけ。
+> `record.save("plot.png", fig)` ≈ `add(fig_to_png_bytes(fig), name="plot.png", content_type="image/png")`。
+
 選び方 (上から順に試す):
 
 1. **論文表の 1 行に貼れる小さな値か?** → `results["key"] = value`
