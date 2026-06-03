@@ -298,11 +298,17 @@ def doctor() -> None:
         else:
             click.echo("  [--] PAT: not set (ADC を使用)")
 
+        # PAT モード (token + platform_url) では Firestore / Nextcloud に
+        # 直接接続しないので、GCP project / Nextcloud direct URL は
+        # 未使用。表示は維持しつつ「不要」と明示する。
+        in_pat_mode = bool(settings.token and settings.platform_url)
+
         # --- GCP project ---
+        pat_note = " (PAT モードでは未使用)" if in_pat_mode else ""
         if settings.gcp_project:
-            click.echo(f"  [OK] GCP project: {settings.gcp_project}")
+            click.echo(f"  [OK] GCP project: {settings.gcp_project}{pat_note}")
         else:
-            click.echo("  [--] GCP project: not set")
+            click.echo(f"  [--] GCP project: not set{pat_note}")
 
         # --- Nextcloud ---
         if settings.nextcloud_url:
@@ -311,7 +317,7 @@ def doctor() -> None:
 
                 resp = httpx.get(f"{settings.nextcloud_url}/status.php", timeout=5)
                 if resp.status_code == 200:
-                    click.echo(f"  [OK] Nextcloud: {settings.nextcloud_url}")
+                    click.echo(f"  [OK] Nextcloud: {settings.nextcloud_url}{pat_note}")
                 else:
                     click.echo(f"  [!!] Nextcloud: HTTP {resp.status_code}")
                     issues += 1
@@ -341,6 +347,71 @@ def doctor() -> None:
         click.echo("All checks passed.")
     else:
         click.echo(f"{issues} issue(s) found. See above.")
+
+    # --- 次のステップ ---
+    # 設定状態と推奨パスを案内する。「推奨 = ADC (gcloud)」を強調し、
+    # 装置 PC や gcloud が使えない環境では PAT、という位置付け。
+    hints: list[str] = []
+    if settings is None:
+        return
+
+    if not settings.team:
+        hints.append(
+            "team が未設定。`labvault init` で入力するか、.env に "
+            "`LABVAULT_TEAM=konishi-lab` を書く。"
+        )
+    if not settings.user:
+        hints.append(
+            "user が未設定。Record の created_by が空になる。"
+            "PAT モードなら `labvault auth set-token --force` (verify 経由で "
+            "発行者 email を default 設定)、それ以外は `labvault init` または "
+            ".env に `LABVAULT_USER=<your-name>` を書く。"
+        )
+
+    has_pat = bool(settings.token)
+    has_gcp = bool(settings.gcp_project)
+
+    if not has_pat and not has_gcp:
+        # 認証ゼロ
+        hints.append(
+            "認証が未設定。**推奨は ADC**: "
+            "`gcloud auth application-default login` + "
+            ".env に `LABVAULT_GCP_PROJECT=klab-laser-process` を書く。"
+        )
+        hints.append(
+            "装置 PC など gcloud を使えない環境では PAT: "
+            "Web UI で発行 → `labvault auth set-token --token-stdin`。"
+        )
+    elif has_pat and not settings.platform_url:
+        hints.append(
+            "PAT が設定されているが LABVAULT_PLATFORM_URL が空。"
+            "`labvault auth set-token --force` で credentials を再作成すると "
+            "platform_url も埋まる。"
+        )
+    elif has_pat and has_gcp:
+        hints.append(
+            "PAT と GCP project の両方が設定されている。Settings の優先順位上 "
+            "PAT が使われる。ADC の方が監査ログが個人と紐付くので、可能なら "
+            "PAT を外して ADC のみに寄せる方が推奨。"
+        )
+
+    if not settings.nextcloud_url and not settings.platform_url:
+        hints.append(
+            "Nextcloud / platform URL のどちらも未設定。"
+            "ファイル保存は InMemory フォールバックになり、再起動で消える。"
+        )
+
+    if issues == 0 and not hints:
+        hints.append(
+            '動作確認: `python -c "from labvault import Lab; '
+            'lab = Lab(); print(type(lab._metadata).__name__)"`'
+        )
+
+    if hints:
+        click.echo()
+        click.echo("次のステップ:")
+        for h in hints:
+            click.echo(f"  • {h}")
 
 
 @cli.command()
@@ -587,8 +658,13 @@ def _credentials_path() -> Path:
     return Path.home() / ".labvault" / "credentials"
 
 
-def _verify_token_against_backend(token: str, platform_url: str) -> tuple[bool, str]:
-    """PAT を backend に投げて検証する。`(ok, message)` を返す。
+def _verify_token_against_backend(
+    token: str, platform_url: str
+) -> tuple[bool, str, str]:
+    """PAT を backend に投げて検証する。`(ok, message, email)` を返す。
+
+    email は `--user` を渡さなかったときの default 値として
+    `auth_set_token` が拾う。失敗時は空文字。
 
     `requests`/`httpx` の重い依存を避けるため、標準ライブラリの
     `urllib` を使う。タイムアウト 10 秒。
@@ -607,22 +683,22 @@ def _verify_token_against_backend(token: str, platform_url: str) -> tuple[bool, 
         with urllib.request.urlopen(req, timeout=10) as resp:
             body = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
-        return False, f"HTTP {e.code}: {e.reason}"
+        return False, f"HTTP {e.code}: {e.reason}", ""
     except (urllib.error.URLError, TimeoutError) as e:
-        return False, f"network error: {e}"
+        return False, f"network error: {e}", ""
 
     try:
         data = _json.loads(body)
     except ValueError:
-        return False, "invalid JSON response"
+        return False, "invalid JSON response", ""
     status = data.get("status", "?")
     if status != "authorized":
-        return False, f"token accepted but status={status!r}"
-    email = data.get("email", "?")
+        return False, f"token accepted but status={status!r}", ""
+    email = data.get("email", "")
     teams = ", ".join(
         t.get("team_id", "?") for t in (data.get("teams") or []) if isinstance(t, dict)
     )
-    return True, f"verified: {email} (teams: {teams or '(none)'})"
+    return True, f"verified: {email or '?'} (teams: {teams or '(none)'})", email
 
 
 @auth.command("set-token")
@@ -704,10 +780,14 @@ def auth_set_token(
     if not token_value.startswith("lv_"):
         raise click.UsageError("token must start with 'lv_'")
 
-    # 検証 (backend 到達 + 有効性確認)
+    # 検証 (backend 到達 + 有効性確認)。verify 成功時は backend が返す
+    # email を後段で「--user 未指定時の default」として使う。
+    verified_email = ""
     if verify:
         click.echo(f"Verifying token against {platform_url} ... ", nl=False)
-        ok, msg = _verify_token_against_backend(token_value, platform_url)
+        ok, msg, verified_email = _verify_token_against_backend(
+            token_value, platform_url
+        )
         click.echo(msg)
         if not ok:
             raise click.ClickException(
@@ -721,6 +801,14 @@ def auth_set_token(
         raise click.ClickException(
             f"{creds_path} already exists. Re-run with --force to overwrite."
         )
+
+    # user 未指定 + verify で email が取れた → default として採用。
+    # 装置 PC のように複数人で 1 つの credentials を共有する場合は
+    # `--user instrument-xrd-1` のような識別子を明示するのを推奨。
+    user_auto = False
+    if not user and verified_email:
+        user = verified_email
+        user_auto = True
 
     # ディレクトリ作成 + ファイル書き込み + パーミッション設定。
     # 0o700/0o600 は POSIX。Windows では ACL で本人のみ読書可になるように
@@ -765,6 +853,10 @@ def auth_set_token(
             click.echo(f"  warning: icacls failed: {e}", err=True)
 
     click.echo(f"[OK] credentials saved: {creds_path}")
+    if user_auto:
+        click.echo(f"     LABVAULT_USER = {user}  (PAT 発行者を default 設定)")
+        click.echo("     装置 PC など複数人で 1 つの credentials を共有する場合は")
+        click.echo("     --user instrument-xrd-1 のように明示するのを推奨します。")
     click.echo("Try: labvault doctor")
 
 

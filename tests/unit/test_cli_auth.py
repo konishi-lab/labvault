@@ -27,7 +27,20 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def stub_verify_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "labvault.cli.main._verify_token_against_backend",
-        lambda _t, _u: (True, "verified: alice@example.com (teams: konishi-lab)"),
+        lambda _t, _u: (
+            True,
+            "verified: alice@example.com (teams: konishi-lab)",
+            "alice@example.com",
+        ),
+    )
+
+
+@pytest.fixture()
+def stub_verify_ok_no_email(monkeypatch: pytest.MonkeyPatch) -> None:
+    """検証は通るが email が空 (古い backend / 想定外応答) のシナリオ。"""
+    monkeypatch.setattr(
+        "labvault.cli.main._verify_token_against_backend",
+        lambda _t, _u: (True, "verified: ? (teams: konishi-lab)", ""),
     )
 
 
@@ -35,7 +48,7 @@ def stub_verify_ok(monkeypatch: pytest.MonkeyPatch) -> None:
 def stub_verify_ng(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "labvault.cli.main._verify_token_against_backend",
-        lambda _t, _u: (False, "HTTP 401: Unauthorized"),
+        lambda _t, _u: (False, "HTTP 401: Unauthorized", ""),
     )
 
 
@@ -185,6 +198,59 @@ def test_set_token_includes_optional_user(home: Path) -> None:
     )
     creds = (home / ".labvault" / "credentials").read_text()
     assert "LABVAULT_USER=instrument-xrd-1" in creds
+
+
+def test_set_token_default_user_from_verified_email(
+    home: Path, stub_verify_ok: None
+) -> None:
+    """`--user` 未指定 + verify 成功 → backend が返した email が default。"""
+    code, out = _run(["auth", "set-token", "--token", "lv_xx"])
+    assert code == 0, out
+    creds = (home / ".labvault" / "credentials").read_text()
+    assert "LABVAULT_USER=alice@example.com" in creds
+    # 注釈メッセージが出ている
+    assert "PAT 発行者を default" in out
+    assert "--user instrument-xrd-1" in out
+
+
+def test_set_token_explicit_user_overrides_email(
+    home: Path, stub_verify_ok: None
+) -> None:
+    """`--user` 明示 → backend の email より優先。装置 PC 用途。"""
+    code, out = _run(
+        [
+            "auth",
+            "set-token",
+            "--token",
+            "lv_xx",
+            "--user",
+            "instrument-xrd-1",
+        ]
+    )
+    assert code == 0, out
+    creds = (home / ".labvault" / "credentials").read_text()
+    assert "LABVAULT_USER=instrument-xrd-1" in creds
+    assert "alice@example.com" not in creds
+    # 明示時は注釈を出さない
+    assert "PAT 発行者を default" not in out
+
+
+def test_set_token_no_user_when_no_verify(home: Path) -> None:
+    """`--no-verify` で email が取れないと、--user 未指定なら LABVAULT_USER を書かない。"""
+    code, out = _run(["auth", "set-token", "--token", "lv_xx", "--no-verify"])
+    assert code == 0, out
+    creds = (home / ".labvault" / "credentials").read_text()
+    assert "LABVAULT_USER" not in creds
+
+
+def test_set_token_no_user_when_verify_returns_empty_email(
+    home: Path, stub_verify_ok_no_email: None
+) -> None:
+    """verify 成功でも email が空なら LABVAULT_USER を書かない。"""
+    code, out = _run(["auth", "set-token", "--token", "lv_xx"])
+    assert code == 0, out
+    creds = (home / ".labvault" / "credentials").read_text()
+    assert "LABVAULT_USER" not in creds
 
 
 def test_set_token_custom_team_and_url(home: Path) -> None:

@@ -77,14 +77,22 @@ pip install `
 `labvault auth set-token` で 1 行で書ける (chmod / token 検証も自動):
 
 ```bash
-# Mac / Linux / Windows 共通。--token-stdin で shell 履歴に残らない:
+# 装置 PC では --user に装置識別子を明示する (重要、下記の注意参照)
 echo "lv_ここに先ほどの token を貼り付け" \
   | labvault auth set-token --token-stdin --user instrument-xrd-1
 ```
 
+> ⚠️ **`--user` を明示してください**。装置 PC では複数人が同じ
+> credentials を使うことが多く、`--user` を省略すると **全 record の
+> `created_by` が PAT 発行者 1 人になり**、「どの装置で測定したか」
+> が後で追えなくなります。`instrument-xrd-1` / `sputter-A` のような
+> 装置単位の識別子を入れる運用を推奨します。
+
 挙動:
 - `~/.labvault/credentials` に書く (内容は下記)
 - backend に `/api/auth/me` を投げて token を検証
+- `--user` 省略時は backend が返した email を default として書く
+  (個人 Notebook 用途には便利、装置 PC では非推奨)
 - Unix では `chmod 600`、Windows では `icacls` で本人のみに絞る
 - 既存ファイルがあると拒否 (`--force` で上書き)
 
