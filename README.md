@@ -224,17 +224,23 @@ pip install `
 install と同じ PAT で SDK も認証する。CLI が一括でやる:
 
 ```bash
-# Mac / Linux / Windows 共通。--token-stdin で shell 履歴に残らない:
+# 個人用 (Mac / Linux ノート PC など) — --user 省略で PAT 発行者の email が default に
 echo "lv_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" | labvault auth set-token --token-stdin
 
-# 装置 PC では識別子を付ける:
+# 装置 PC / CI — `--user` を明示して識別子を入れる
 echo "$PAT" | labvault auth set-token --token-stdin --user instrument-xrd-1
 ```
 
+> **装置 PC では `--user` を明示** することを強く推奨します。複数人で
+> 1 つの credentials を共有する場合、`--user` 省略のままだと **全 record
+> の `created_by` が PAT 発行者 1 人になり**、「どの装置で誰が測定したか」
+> が後で追えなくなります。
+
 挙動:
 - `~/.labvault/credentials` に `LABVAULT_TOKEN` / `LABVAULT_PLATFORM_URL` / `LABVAULT_TEAM` を書く
+- `--user` 省略時は backend に `/api/auth/me` を投げて取れた email を default
+  として `LABVAULT_USER` に書く (`--no-verify` だと default なし)
 - 既存の credentials があれば `--force` を要求
-- backend に `/api/auth/me` を投げて token が valid か検証 (`--no-verify` で skip)
 - Unix では `chmod 600`、Windows では `icacls` で本人のみに絞る
 
 設定後の確認:
