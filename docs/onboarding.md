@@ -143,6 +143,11 @@ labvault auth status
 換える / `$env:PAT` を `${PAT}` にする等の差だけ。詳細は
 [`docs/instrument_pc_setup.md`](instrument_pc_setup.md)。
 
+> 0.2.2 以降、`LABVAULT_PLATFORM_URL` は SDK の default に組み込まれて
+> いるので、credentials を手書きで作る場合は `LABVAULT_TOKEN=lv_xxx` +
+> `LABVAULT_TEAM=konishi-lab` + `LABVAULT_USER=...` の 3 行で足ります
+> (`auth set-token` 経由なら自動で書き込まれるので意識不要)。
+
 ### つまずきポイント
 
 - **`pip install` で 403**: アカウントがまだ承認されていない。§ 1 へ
