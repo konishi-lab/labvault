@@ -280,19 +280,60 @@ const PLATFORM_URL =
   "https://labvault-api-355809880738.asia-northeast1.run.app";
 
 /**
- * トークンの使い方サンプル (pip install + labvault auth set-token +
+ * トークンの使い方サンプル (Claude MCP + pip install + labvault auth set-token +
  * credentials 手書き) を一括表示するコンポーネント。
  *
  * - 発行成功カードでは `token` に raw 文字列を入れて完成形を表示する
  * - 発行済リストの expand では `token` を `<YOUR_TOKEN>` のような
  *   placeholder にしてテンプレ表示する (raw token はもう取れないため)
+ *
+ * 並び順: Python install 不要で最短で使い始められる Claude MCP を先頭、
+ * SDK を入れたい人向けに pip install → auth set-token → 手書きの順。
+ * (auth set-token は labvault が install されている前提なので必ず pip 後)
  */
 function UsageSnippets({ token }: { token: string }) {
   const proxy = `https://__token__:${token}@labvault-api-355809880738.asia-northeast1.run.app/api/pypi/simple/`;
   return (
     <div className="space-y-2">
       <p className="font-semibold">
-        1. SDK ランタイム認証 (推奨: <code>labvault auth set-token</code>)
+        1. Claude Desktop / Code で使う (install 不要)
+      </p>
+      <p>
+        labvault の MCP サーバーが Cloud Run でホストされており、URL と PAT
+        を渡すだけで search / get_detail / compare 等 7 ツールが Claude
+        から使えます。Python install は不要。
+      </p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`# Claude Code
+claude mcp add --transport http labvault \\
+  ${PLATFORM_URL}/mcp/ \\
+  -H "Authorization: Bearer ${token}"`}
+      </pre>
+      <p>
+        Claude Desktop は <code>claude_desktop_config.json</code> の
+        <code>mcpServers</code> に同等の設定 (<code>type: &quot;http&quot;</code>,
+        URL, headers) を書く。
+      </p>
+
+      <p className="font-semibold">2. Python SDK: pip install (Mac / Linux)</p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`pip install \\
+  --index-url https://pypi.org/simple/ \\
+  --extra-index-url "${proxy}" \\
+  "labvault[all]"`}
+      </pre>
+
+      <p className="font-semibold">3. Python SDK: pip install (Windows PowerShell)</p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`pip install \`
+  --index-url https://pypi.org/simple/ \`
+  --extra-index-url "${proxy}" \`
+  "labvault[all]"`}
+      </pre>
+
+      <p className="font-semibold">
+        4. SDK ランタイム認証 (<code>labvault auth set-token</code>, pip
+        install の後)
       </p>
       <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
 {`# Mac / Linux / Windows 共通。--token-stdin で shell 履歴に残らない
@@ -302,24 +343,8 @@ echo "${token}" | labvault auth set-token --token-stdin
 echo "${token}" | labvault auth set-token --token-stdin --user instrument-xrd-1`}
       </pre>
 
-      <p className="font-semibold">2. pip install (Mac / Linux)</p>
-      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
-{`pip install \\
-  --index-url https://pypi.org/simple/ \\
-  --extra-index-url "${proxy}" \\
-  "labvault[all]"`}
-      </pre>
-
-      <p className="font-semibold">3. pip install (Windows PowerShell)</p>
-      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
-{`pip install \`
-  --index-url https://pypi.org/simple/ \`
-  --extra-index-url "${proxy}" \`
-  "labvault[all]"`}
-      </pre>
-
       <p className="font-semibold">
-        4. (代替) 手書きで <code>~/.labvault/credentials</code>
+        5. (代替) 手書きで <code>~/.labvault/credentials</code>
       </p>
       <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
 {`LABVAULT_TOKEN=${token}

@@ -76,6 +76,19 @@ labvault に蓄積されたデータを LLM が検索・分析できます。
 
 ### MCP サーバー（Claude Desktop / Claude Code）
 
+**リモート (推奨, Python install 不要)** — Cloud Run でホスト中の MCP サーバーに PAT で繋ぐ:
+
+```bash
+# PAT は Web UI /account/tokens で発行
+claude mcp add --transport http labvault \
+  https://labvault-api-355809880738.asia-northeast1.run.app/mcp/ \
+  -H "Authorization: Bearer lv_xxx"
+```
+
+Claude Desktop は `claude_desktop_config.json` の `mcpServers` に同等設定 (`type: "http"`, URL, `headers`)。
+
+**ローカル (装置 PC など SDK が入っている環境)** — stdio で起動:
+
 ```bash
 labvault mcp  # 7ツール: search, get_detail, compare, data_preview, aggregate, get_overview, get_timeline
 ```
