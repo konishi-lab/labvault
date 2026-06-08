@@ -81,6 +81,8 @@ labvault に蓄積されたデータを LLM が検索・分析できます。
 - URL: `https://labvault-api-355809880738.asia-northeast1.run.app/mcp/`
 - Header: `Authorization: Bearer lv_xxx` (PAT は Web UI `/account/tokens` で発行)
 
+> ⚠️ 各 client の MCP 設定書式は頻繁に更新されるので、下記の例が動かなければ各 client の公式 MCP docs で最新形式を確認してください ([Claude](https://docs.claude.com/en/docs/claude-code/mcp) / [Cursor](https://cursor.com/docs/mcp) / [Gemini CLI](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md) / [ChatGPT](https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta))。
+
 | Client | 登録方法 |
 |---|---|
 | Claude Code | `claude mcp add --transport http labvault <URL> -H "Authorization: Bearer lv_xxx"` |

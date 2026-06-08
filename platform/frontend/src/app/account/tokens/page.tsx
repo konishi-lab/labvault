@@ -304,6 +304,18 @@ function UsageSnippets({ token }: { token: string }) {
         使えます。Python install は不要。下記から自分の使う client を選んで
         ください。
       </p>
+      <p className="text-amber-900">
+        ⚠️ 各 client の MCP 設定書式は頻繁に更新されます。下記の例が動かない
+        場合は各 client の公式 MCP docs (
+        <a className="underline" href="https://docs.claude.com/en/docs/claude-code/mcp" target="_blank" rel="noreferrer">Claude</a>{" "}
+        /{" "}
+        <a className="underline" href="https://cursor.com/docs/mcp" target="_blank" rel="noreferrer">Cursor</a>{" "}
+        /{" "}
+        <a className="underline" href="https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md" target="_blank" rel="noreferrer">Gemini CLI</a>{" "}
+        /{" "}
+        <a className="underline" href="https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta" target="_blank" rel="noreferrer">ChatGPT</a>
+        ) で最新形式を確認してください。
+      </p>
 
       <p className="font-semibold pt-1">▸ Claude Code (CLI 一発で登録)</p>
       <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
