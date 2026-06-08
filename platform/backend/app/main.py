@@ -31,6 +31,7 @@ from .auth import (
 from .dependencies import close_lab, get_firestore_db, get_team_meta
 from .notifications import notify_signup_request
 from .routers import bulk_upload, files, metadata, preview, pypi_proxy, records, search
+from .routers import mcp as mcp_router
 from .schemas import (
     AddTeamRequest,
     AllowedUser,
@@ -62,7 +63,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # dev skip モードでは firebase-admin を初期化しない
     if os.environ.get("LABVAULT_DEV_SKIP_AUTH") != "1":
         init_firebase_admin()
-    yield
+    # FastMCP Streamable HTTP の session manager を起動 (stateless でも必須)。
+    async with mcp_router.lifespan_context():
+        yield
     close_lab()
 
 
@@ -101,6 +104,10 @@ app.include_router(metadata.router, dependencies=_auth_deps)
 # PyPI proxy は pip からの HTTP Basic Auth (`__token__:lv_*`) を独自に
 # 検証するため、Firebase Bearer 認証の dependency は外す。
 app.include_router(pypi_proxy.router)
+
+# MCP Streamable HTTP: PAT (Bearer) 認証を内部 middleware で行う ASGI app。
+# 外側の Firebase 認証 dep を通さずに mount する。
+app.mount("/mcp", mcp_router.asgi_app)
 
 
 @app.get("/api/health", response_model=HealthResponse)
