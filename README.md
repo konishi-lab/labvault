@@ -76,16 +76,21 @@ labvault に蓄積されたデータを LLM が検索・分析できます。
 
 ### MCP サーバー（Claude Desktop / Claude Code）
 
-**リモート (推奨, Python install 不要)** — Cloud Run でホスト中の MCP サーバーに PAT で繋ぐ:
+**リモート (推奨, Python install 不要)** — Cloud Run でホスト中の MCP サーバーに PAT で繋ぐ。接続情報はどの client でも同じ:
 
-```bash
-# PAT は Web UI /account/tokens で発行
-claude mcp add --transport http labvault \
-  https://labvault-api-355809880738.asia-northeast1.run.app/mcp/ \
-  -H "Authorization: Bearer lv_xxx"
-```
+- URL: `https://labvault-api-355809880738.asia-northeast1.run.app/mcp/`
+- Header: `Authorization: Bearer lv_xxx` (PAT は Web UI `/account/tokens` で発行)
 
-Claude Desktop は `claude_desktop_config.json` の `mcpServers` に同等設定 (`type: "http"`, URL, `headers`)。
+| Client | 登録方法 |
+|---|---|
+| Claude Code | `claude mcp add --transport http labvault <URL> -H "Authorization: Bearer lv_xxx"` |
+| Claude Desktop | `claude_desktop_config.json` の `mcpServers` に `type:"http"` + URL + headers |
+| Cursor | `~/.cursor/mcp.json` に `type:"streamable-http"` + URL + headers |
+| Gemini CLI | `gemini mcp add --transport http labvault <URL> -H "Authorization: Bearer lv_xxx"` |
+| ChatGPT | Developer Mode で Custom MCP server を追加 (Plus / Pro / Team / Enterprise / Edu 限定) |
+| その他 | Streamable HTTP transport で同じ URL + Bearer を渡せば OK |
+
+詳細は [docs/onboarding.md §3-B](docs/onboarding.md#3-b-llm-mcp-から使う-python-install-不要)。
 
 **ローカル (装置 PC など SDK が入っている環境)** — stdio で起動:
 

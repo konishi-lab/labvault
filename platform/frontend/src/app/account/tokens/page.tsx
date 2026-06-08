@@ -296,23 +296,103 @@ function UsageSnippets({ token }: { token: string }) {
   return (
     <div className="space-y-2">
       <p className="font-semibold">
-        1. Claude Desktop / Code で使う (install 不要)
+        1. LLM (MCP) から使う — install 不要
       </p>
       <p>
         labvault の MCP サーバーが Cloud Run でホストされており、URL と PAT
-        を渡すだけで search / get_detail / compare 等 7 ツールが Claude
-        から使えます。Python install は不要。
+        を渡すだけで search / get_detail / compare 等 7 ツールが LLM から
+        使えます。Python install は不要。下記から自分の使う client を選んで
+        ください。
       </p>
+
+      <p className="font-semibold pt-1">▸ Claude Code (CLI 一発で登録)</p>
       <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
-{`# Claude Code
-claude mcp add --transport http labvault \\
+{`claude mcp add --transport http labvault \\
   ${PLATFORM_URL}/mcp/ \\
   -H "Authorization: Bearer ${token}"`}
       </pre>
+
+      <p className="font-semibold pt-1">
+        ▸ Claude Desktop (<code>claude_desktop_config.json</code>)
+      </p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`{
+  "mcpServers": {
+    "labvault": {
+      "type": "http",
+      "url": "${PLATFORM_URL}/mcp/",
+      "headers": { "Authorization": "Bearer ${token}" }
+    }
+  }
+}`}
+      </pre>
+
+      <p className="font-semibold pt-1">
+        ▸ Cursor (<code>~/.cursor/mcp.json</code>)
+      </p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`{
+  "mcpServers": {
+    "labvault": {
+      "type": "streamable-http",
+      "url": "${PLATFORM_URL}/mcp/",
+      "headers": { "Authorization": "Bearer ${token}" }
+    }
+  }
+}`}
+      </pre>
+
+      <p className="font-semibold pt-1">
+        ▸ Gemini CLI (<code>gemini mcp add</code> もしくは{" "}
+        <code>~/.gemini/settings.json</code>)
+      </p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`# CLI 一発で登録
+gemini mcp add --transport http labvault \\
+  ${PLATFORM_URL}/mcp/ \\
+  -H "Authorization: Bearer ${token}"
+
+# もしくは settings.json に手書き
+{
+  "mcpServers": {
+    "labvault": {
+      "httpUrl": "${PLATFORM_URL}/mcp/",
+      "headers": { "Authorization": "Bearer ${token}" }
+    }
+  }
+}`}
+      </pre>
+
+      <p className="font-semibold pt-1">
+        ▸ ChatGPT — Developer Mode で「Custom MCP connector」を追加
+      </p>
       <p>
-        Claude Desktop は <code>claude_desktop_config.json</code> の
-        <code>mcpServers</code> に同等の設定 (<code>type: &quot;http&quot;</code>,
-        URL, headers) を書く。
+        Settings → Connectors → Advanced → Developer mode を ON →
+        「Add custom MCP server」で URL と Authorization ヘッダを入力:
+      </p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`URL:    ${PLATFORM_URL}/mcp/
+Header: Authorization: Bearer ${token}`}
+      </pre>
+      <p className="text-amber-900">
+        ⚠️ Developer Mode は <strong>Plus / Pro / Team / Enterprise / Edu</strong>
+        プラン限定 (Free 不可)。
+      </p>
+
+      <p className="font-semibold pt-1">
+        ▸ その他の MCP client (Cline / Continue / Zed / Goose 等)
+      </p>
+      <p>
+        Streamable HTTP transport で接続情報は同じ:
+      </p>
+      <pre className="overflow-x-auto rounded border bg-background px-2 py-1 font-mono text-[11px]">
+{`URL:    ${PLATFORM_URL}/mcp/
+Header: Authorization: Bearer ${token}`}
+      </pre>
+      <p>
+        書式は各 client の MCP docs を参照 (<code>type</code>:{" "}
+        <code>http</code> / <code>streamable-http</code> / <code>httpUrl</code>{" "}
+        など命名が違うだけ)。
       </p>
 
       <p className="font-semibold">2. Python SDK: pip install (Mac / Linux)</p>
