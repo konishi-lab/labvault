@@ -112,26 +112,102 @@ labvault doctor
 `labvault doctor` で `mode: Direct mode` or `Mixed mode` が表示されて
 `[!!]` が無ければ OK。
 
-### 3-B. Claude Desktop / Code (MCP) から使う (Python install 不要)
+### 3-B. LLM (MCP) から使う (Python install 不要)
 
-Python / Notebook を使わず Claude からの検索・集計・要約だけしたい人は
-**ここだけ** で OK。labvault MCP サーバーが Cloud Run にホストされている
-ので、PAT を 1 つ発行して URL と Bearer を Claude に登録するだけ。
+Python / Notebook を使わず LLM (Claude / Cursor / ChatGPT / Gemini) からの
+検索・集計・要約だけしたい人は **ここだけ** で OK。labvault MCP サーバー
+が Cloud Run にホストされているので、PAT を 1 つ発行して URL と Bearer を
+client に登録するだけ。
 
 1. Web UI → 右上「トークン」(`/account/tokens`) で発行 → `lv_xxx` をコピー
-2. Claude Code に登録:
-
-   ```bash
-   claude mcp add --transport http labvault \
-     https://labvault-api-355809880738.asia-northeast1.run.app/mcp/ \
-     -H "Authorization: Bearer lv_xxx"
-   ```
-
-   Claude Desktop は `claude_desktop_config.json` の `mcpServers` に同等の
-   設定 (`type: "http"`, URL, `headers`) を書く。
-3. Claude に「`power>=50` の XRD を 5 件出して」のように頼めば 7 ツール
+2. 自分の使う client に登録 (下記から選ぶ)
+3. LLM に「`power>=50` の XRD を 5 件出して」のように頼めば 7 ツール
    (search / get_detail / compare / aggregate / get_overview /
-   get_timeline / data_preview) 経由でデータを返してくる。
+   get_timeline / data_preview) 経由でデータを返してくる
+
+接続情報はどの client でも共通:
+
+- **URL**: `https://labvault-api-355809880738.asia-northeast1.run.app/mcp/`
+- **Header**: `Authorization: Bearer lv_xxx`
+
+> ⚠️ 各 client の MCP 設定書式は頻繁に更新されます。下記の例が動かない
+> 場合は各 client の公式 MCP docs で最新形式を確認してください
+> ([Claude](https://docs.claude.com/en/docs/claude-code/mcp) /
+> [Cursor](https://cursor.com/docs/mcp) /
+> [Gemini CLI](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md) /
+> [ChatGPT](https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta))。
+
+#### Claude Code
+
+```bash
+claude mcp add --transport http labvault \
+  https://labvault-api-355809880738.asia-northeast1.run.app/mcp/ \
+  -H "Authorization: Bearer lv_xxx"
+```
+
+#### Claude Desktop
+
+`claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "labvault": {
+      "type": "http",
+      "url": "https://labvault-api-355809880738.asia-northeast1.run.app/mcp/",
+      "headers": { "Authorization": "Bearer lv_xxx" }
+    }
+  }
+}
+```
+
+#### Cursor
+
+`~/.cursor/mcp.json` (project 単位なら `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "labvault": {
+      "type": "streamable-http",
+      "url": "https://labvault-api-355809880738.asia-northeast1.run.app/mcp/",
+      "headers": { "Authorization": "Bearer lv_xxx" }
+    }
+  }
+}
+```
+
+#### Gemini CLI
+
+```bash
+gemini mcp add --transport http labvault \
+  https://labvault-api-355809880738.asia-northeast1.run.app/mcp/ \
+  -H "Authorization: Bearer lv_xxx"
+```
+
+もしくは `~/.gemini/settings.json` の `mcpServers` に `httpUrl` + `headers`
+を書く ([公式 docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md))。
+**consumer の Gemini Web (`gemini.google.com`) は MCP 非対応** なので
+Gemini CLI を使う前提。
+
+#### ChatGPT — Developer Mode で「Custom MCP connector」
+
+Settings → Connectors → Advanced → **Developer mode** を ON にし、
+「Add custom MCP server」で:
+
+- **URL**: `https://labvault-api-355809880738.asia-northeast1.run.app/mcp/`
+- **Authorization header**: `Bearer lv_xxx`
+
+> ⚠️ Developer Mode は **Plus / Pro / Team / Enterprise / Edu プラン
+> 限定** (Free 不可)。
+
+#### その他の MCP client (Cline / Continue / Zed / Goose 等)
+
+Streamable HTTP transport なら同じ URL + Bearer header が使える。
+書式は各 client の MCP docs を参照 (`type` が `http` /
+`streamable-http` / `httpUrl` など命名が違うだけ)。
+
+---
 
 Notebook で実験を投入したくなったら、戻って 3-A / 3-C を続ける。
 
