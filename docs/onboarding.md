@@ -42,8 +42,7 @@ Web UI を開く → **<https://labvault-web-355809880738.asia-northeast1.run.ap
 2. 「申請」フォームに **所属希望の team 名** (基本 `konishi-lab`) と
    ひとことメモ (例: 「学部 4 年、レーザー加工で参加します」) を入れて
    送信。
-3. **admin に Slack 等で「承認お願いします」と連絡**。Slack に申請通知も
-   自動で飛ぶが、見落とされることがあるので一声かけると確実。
+3. **admin に「承認お願いします」と連絡** (Slack DM / メール等)。
 4. 承認されたら同じ Web UI を再ログイン → Dashboard が出れば成功。
 5. **Welcome 画面** (初回のみ) が出るので 1 回読んで「始める」を押す。
    後でも `/welcome` から見直せる。
@@ -397,10 +396,8 @@ labvault auth status  # PAT 設定済か、どこに置かれているか
 
 ### 助けを呼ぶ
 
-- **admin に直接連絡** (Slack DM): アカウント承認 / team 変更 / 権限の
+- **admin に直接連絡**: アカウント承認 / team 変更 / 権限の
   問題はここ
-- **Slack `#labvault` チャンネル**: 使い方 Q&A、バグ報告、便利な技
-  共有
 - [README](../README.md) / [docs/](.) も参照
 
 ---
