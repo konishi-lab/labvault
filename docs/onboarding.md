@@ -73,8 +73,13 @@ Web UI を開く → **<https://labvault-web-355809880738.asia-northeast1.run.ap
 
 ## 3. SDK を install (10 分)
 
-Mac / Linux 開発機なら **ADC 方式** (推奨)、Windows 装置 PC など
-gcloud が入らない環境では **PAT 方式** を選ぶ。
+3 つの導線がある。やりたいことで選ぶ。
+
+| やりたいこと | どこを読む |
+|---|---|
+| Notebook で実験を取りたい (Mac / Linux 開発機) | **3-A. ADC 方式** |
+| Claude から検索・要約だけしたい (Python 不要) | **3-B. MCP リモート** |
+| Windows 装置 PC で SDK を動かしたい | **3-C. PAT 方式** |
 
 ### 3-A. ADC 方式 (Mac / Linux 開発機・Notebook)
 
@@ -107,7 +112,30 @@ labvault doctor
 `labvault doctor` で `mode: Direct mode` or `Mixed mode` が表示されて
 `[!!]` が無ければ OK。
 
-### 3-B. PAT 方式 (Windows 装置 PC / gcloud が入らない環境)
+### 3-B. Claude Desktop / Code (MCP) から使う (Python install 不要)
+
+Python / Notebook を使わず Claude からの検索・集計・要約だけしたい人は
+**ここだけ** で OK。labvault MCP サーバーが Cloud Run にホストされている
+ので、PAT を 1 つ発行して URL と Bearer を Claude に登録するだけ。
+
+1. Web UI → 右上「トークン」(`/account/tokens`) で発行 → `lv_xxx` をコピー
+2. Claude Code に登録:
+
+   ```bash
+   claude mcp add --transport http labvault \
+     https://labvault-api-355809880738.asia-northeast1.run.app/mcp/ \
+     -H "Authorization: Bearer lv_xxx"
+   ```
+
+   Claude Desktop は `claude_desktop_config.json` の `mcpServers` に同等の
+   設定 (`type: "http"`, URL, `headers`) を書く。
+3. Claude に「`power>=50` の XRD を 5 件出して」のように頼めば 7 ツール
+   (search / get_detail / compare / aggregate / get_overview /
+   get_timeline / data_preview) 経由でデータを返してくる。
+
+Notebook で実験を投入したくなったら、戻って 3-A / 3-C を続ける。
+
+### 3-C. PAT 方式 (Windows 装置 PC / gcloud が入らない環境)
 
 Web UI で **PAT を発行** してから install する。gcloud は不要。
 
@@ -409,7 +437,7 @@ labvault auth status  # PAT 設定済か、どこに置かれているか
 | 装置 PC に常設するセットアップ | [`docs/instrument_pc_setup.md`](instrument_pc_setup.md) |
 | 全 CLI / SDK API の reference | [README](../README.md) |
 | 設計思想 / 内部 backend の仕組み | [`docs/design/`](design/) |
-| Claude / Gemini からの操作 (MCP) | [README](../README.md) の MCP セクション |
+| Claude Desktop / Code からの操作 (MCP) | 上記 [3-B](#3-b-claude-desktop--code-mcp-から使う-python-install-不要) もしくは [README](../README.md) の MCP セクション |
 | QA / リリース前チェック | [`docs/qa_checklist.md`](qa_checklist.md) |
 | 既知の運用ノート | [`docs/firestore_indexes.md`](firestore_indexes.md), [`docs/auth_design.md`](auth_design.md) |
 
