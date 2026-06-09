@@ -48,6 +48,31 @@ class TestPathConversion:
         )
         assert s._base_path == "mygroup/labvault"
 
+    def test_full_path_passes_through_base_prefixed_input(self):
+        """既に ``{group_folder}/labvault/`` で始まっている入力はそのまま。"""
+        s = NextcloudStorage(
+            url="https://nc.example.com",
+            user="u",
+            password="p",
+            group_folder="large/24UTARIM004",
+        )
+        already = "large/24UTARIM004/labvault/team/AB3F/data.csv"
+        assert s._full_path(already) == already
+
+    def test_full_path_passes_through_rooted_legacy_import(self):
+        """ARIM MDX からインポートされたレコードは ``nextcloud_path`` に
+        ``{group_folder}/v1/mxdb/...`` のような Nextcloud root 起点パスを
+        持つ。base_path を勝手に頭に足すと二重 prefix で 404 になるため、
+        group_folder で始まっていれば prepend しない。"""
+        s = NextcloudStorage(
+            url="https://nc.example.com",
+            user="u",
+            password="p",
+            group_folder="large/24UTARIM004",
+        )
+        rooted = "large/24UTARIM004/v1/mxdb/sample/_data/condition.json"
+        assert s._full_path(rooted) == rooted
+
 
 class TestUpload:
     def test_upload_creates_parent_dirs(self, storage):
