@@ -41,6 +41,7 @@ def test_500_carries_cors_header_when_origin_allowed(
     body = resp.json()
     assert body["detail"] == "internal server error"
     assert body["exception_type"] == "RuntimeError"
+    assert body["message"] == "intentional test failure"
 
 
 def test_500_omits_cors_header_for_unknown_origin(
