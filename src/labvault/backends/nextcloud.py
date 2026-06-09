@@ -43,8 +43,24 @@ class NextcloudStorage:
         return self._nc
 
     def _full_path(self, path: str) -> str:
-        """SDK パスを Nextcloud フルパスに変換する。"""
+        """SDK パスを Nextcloud フルパスに変換する。
+
+        受け付ける入力は 3 形態:
+
+        - ``{team}/{record_id}/{filename}`` (SDK 流, 通常パターン)
+          → ``{group_folder}/labvault/`` を頭に付ける
+        - ``{group_folder}/labvault/...`` (既に base_path で始まっている)
+          → そのまま返す
+        - ``{group_folder}/...`` だが labvault サブディレクトリ配下では
+          ない (legacy: ARIM MDX からインポートしたレコードが
+          Nextcloud root 起点の rooted path を ``nextcloud_path`` に持つ)
+          → そのまま返す。base_path を頭に足すと
+          ``large/.../labvault/large/.../v1/mxdb/...`` のように
+          二重 prefix になり 404 になる
+        """
         if path.startswith(self._base_path):
+            return path
+        if path.startswith(self._group_folder + "/"):
             return path
         return f"{self._base_path}/{path}"
 
