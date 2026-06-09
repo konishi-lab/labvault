@@ -132,6 +132,10 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
         content={
             "detail": "internal server error",
             "exception_type": type(exc).__name__,
+            # str(exc) は ハンドラ chain で出るほとんどの例外で安全。
+            # endpoint は auth 必須なので外部に漏れる先は labvault 認可済
+            # ユーザのみ。診断のメリットが上回る。
+            "message": str(exc),
         },
         headers=headers,
     )
