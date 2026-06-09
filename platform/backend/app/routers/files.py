@@ -83,18 +83,21 @@ def download_file(
         from nc_py_api import NextcloudException
 
         if isinstance(exc, NextcloudException):
-            nc_status = getattr(exc, "status_code", 0) or 502
-            # Nextcloud の 404 はクライアント向けには「ファイル本体が
-            # ストレージから消えている」状態なので 410 Gone で返す方が
-            # 意味が伝わる (record メタデータには残っているが取得不能)。
-            http_status = 410 if nc_status == 404 else 502
+            # Nextcloud 側の status に関わらず 502 Bad Gateway を返す。
+            # 元々 Nextcloud 404 を 410 Gone にマップしていたが、410 は
+            # RFC 7234 でデフォルトキャッシュ可能なため、ブラウザが古い
+            # 失敗レスポンスを使い回し続けて修正後も 404 表示のままに
+            # なる罠を踏んだ (#52 の検証で発覚)。502 はデフォルト非
+            # キャッシュ + 「upstream Nextcloud が壊れた応答を返した」
+            # 状況とも一致する。ダメ押しで Cache-Control: no-store も。
             raise HTTPException(
-                status_code=http_status,
+                status_code=502,
                 detail=(
                     f"Nextcloud fetch failed for {filename!r}: {exc}. "
                     "record メタデータには残っているが、Nextcloud 側で"
                     "ファイル本体が見つからない / 取得できない状態です。"
                 ),
+                headers={"Cache-Control": "no-store"},
             ) from exc
         # その他は global handler で 500 (CORS-safe) になる。
         raise

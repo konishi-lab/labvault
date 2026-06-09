@@ -122,7 +122,11 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
         request.url.path,
     )
     origin = request.headers.get("origin") or ""
-    headers: dict[str, str] = {}
+    headers: dict[str, str] = {
+        # エラーレスポンスはブラウザにキャッシュさせない。500 自体は
+        # RFC 7234 でデフォルト非キャッシュだが、ダメ押し。
+        "Cache-Control": "no-store",
+    }
     if origin in _default_origins:
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
