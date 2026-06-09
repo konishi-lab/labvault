@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .artifact_registry import grant_reader, revoke_reader
 from .auth import (
@@ -92,6 +94,47 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+@app.exception_handler(Exception)
+async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """ハンドラ内の未捕捉例外を CORS ヘッダ付きの 500 に変換する。
+
+    Starlette の ServerErrorMiddleware は CORSMiddleware の外側にあるため、
+    handler 内で raise された一般例外は CORSMiddleware を素通りして
+    "Access-Control-Allow-Origin が無い 500" になる。ブラウザ側ではこれが
+    「CORS error」として表示され、真因が見えない (CLAUDE.md 既知のハマり)。
+
+    本ハンドラで HTTPException 以外の例外を JSONResponse(500) に変換し、
+    Origin が allow_origins に含まれていれば CORS ヘッダを手動で付ける。
+    こうすると fetch 側は HTTP 500 + JSON body を受け取れるので、開発者
+    ツールで本物のエラーが追える。
+
+    傍ら、サーバ側には ``logger.exception`` でフルスタックトレースを残す
+    (Cloud Run logs に出る)。
+    """
+    logger.exception(
+        "unhandled exception in %s %s",
+        request.method,
+        request.url.path,
+    )
+    origin = request.headers.get("origin") or ""
+    headers: dict[str, str] = {}
+    if origin in _default_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Vary"] = "Origin"
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "internal server error",
+            "exception_type": type(exc).__name__,
+        },
+        headers=headers,
+    )
 
 # 認証必須ルータ: 全ハンドラで Firebase ID token + allowed_users を検証
 _auth_deps = [Depends(current_user)]
