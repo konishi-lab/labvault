@@ -59,6 +59,45 @@ class TestPathConversion:
         already = "large/24UTARIM004/labvault/team/AB3F/data.csv"
         assert s._full_path(already) == already
 
+    def test_full_path_strips_doubled_prefix(self):
+        """過去のバグで Firestore に二重 prefix で保存されたパスを救済する。
+
+        ``{base_path}/{group_folder}/...`` の形を見たら先頭の
+        ``{base_path}/`` を剥がして rooted 形に戻す。"""
+        s = NextcloudStorage(
+            url="https://nc.example.com",
+            user="u",
+            password="p",
+            group_folder="large/24UTARIM004",
+        )
+        doubled = (
+            "large/24UTARIM004/labvault/"
+            "large/24UTARIM004/v1/mxdb/sample/_data/condition.json"
+        )
+        assert s._full_path(doubled) == (
+            "large/24UTARIM004/v1/mxdb/sample/_data/condition.json"
+        )
+
+    def test_full_path_strips_triple_prefix(self):
+        """二重を超えて三重以上付いていても idempotent に剥がす。
+
+        実害は無いはずだが、defensive に loop で 0 段になるまで剥がす
+        実装にしてあるのを retain する。"""
+        s = NextcloudStorage(
+            url="https://nc.example.com",
+            user="u",
+            password="p",
+            group_folder="large/24UTARIM004",
+        )
+        tripled = (
+            "large/24UTARIM004/labvault/"
+            "large/24UTARIM004/labvault/"
+            "large/24UTARIM004/v1/mxdb/sample/_data/condition.json"
+        )
+        assert s._full_path(tripled) == (
+            "large/24UTARIM004/v1/mxdb/sample/_data/condition.json"
+        )
+
     def test_full_path_passes_through_rooted_legacy_import(self):
         """ARIM MDX からインポートされたレコードは ``nextcloud_path`` に
         ``{group_folder}/v1/mxdb/...`` のような Nextcloud root 起点パスを

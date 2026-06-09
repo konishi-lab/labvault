@@ -45,7 +45,7 @@ class NextcloudStorage:
     def _full_path(self, path: str) -> str:
         """SDK パスを Nextcloud フルパスに変換する。
 
-        受け付ける入力は 3 形態:
+        受け付ける入力は 4 形態:
 
         - ``{team}/{record_id}/{filename}`` (SDK 流, 通常パターン)
           → ``{group_folder}/labvault/`` を頭に付ける
@@ -57,7 +57,16 @@ class NextcloudStorage:
           → そのまま返す。base_path を頭に足すと
           ``large/.../labvault/large/.../v1/mxdb/...`` のように
           二重 prefix になり 404 になる
+        - ``{group_folder}/labvault/{group_folder}/...`` (corrupt: 過去の
+          バグで二重 prefix のまま保存されたケース) → 先頭の
+          ``{base_path}/`` を剥がして rooted 形に戻す。Firestore の
+          ``nextcloud_path`` を migrate する手間なしに既存レコードの
+          ダウンロードを救済する。
         """
+        # 過去のバグで保存された二重 prefix を剥がす (idempotent)。
+        double_prefix = f"{self._base_path}/{self._group_folder}/"
+        while path.startswith(double_prefix):
+            path = path[len(self._base_path) + 1 :]
         if path.startswith(self._base_path):
             return path
         if path.startswith(self._group_folder + "/"):
