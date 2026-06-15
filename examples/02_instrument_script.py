@@ -79,8 +79,8 @@ def main():
     exp.results["uniformity_percent"] = 2.1
     exp.results["sheet_resistance_ohm_sq"] = 1.2e6
 
-    # --- データファイルの保存 ---
-    exp.save("process_log", {
+    # --- データファイルの保存 (dict は add_object 推奨、旧 save も alias で動く) ---
+    exp.add_object("process_log", {
         "events": exp.events,
         "conditions": exp.get_conditions(),
         "results": exp.results.to_dict(),

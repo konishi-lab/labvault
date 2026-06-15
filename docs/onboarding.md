@@ -244,10 +244,10 @@ for power in [5, 10, 20]:
     child.results["peak_value"] = (peak, "V", "出力電圧のピーク")
     child.results["mean_y"] = (float(y.mean()), "V")
 
-    # ファイル添付
+    # ファイル添付 (Python オブジェクトは add_object、既存パスは add_file)
     fig, ax = plt.subplots()
     ax.plot(x, y)
-    child.save("plot.png", fig)
+    child.add_object("plot.png", fig)
     plt.close(fig)
 
     child.status = "success"
@@ -324,38 +324,40 @@ Web UI では条件 / 結果カードどちらも `key [unit]: value` の青字 
 > **互換性メモ**: 既存の `results["lattice_a"] = 2.873` のような
 > スカラー代入は引き続き動きます。tuple 記法は追加 API。
 
-### 4.4 データの置き場所: `results` / `save` / `add` の使い分け
+### 4.4 データの置き場所: `results` / `add_file` / `add_object` の使い分け
 
-1 つの測定で出てくるデータは、サイズと用途で 3 つの置き場所を使い
-分けます。
+1 つの測定で出てくるデータは、サイズと用途で 4 つの置き場所を使い分けます。
 
 | 置き場所 | API | 入れるもの | フォーマット変換 |
 |---|---|---|---|
 | **metadata field** | `record.results["key"] = ...` | スカラー / 小リスト / 小 dict (論文表に貼れる粒度) | なし |
-| **ファイル添付 (自動変換あり)** | `record.save(name, obj)` | Python オブジェクト全般 | 自動 (dict/list→JSON, ndarray→.npy, Figure→.png, DataFrame→.csv) |
-| **ファイル添付 (生バイト)** | `record.add(path_or_bytes)` | 既存ファイル / 装置出力バイナリ | なし |
+| **ファイル添付 (既存パス)** | `record.add_file(path)` | 装置出力 / 既存ファイル | なし |
+| **ファイル添付 (Python obj)** | `record.add_object(name, obj)` | Figure / DataFrame / dict / ndarray | 自動 (dict/list→JSON, ndarray→.npy, Figure→.png, DataFrame→.csv) |
+| **ファイル添付 (生バイト)** | `record.add_bytes(name, data)` | HTTP レスポンス / バッファ / エンコード済 str | なし |
 
-> `save` は **内部で `add` を呼ぶラッパー** です。違いは「型変換を
-> labvault に任せる (save) か、自分で済ませる (add) か」だけ。
-> `record.save("plot.png", fig)` ≈ `add(fig_to_png_bytes(fig), name="plot.png", content_type="image/png")`。
+> 旧 `add` / `save` も alias として動きますが、新規コードは上記の
+> 役割別 method を使うことを推奨します (将来 minor で
+> `DeprecationWarning` を出す予定)。動的に型が変わるループでは
+> `record.put(target, name=...)` 1 本でも書けます。
 
 選び方 (上から順に試す):
 
 1. **論文表の 1 行に貼れる小さな値か?** → `results["key"] = value`
    (検索 / scatter / 結果カード表示で活躍)
-2. **Python オブジェクトを 1 行でファイル化したいか?** →
-   `record.save("plot.png", fig)` / `record.save("data.npy", arr)` /
-   `record.save("table.csv", df)` (内部で自動変換 → `add()`)
-3. **すでにファイルがある (装置出力など)?** →
-   `record.add("xrd_001.ras")` / `record.add("photo.jpg")`
-   (内容はそのまま。template にパーサーが紐付いていれば
-   add 時に自動で results に要約値が入る)
+2. **既存ファイルがある (装置出力など)?** → `record.add_file("xrd_001.ras")`
+   / `record.add_file("photo.jpg")` (内容はそのまま。template にパーサーが
+   紐付いていれば add_file 時に自動で results に要約値が入る)
+3. **Python オブジェクトを 1 行でファイル化したいか?** →
+   `record.add_object("plot.png", fig)` / `record.add_object("data.npy", arr)` /
+   `record.add_object("table.csv", df)` (内部で自動変換)
+4. **HTTP レスポンスやバッファの生バイトを保存したい?** →
+   `record.add_bytes("photo.png", resp.content)`
 
 ```python
 # 典型例: 1 つの測定で 3 つを使い分ける
 child.results["peak_value"] = (0.97, "V")            # ① 主結果
-child.save("waveform.png", fig)                      # ② Figure を PNG に
-child.add("instrument_log.txt")                      # ③ 装置生ログをそのまま
+child.add_object("waveform.png", fig)                # ② Figure を PNG に
+child.add_file("instrument_log.txt")                 # ③ 装置生ログをそのまま
 ```
 
 > どれもファイルは Nextcloud、metadata は Firestore に行きます。

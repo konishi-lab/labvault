@@ -4,6 +4,42 @@
 で記録する。バージョン番号は [Semantic Versioning](https://semver.org/) に
 従う (`MAJOR.MINOR.PATCH`、SDK API or backend API の破壊的変更は MAJOR)。
 
+## [Unreleased]
+
+### Added
+
+- **`Record.add_file()` / `add_bytes()` / `add_object()` / `put()`** —
+  ファイル保存 API を役割別に分割。これまで `add` / `save` の 2 メソッドが
+  汎用語のため「どれを使うのか」「どちらが先に name を取るのか」が分かり
+  にくいというフィードバックへの対応:
+  - `add_file(path, *, name=None)` — 既存ファイル (装置生バイナリ・ディスク
+    上のファイル)
+  - `add_bytes(name, data)` — 生バイト列 (HTTP レスポンス・バッファ)
+  - `add_object(name, obj)` — Python オブジェクトの自動変換 (Figure→PNG,
+    DataFrame→CSV, dict→JSON, etc.)
+  - `put(target, *, name=None)` — 型を見て上 3 つに dispatch する統一エント
+    リ。動的に型が変わるループや書き分けが面倒な時の便利関数 (`str`/`Path`
+    は常に path 扱い、`bytes` 系は `add_bytes`、その他は `add_object`)
+- 内部実装は `_store_bytes(name, data, content_type)` の単一合流点にリ
+  ファクタ。冪等性 (同一 name + 同一 SHA256 でスキップ) と
+  `auto_extract_conditions` (template の file_parsers) は全 add_* 経路で
+  維持。
+- `tests/unit/test_record_file_api.py` 新規 37 ケース。
+
+### Deprecated
+
+- `Record.add()` / `Record.save()` を **「将来の minor で
+  `DeprecationWarning` を入れる予定」の互換 alias** に位置付け直し
+  (今回は警告を出さない、既存コードは無変更で動作)。alias の削除は
+  v2.0 でも行わない方針 (装置 PC の長期運用 script を保護)。
+
+### Fixed
+
+- `add_dir()` 内部で旧 `add()` を呼んでいた箇所を新 `add_file()` に置換
+  (挙動は不変)。
+- `docs/design/REQUIREMENTS.md` / `docs/design/v10/04_sdk_cookbook.md` の
+  `add_ref(size_gb=...)` を実装に合わせて `size_bytes=...` に修正。
+
 ## [0.2.3] - 2026-06-03
 
 ### Added

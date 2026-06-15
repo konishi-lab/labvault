@@ -650,6 +650,146 @@ class Record:
 
     # --- ファイル操作 ---
 
+    # --- 新ファイル API (推奨) ---
+    #
+    # 役割で 3 つに分かれる:
+    #   add_file   — 既存ファイル (path) を取り込む
+    #   add_bytes  — 生バイト列 (HTTP / バッファ / 装置 API 戻り値) を保存する
+    #   add_object — Python オブジェクトを自動変換 (Figure/DataFrame/dict/list/...)
+    # 動的に型が変わるループでは put() を使う (3 つに dispatch するシュガー)。
+    #
+    # 旧 add / save は alias として残す (互換性維持、将来の minor で
+    # DeprecationWarning を入れる予定 — CHANGELOG 参照)。
+
+    def add_file(
+        self,
+        path: str | Path,
+        *,
+        name: str | None = None,
+        content_type: str = "",
+    ) -> Record:
+        """既存ファイル (装置生バイナリ / ディスク上のファイル) を取り込む。
+
+        Args:
+            path: 読み込むファイルのパス。
+            name: 保存名 (省略時 path.name)。リネームしたい時のみ指定。
+            content_type: MIME。省略時は拡張子から推定。
+
+        冪等: 同一 name + 同一 SHA256 ならスキップ。
+        """
+        p = Path(path)
+        data = p.read_bytes()
+        file_name = name or p.name
+        if not content_type:
+            ct, _ = mimetypes.guess_type(str(p))
+            content_type = ct or "application/octet-stream"
+        return self._store_bytes(file_name, data, content_type)
+
+    def add_bytes(
+        self,
+        name: str,
+        data: bytes | bytearray | memoryview,
+        *,
+        content_type: str = "",
+    ) -> Record:
+        """生バイト列を保存する。HTTP レスポンス / バッファ / エンコード済 str など。
+
+        Args:
+            name: 保存名 (必須)。
+            data: 保存するバイト列。
+            content_type: MIME (省略時 application/octet-stream)。
+        """
+        return self._store_bytes(
+            name,
+            bytes(data),
+            content_type or "application/octet-stream",
+        )
+
+    def add_object(
+        self,
+        name: str,
+        obj: Any,
+        *,
+        content_type: str = "",
+    ) -> Record:
+        """Python オブジェクトを自動変換して保存する。
+
+        変換ルール:
+        - ``dict`` / ``list`` -> JSON (``.json``)
+        - ``str`` -> テキスト (``.txt``)
+        - ``bytes`` -> そのままバイナリ
+        - ``numpy.ndarray`` -> ``.npy``
+        - ``matplotlib.Figure`` -> ``.png``
+        - ``pandas.DataFrame`` -> ``.csv``
+
+        Args:
+            name: 保存名 (必須)。拡張子が無い場合は型に応じて自動補完。
+            obj: 保存対象。
+            content_type: MIME (省略時は型から推定)。
+        """
+        data: bytes
+        ct = content_type
+
+        if isinstance(obj, bytes):
+            data = obj
+            ct = ct or "application/octet-stream"
+        elif isinstance(obj, str):
+            data = obj.encode("utf-8")
+            if not name.endswith(".txt"):
+                name = name if "." in name else f"{name}.txt"
+            ct = ct or "text/plain; charset=utf-8"
+        elif isinstance(obj, (dict, list)):
+            data = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
+            if not name.endswith(".json"):
+                name = name if "." in name else f"{name}.json"
+            ct = ct or "application/json"
+        else:
+            data, name, ct = _try_save_special(obj, name, ct)
+
+        return self._store_bytes(name, data, ct)
+
+    def put(
+        self,
+        target: str | Path | bytes | bytearray | memoryview | Any,
+        *,
+        name: str | None = None,
+        content_type: str = "",
+    ) -> Record:
+        """型を見て add_file / add_bytes / add_object に dispatch する統一エントリ。
+
+        通常は明示的に ``add_file`` / ``add_bytes`` / ``add_object`` を呼ぶ方が
+        読みやすい。``put`` は型が動的に変わる heterogeneous なループや、
+        どの method を呼べばよいか迷う場合の便利関数。
+
+        dispatch ルール:
+        - ``str`` / ``Path`` -> ``add_file`` (常に path として扱う、無ければ
+          FileNotFoundError)
+        - ``bytes`` / ``bytearray`` / ``memoryview`` -> ``add_bytes`` (name 必須)
+        - その他 (Figure, DataFrame, dict, ndarray など) -> ``add_object`` (name 必須)
+
+        str リテラル保存をしたい場合は ``add_object(name, "...")`` を明示的に呼ぶこと
+        (``put`` では str は常に path として解釈される)。
+        """
+        if isinstance(target, (str, Path)):
+            return self.add_file(target, name=name, content_type=content_type)
+        if isinstance(target, (bytes, bytearray, memoryview)):
+            if name is None:
+                msg = (
+                    "put(<bytes>, ...) requires name=. "
+                    "Use add_bytes(name, data) for an explicit call."
+                )
+                raise TypeError(msg)
+            return self.add_bytes(name, target, content_type=content_type)
+        if name is None:
+            msg = (
+                f"put(<{type(target).__name__}>, ...) requires name=. "
+                "Use add_object(name, obj) for an explicit call."
+            )
+            raise TypeError(msg)
+        return self.add_object(name, target, content_type=content_type)
+
+    # --- 旧 API (互換 alias、将来 DeprecationWarning 予定) ---
+
     def add(
         self,
         source: str | Path | bytes,
@@ -657,52 +797,43 @@ class Record:
         name: str | None = None,
         content_type: str = "",
     ) -> Record:
-        """ファイルを保存する。
+        """[Legacy] ファイルを保存する。``add_file`` / ``add_bytes`` の利用を推奨。
 
-        同一ファイル名の DataRef が既にあり SHA256 が同じなら
-        スキップ (冪等性)。
+        将来の minor リリースで ``DeprecationWarning`` を出す予定 (CHANGELOG 参照)。
+        現在は警告なく動作するので既存コードは変更不要。
         """
-        data: bytes
-        file_name: str
-
         if isinstance(source, (str, Path)):
-            p = Path(source)
-            data = p.read_bytes()
-            file_name = name or p.name
-            if not content_type:
-                ct, _ = mimetypes.guess_type(str(p))
-                content_type = ct or "application/octet-stream"
-        else:
-            data = source
-            file_name = name or "untitled"
-            content_type = content_type or "application/octet-stream"
+            return self.add_file(source, name=name, content_type=content_type)
+        return self.add_bytes(name or "untitled", source, content_type=content_type)
 
+    def _store_bytes(self, name: str, data: bytes, content_type: str) -> Record:
+        """ストレージへの実書き込み (全 add_* / put の合流点)。
+
+        冪等: 同一ファイル名 + 同一 SHA256 ならスキップ。
+        同一ファイル名で SHA が違えば上書き。
+        ``auto_extract_conditions`` を呼ぶので template の file_parsers も起動する。
+        """
         sha = hashlib.sha256(data).hexdigest()
-
-        # 冪等性: 同一ファイル名 & 同一ハッシュならスキップ
         for ref in self._data_refs:
-            if ref.name == file_name and ref.sha256 == sha:
+            if ref.name == name and ref.sha256 == sha:
                 return self
 
-        storage_path = f"{self._team}/{self._id}/{file_name}"
+        storage_path = f"{self._team}/{self._id}/{name}"
 
         if self._lab and self._lab._storage:
             self._lab._storage.upload(storage_path, data, content_type)
 
-        # 同一ファイル名は上書き
-        self._data_refs = [r for r in self._data_refs if r.name != file_name]
+        self._data_refs = [r for r in self._data_refs if r.name != name]
         self._data_refs.append(
             DataRef(
-                name=file_name,
+                name=name,
                 nextcloud_path=storage_path,
                 content_type=content_type,
                 size_bytes=len(data),
                 sha256=sha,
             )
         )
-        # template に file_parsers が宣言されていれば、拡張子マッチで起動して
-        # conditions を自動充填する。手動入力は parser 値で上書きしない。
-        self._auto_extract_conditions(file_name, data)
+        self._auto_extract_conditions(name, data)
         self._persist()
         return self
 
@@ -771,35 +902,12 @@ class Record:
         *,
         content_type: str = "",
     ) -> Record:
-        """Python オブジェクトを自動判定してファイル保存する。
+        """[Legacy] Python オブジェクトを保存する。``add_object`` の利用を推奨。
 
-        - dict/list -> JSON
-        - str -> テキスト (.txt)
-        - bytes -> バイナリ
-        - numpy.ndarray -> .npy (try/except)
-        - matplotlib.Figure -> .png (try/except)
-        - pandas.DataFrame -> .csv (try/except)
+        将来の minor リリースで ``DeprecationWarning`` を出す予定 (CHANGELOG 参照)。
+        現在は警告なく動作するので既存コードは変更不要。
         """
-        data: bytes
-        ct = content_type
-
-        if isinstance(obj, bytes):
-            data = obj
-            ct = ct or "application/octet-stream"
-        elif isinstance(obj, str):
-            data = obj.encode("utf-8")
-            if not name.endswith(".txt"):
-                name = name if "." in name else f"{name}.txt"
-            ct = ct or "text/plain; charset=utf-8"
-        elif isinstance(obj, (dict, list)):
-            data = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
-            if not name.endswith(".json"):
-                name = name if "." in name else f"{name}.json"
-            ct = ct or "application/json"
-        else:
-            data, name, ct = _try_save_special(obj, name, ct)
-
-        return self.add(data, name=name, content_type=ct)
+        return self.add_object(name, obj, content_type=content_type)
 
     def add_dir(self, dir_path: str | Path) -> Record:
         """ディレクトリ配下の全ファイルを再帰的に追加する。"""
@@ -810,7 +918,7 @@ class Record:
         for p in sorted(root.rglob("*")):
             if p.is_file():
                 rel = p.relative_to(root)
-                self.add(p, name=str(rel))
+                self.add_file(p, name=str(rel))
         return self
 
     def get_data(self, name: str) -> bytes:
