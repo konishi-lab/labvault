@@ -41,6 +41,7 @@ from .schemas import (
     ApproveResponse,
     CreateTokenRequest,
     CreateTokenResponse,
+    GrantArResponse,
     HealthResponse,
     PendingListResponse,
     PendingUser,
@@ -621,6 +622,10 @@ def admin_approve(
     # AR reader を付与 (LABVAULT_AR_REPO 未設定なら no-op)。
     # 失敗しても承認自体は成功扱い — レスポンスの ar_granted で admin に伝える。
     ar_granted = grant_reader(email)
+    # 後で admin UI が「失敗してれば retry」を判断できるよう Firestore にも残す。
+    allowed_users_ref().document(email).set(
+        {"ar_granted": ar_granted}, merge=True
+    )
 
     return ApproveResponse(
         status="ok", email=email, team_id=target_team, ar_granted=ar_granted
@@ -725,6 +730,10 @@ def admin_list_users(
             }
             if user_team_ids.isdisjoint(restrict):
                 continue
+        ar_granted_raw = d.get("ar_granted")
+        ar_granted = (
+            bool(ar_granted_raw) if isinstance(ar_granted_raw, bool) else None
+        )
         items.append(
             AllowedUser(
                 email=d.get("email") or snap.id,
@@ -735,6 +744,7 @@ def admin_list_users(
                 active=bool(d.get("active", True)),
                 created_at=d.get("created_at"),
                 last_login_at=d.get("last_login_at"),
+                ar_granted=ar_granted,
             )
         )
     items.sort(key=lambda u: u.email)
@@ -793,6 +803,7 @@ def admin_add_user_team(
 
     # 既存承認以前に作られた user (AR 未付与) の救済も兼ねて grant を呼ぶ。冪等。
     ar_granted = grant_reader(email)
+    user_ref.set({"ar_granted": ar_granted}, merge=True)
 
     name_map = _team_name_map()
     return UserTeamsResponse(
@@ -889,6 +900,10 @@ def _count_active_super_admins(exclude_email: str | None = None) -> int:
 def _to_allowed_user(snap: Any, name_map: dict[str, str]) -> AllowedUser:
     """allowed_users docsnapshot を AllowedUser に詰め替える。"""
     d = snap.to_dict() or {}
+    ar_granted_raw = d.get("ar_granted")
+    ar_granted = (
+        bool(ar_granted_raw) if isinstance(ar_granted_raw, bool) else None
+    )
     return AllowedUser(
         email=d.get("email") or snap.id,
         display_name=d.get("display_name", ""),
@@ -898,6 +913,7 @@ def _to_allowed_user(snap: Any, name_map: dict[str, str]) -> AllowedUser:
         active=bool(d.get("active", True)),
         created_at=d.get("created_at"),
         last_login_at=d.get("last_login_at"),
+        ar_granted=ar_granted,
     )
 
 
@@ -962,9 +978,65 @@ def admin_update_user(
         # active 切替時のみ AR を更新 (display_name 変更だけなら no-op)
         if "active" in patch:
             if patch["active"]:
-                grant_reader(email)
+                ar_granted = grant_reader(email)
+                user_ref.set({"ar_granted": ar_granted}, merge=True)
             else:
+                # revoke は意図として「外す」を表す。API 失敗は warning log 済。
                 revoke_reader(email)
+                user_ref.set({"ar_granted": False}, merge=True)
 
     snap = user_ref.get()
     return _to_allowed_user(snap, _team_name_map())
+
+
+@app.post(
+    "/api/admin/users/{email}/ar/grant", response_model=GrantArResponse
+)
+def admin_grant_ar(
+    email: str,
+    admin: User = Depends(require_any_team_admin),
+) -> GrantArResponse:
+    """対象 user に AR (Artifact Registry) reader 権限を再付与する。
+
+    用途: approve 時 / team 追加時に AR API が一時的に失敗した user の
+    救済。冪等 (`grant_reader` 自体が「既に付与済みなら no-op」)。
+
+    認可:
+      - super-admin は誰に対しても実行可
+      - team admin は自分が admin の team のいずれかに対象 user が所属
+        している場合のみ実行可 (他 team 限定の user は触れない)
+
+    side effect: Firestore `allowed_users/{email}.ar_granted` を結果で
+    上書きする (UI が retry ボタンを出す判断材料)。
+    """
+    email = email.strip()
+    user_ref = allowed_users_ref().document(email)
+    snap = user_ref.get()
+    if not snap.exists:
+        raise HTTPException(
+            status_code=404, detail=f"{email} is not in allowed_users"
+        )
+    data = snap.to_dict() or {}
+
+    # team admin の場合は対象 user の所属 team が自分の admin team と
+    # 重なっているか確認 (super-admin はバイパス)
+    if not is_super_admin(admin):
+        restrict = _admin_team_filter(admin) or frozenset()
+        teams_raw = data.get("teams") or []
+        user_team_ids = {
+            t["team_id"]
+            for t in teams_raw
+            if isinstance(t, dict) and t.get("team_id")
+        }
+        if user_team_ids.isdisjoint(restrict):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"not allowed: {email} is not a member of any team "
+                    "you administer"
+                ),
+            )
+
+    ar_granted = grant_reader(email)
+    user_ref.set({"ar_granted": ar_granted}, merge=True)
+    return GrantArResponse(status="ok", email=email, ar_granted=ar_granted)
