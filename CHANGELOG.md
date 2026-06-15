@@ -4,7 +4,7 @@
 で記録する。バージョン番号は [Semantic Versioning](https://semver.org/) に
 従う (`MAJOR.MINOR.PATCH`、SDK API or backend API の破壊的変更は MAJOR)。
 
-## [Unreleased]
+## [0.3.0] - 2026-06-15
 
 ### Added
 
