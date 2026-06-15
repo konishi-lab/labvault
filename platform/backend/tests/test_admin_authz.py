@@ -494,3 +494,154 @@ def test_ar_grant_unknown_user_404(
     _seed_users(fake_db)
     res = as_super.post("/api/admin/users/ghost@example.com/ar/grant")
     assert res.status_code == 404
+
+
+# ----------------------------------------------------------------------
+# Business rules (integrity checks, NOT authorization)
+# ----------------------------------------------------------------------
+#
+# ここでは「権限はあるが整合性を壊す操作」を 400 で弾く挙動を検証する。
+#   - 自己 deactivate (誤操作で締め出される)
+#   - 最後の active super-admin を deactivate (admin 不在)
+#   - 最後の team を remove (team 0 件の user が残る)
+#   - DELETE で user に属していない team を指定 (silent no-op しない)
+
+
+def _seed_users_with_super(fake_db: FakeDB) -> None:
+    """super-admin (`super@example.com`) と通常 user 2 名を seed。"""
+    _seed_teams(fake_db)
+    fake_db.collection("allowed_users")._docs.update(
+        {
+            "super@example.com": {
+                "email": "super@example.com",
+                "display_name": "Super",
+                "role": "admin",
+                "teams": [{"team_id": "teamA", "role": "admin"}],
+                "default_team": "teamA",
+                "active": True,
+            },
+            "alice@example.com": {
+                "email": "alice@example.com",
+                "display_name": "Alice",
+                "role": "member",
+                "teams": [
+                    {"team_id": "teamA", "role": "member"},
+                    {"team_id": "teamB", "role": "member"},
+                ],
+                "default_team": "teamA",
+                "active": True,
+            },
+            "bob@example.com": {
+                "email": "bob@example.com",
+                "display_name": "Bob",
+                "role": "member",
+                "teams": [{"team_id": "teamA", "role": "member"}],
+                "default_team": "teamA",
+                "active": True,
+            },
+        }
+    )
+
+
+def test_business_self_deactivate_forbidden(
+    as_super: TestClient, fake_db: FakeDB
+) -> None:
+    """super-admin が自分自身を deactivate しようとしたら 400。"""
+    _seed_users_with_super(fake_db)
+    res = as_super.patch(
+        "/api/admin/users/super@example.com",
+        json={"active": False},
+    )
+    assert res.status_code == 400
+    assert "yourself" in res.json()["detail"]
+    # 状態は変わらない
+    assert (
+        fake_db.collection("allowed_users")
+        ._docs["super@example.com"]["active"]
+        is True
+    )
+
+
+def test_business_last_active_super_admin_deactivate_forbidden(
+    as_super: TestClient, fake_db: FakeDB
+) -> None:
+    """最後の active super-admin を deactivate しようとしたら 400。
+
+    自己 deactivate は別ルール (上のテスト) で先に弾かれるため、
+    「自分以外を deactivate するが、残る admin が 0 になる」状況を作る。
+    seed の super@ を **Firestore 上は member に降格** しつつ
+    (current_user は admin 持ち合わせの fixture を流用)、もう 1 人の
+    admin (super2@) を deactivate しようとする。Firestore 側で role=admin
+    が super2@ だけになるので、彼が「最後の active super-admin」になる。
+    """
+    _seed_users_with_super(fake_db)
+    fake_db.collection("allowed_users")._docs.update(
+        {
+            "super2@example.com": {
+                "email": "super2@example.com",
+                "display_name": "Super 2",
+                "role": "admin",
+                "teams": [{"team_id": "teamA", "role": "admin"}],
+                "default_team": "teamA",
+                "active": True,
+            }
+        }
+    )
+    # super (current admin) を Firestore 上で member に降格 → admin は super2 のみ
+    fake_db.collection("allowed_users")._docs["super@example.com"]["role"] = (
+        "member"
+    )
+
+    res = as_super.patch(
+        "/api/admin/users/super2@example.com",
+        json={"active": False},
+    )
+    assert res.status_code == 400
+    assert "last active super-admin" in res.json()["detail"]
+    # 状態は変わらない
+    assert (
+        fake_db.collection("allowed_users")
+        ._docs["super2@example.com"]["active"]
+        is True
+    )
+
+
+def test_business_last_team_remove_forbidden(
+    as_super: TestClient, fake_db: FakeDB
+) -> None:
+    """team が 1 つしか無い user から最後の team を外そうとしたら 400。"""
+    _seed_users_with_super(fake_db)
+    # bob は teamA だけ
+    res = as_super.delete("/api/admin/users/bob@example.com/teams/teamA")
+    assert res.status_code == 400
+    assert "deactivate" in res.json()["detail"]
+    # bob は teamA に残っている
+    bob_teams = fake_db.collection("allowed_users")._docs["bob@example.com"][
+        "teams"
+    ]
+    assert any(t.get("team_id") == "teamA" for t in bob_teams)
+
+
+def test_business_remove_team_not_member_404(
+    as_super: TestClient, fake_db: FakeDB
+) -> None:
+    """user に属していない team を DELETE 指定したら silent no-op せず 404。"""
+    _seed_users_with_super(fake_db)
+    # bob は teamA だけ
+    res = as_super.delete("/api/admin/users/bob@example.com/teams/teamB")
+    assert res.status_code == 404
+    assert "teamB" in res.json()["detail"]
+
+
+def test_business_remove_team_reassigns_default(
+    as_super: TestClient, fake_db: FakeDB
+) -> None:
+    """default_team が削除対象だった場合、残った team の先頭に振り替わる。"""
+    _seed_users_with_super(fake_db)
+    # alice は teamA (default) + teamB の 2 つ所属。teamA を消す。
+    res = as_super.delete("/api/admin/users/alice@example.com/teams/teamA")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["default_team"] == "teamB"
+    team_ids = {t["team_id"] for t in body["teams"]}
+    assert team_ids == {"teamB"}
