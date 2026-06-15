@@ -299,3 +299,122 @@ def test_io_bytesio_via_getvalue(lab: Lab) -> None:
     buf = io.BytesIO(b"data")
     rec.add_bytes("buf.bin", buf.getvalue())
     assert rec.get_data("buf.bin") == b"data"
+
+
+# ----------------------------------------------------------------------
+# DataRef.original_type — add_object 経路で semantic タグが付与されることを確認
+#
+# 用途: Web UI / MCP / LLM が「.npy は ndarray、.png は Figure」を
+# 拡張子推測ではなく metadata から確実に判別できる。
+# ----------------------------------------------------------------------
+
+
+class TestOriginalType:
+    def test_add_object_dict_tags_dict(self, lab: Lab) -> None:
+        rec = lab.new("test")
+        rec.add_object("params.json", {"a": 1})
+        assert rec.list_data()[0].original_type == "dict"
+
+    def test_add_object_list_tags_list(self, lab: Lab) -> None:
+        rec = lab.new("test")
+        rec.add_object("items.json", [1, 2, 3])
+        assert rec.list_data()[0].original_type == "list"
+
+    def test_add_object_str_tags_str(self, lab: Lab) -> None:
+        rec = lab.new("test")
+        rec.add_object("memo", "hello")
+        assert rec.list_data()[0].original_type == "str"
+
+    def test_add_object_bytes_tags_bytes(self, lab: Lab) -> None:
+        rec = lab.new("test")
+        rec.add_object("blob.bin", b"\x00\x01")
+        assert rec.list_data()[0].original_type == "bytes"
+
+    def test_add_object_ndarray_tags_ndarray(self, lab: Lab) -> None:
+        import numpy as np
+
+        rec = lab.new("test")
+        rec.add_object("spectrum", np.array([1.0, 2.0, 3.0]))
+        ref = rec.list_data()[0]
+        assert ref.original_type == "ndarray"
+        assert ref.name == "spectrum.npy"
+
+    def test_add_object_figure_tags_figure(self, lab: Lab) -> None:
+        matplotlib = pytest.importorskip("matplotlib")
+        matplotlib.use("Agg")
+        plt = pytest.importorskip("matplotlib.pyplot")
+
+        rec = lab.new("test")
+        fig, ax = plt.subplots()
+        ax.plot([1, 2, 3])
+        rec.add_object("plot.png", fig)
+        plt.close(fig)
+        ref = rec.list_data()[0]
+        assert ref.original_type == "figure"
+        assert ref.name == "plot.png"
+
+    def test_add_object_dataframe_tags_dataframe(self, lab: Lab) -> None:
+        pd = pytest.importorskip("pandas")
+
+        rec = lab.new("test")
+        rec.add_object("table", pd.DataFrame({"x": [1, 2], "y": [3, 4]}))
+        ref = rec.list_data()[0]
+        assert ref.original_type == "dataframe"
+        assert ref.name == "table.csv"
+
+    def test_add_file_has_none(self, lab: Lab, tmp_path: Path) -> None:
+        """raw な add_file 経路では original_type が None (= 由来不明)。"""
+        rec = lab.new("test")
+        f = tmp_path / "raw.bin"
+        f.write_bytes(b"x")
+        rec.add_file(f)
+        assert rec.list_data()[0].original_type is None
+
+    def test_add_bytes_has_none(self, lab: Lab) -> None:
+        """raw な add_bytes 経路では original_type が None。"""
+        rec = lab.new("test")
+        rec.add_bytes("blob.bin", b"x")
+        assert rec.list_data()[0].original_type is None
+
+    def test_put_path_propagates_none(self, lab: Lab, tmp_path: Path) -> None:
+        rec = lab.new("test")
+        f = tmp_path / "x.bin"
+        f.write_bytes(b"x")
+        rec.put(f)
+        assert rec.list_data()[0].original_type is None
+
+    def test_put_object_propagates_tag(self, lab: Lab) -> None:
+        """put 経由でも add_object に流れれば original_type が付く。"""
+        rec = lab.new("test")
+        rec.put({"a": 1}, name="params")
+        assert rec.list_data()[0].original_type == "dict"
+
+    def test_persist_round_trip(self, lab: Lab) -> None:
+        """_to_dict / 再構成で original_type が保持される。"""
+        rec = lab.new("test")
+        rec.add_object("params.json", {"a": 1})
+
+        from labvault.core.record import Record
+
+        snapshot = rec._to_dict()
+        rec2 = Record._from_dict(snapshot, lab=lab)
+        assert rec2.list_data()[0].original_type == "dict"
+
+    def test_legacy_record_without_field_loads(self, lab: Lab) -> None:
+        """既存 Firestore データ (original_type field 無し) も graceful に読める。"""
+        from labvault.core.record import Record
+
+        snapshot = lab.new("test")._to_dict()
+        # 古いスキーマを模す: data_refs から original_type を削る
+        snapshot["data_refs"] = [
+            {
+                "name": "old.bin",
+                "nextcloud_path": "p",
+                "content_type": "application/octet-stream",
+                "size_bytes": 1,
+                "sha256": "abc",
+            }
+        ]
+        rec = Record._from_dict(snapshot, lab=lab)
+        # default は None
+        assert rec.list_data()[0].original_type is None
