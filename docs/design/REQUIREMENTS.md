@@ -111,7 +111,7 @@
 
 - 小（~100MB）: `exp.add()` → Nextcloudアップロード
 - 中（100MB~数GB）: `exp.add()` → 非同期アップロード（進捗表示はPost-MVP）
-- 大（数GB~TB）: `exp.add_ref(location="HPC:/path", size_gb=8)` で参照のみ
+- 大（数GB~TB）: `exp.add_ref(uri="hpc:/path", size_bytes=8*1024**3)` で参照のみ
 - DOIリンク: `exp.add_ref(doi="10.5281/zenodo.12345")`
 - LLMにはサマリー/統計量のみ渡す
 

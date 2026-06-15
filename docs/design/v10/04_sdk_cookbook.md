@@ -268,46 +268,93 @@ exp.nextcloud_url # "https://nextcloud.example.com/f/12345"
 
 ## 4. データの保存と取得
 
-### 4.1 ファイルの追加
+### 4.1 ファイル保存 API の使い分け
+
+役割で 4 つの method を使い分ける (推奨)。`add` / `save` の旧 API も alias
+として動くが、新規コードは下記を使うこと。
+
+| やりたいこと | 推奨 method | 例 |
+|---|---|---|
+| 既存ファイル (パス) を取り込む | `add_file(path)` | `exp.add_file("xrd_001.ras")` |
+| 生バイト列を保存 (HTTP / バッファ) | `add_bytes(name, data)` | `exp.add_bytes("photo.png", resp.content)` |
+| Python オブジェクトを変換して保存 | `add_object(name, obj)` | `exp.add_object("plot.png", fig)` |
+| ディレクトリ丸ごと | `add_dir(path)` | `exp.add_dir("sem_images/")` |
+| 巨大ファイルの参照のみ (HPC/DOI) | `add_ref(...)` | `exp.add_ref(location="HPC:/...", size_bytes=...)` |
+| 型が動的に変わるループ | `put(target, *, name=)` | `for n, o in items: rec.put(o, name=n)` |
+
+### 4.2 ファイルパス・ディレクトリ
 
 ```python
 # 単一ファイル
-exp.add("xrd_data.csv")
-exp.add("/path/to/sem_image.tiff")
+exp.add_file("xrd_data.csv")
+exp.add_file("/path/to/sem_image.tiff")
+
+# リネームしたい場合
+exp.add_file("/tmp/raw.bin", name="annotated.bin")
 
 # ディレクトリごと
 exp.add_dir("sem_images/")
-
-# バイナリデータ直接
-exp.add(raw_bytes, name="spectrum.dat")
 ```
 
-### 4.2 型自動判定の保存
+### 4.3 生バイト列
+
+```python
+# HTTP レスポンス
+resp = requests.get(url)
+exp.add_bytes("photo.png", resp.content, content_type="image/png")
+
+# io.BytesIO 等のバッファ
+buf = io.BytesIO()
+plt.savefig(buf, format="png")
+exp.add_bytes("plot.png", buf.getvalue(), content_type="image/png")
+
+# エンコード済 str
+exp.add_bytes("thickness.csv", csv_text.encode("utf-8"),
+              content_type="text/csv")
+```
+
+### 4.4 Python オブジェクト (自動変換)
 
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# dict → JSON
-exp.save("params", {"center": 28.4, "sigma": 0.18})
+# dict → JSON (拡張子は自動補完)
+exp.add_object("params", {"center": 28.4, "sigma": 0.18})
 
-# ndarray → .npy + メタ情報
-exp.save("spectrum", np.array([1.0, 2.0, 3.0]))
+# ndarray → .npy
+exp.add_object("spectrum.npy", np.array([1.0, 2.0, 3.0]))
 
 # DataFrame → CSV
-exp.save("summary", pd.DataFrame({"x": [1, 2], "y": [3, 4]}))
+exp.add_object("summary.csv", pd.DataFrame({"x": [1, 2], "y": [3, 4]}))
 
 # Figure → PNG
 fig, ax = plt.subplots()
 ax.plot([1, 2, 3])
-exp.save("xrd_plot", fig)
+exp.add_object("xrd_plot.png", fig)
 
 # テキスト → .txt
-exp.save("memo", "特記事項: なし")
+exp.add_object("memo", "特記事項: なし")
 ```
 
-### 4.3 データ取得
+### 4.5 統一エントリ put (動的 dispatch)
+
+`put` は引数の型を見て `add_file` / `add_bytes` / `add_object` に dispatch
+する。型が動的に変わるループや書き分けが面倒な場面で便利。
+
+```python
+results = {"plot.png": fig, "data.npy": arr, "raw.bin": b"\\x00\\x01"}
+for name, obj in results.items():
+    rec.put(obj, name=name)   # 型ごとに自動振り分け
+
+# str / Path は常に path 扱い (リテラル保存したい時は add_object を明示)
+exp.put("xrd_001.ras")                # → add_file
+exp.put(b"hello", name="greet.bin")   # → add_bytes
+exp.put({"a": 1}, name="params")      # → add_object
+```
+
+### 4.6 データ取得
 
 ```python
 # バイナリ取得
@@ -318,13 +365,14 @@ for ref in exp.list_data():
     print(f"{ref.name}  {ref.size_bytes}B  {ref.content_type}")
 ```
 
-### 4.4 大容量データ（参照のみ）
+### 4.7 大容量データ（参照のみ）
 
 ```python
 # HPC上の巨大ファイル（転送しない）
 exp.add_ref(
-    location="TSUBAME:/work/vasp/WAVECAR",
-    size_gb=12,
+    uri="hpc://tsubame/work/vasp/WAVECAR",
+    location="TSUBAME",
+    size_bytes=12 * 1024**3,
     description="VASP WAVECAR（全電子波動関数）",
 )
 
@@ -332,18 +380,19 @@ exp.add_ref(
 exp.add_ref(doi="10.5281/zenodo.12345", description="公開データセット")
 ```
 
-### 4.5 ファイルパーサー（v10新機能）
+### 4.8 ファイルパーサー（v10新機能）
 
-対応ファイル形式を `exp.add()` すると、測定条件が自動抽出される。
+対応ファイル形式を `exp.add_file()` すると、測定条件が自動抽出される。
+(`put` 経由でも同じパーサーが走る)
 
 ```python
 # Rigaku XRD .ras ファイル
-exp.add("FeCr_001.ras")
+exp.add_file("FeCr_001.ras")
 # → conditionsに自動追加: target="Cu", voltage_kV=40, current_mA=30, ...
 
 # 手動入力は上書きしない（手動入力が優先）
-exp.conditions(target="Cu")  # 先に手動設定
-exp.add("FeCr_001.ras")      # .rasからtargetを抽出しても上書きしない
+exp.conditions(target="Cu")     # 先に手動設定
+exp.add_file("FeCr_001.ras")    # .rasからtargetを抽出しても上書きしない
 ```
 
 対応形式:
