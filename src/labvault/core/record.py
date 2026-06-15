@@ -25,38 +25,136 @@ if TYPE_CHECKING:
     from labvault.core.lab import Lab
 
 
+def _estimate_json_bytes(value: Any) -> int:
+    """値を JSON 化したときのバイト数概算。
+
+    Firestore の実バイト数とは厳密には一致しないが、results の上限
+    判定 (1 MB の安全圏) には十分な近似。シリアライズ不能型は
+    fallback で str 化する。
+    """
+    try:
+        return len(json.dumps(value, default=str).encode("utf-8"))
+    except (TypeError, ValueError):
+        return len(str(value).encode("utf-8"))
+
+
 class _ResultsProxy:
     """dict-like proxy. __setitem__ で Record の dirty フラグを立てる。
 
-    値は スカラー / (値, 単位) tuple / (値, 単位, 説明) tuple のいずれかを
-    受け付ける。tuple 記法のときは Record._result_units / _result_descriptions
-    にも書き戻す (conditions と対称な API)。
+    値は **scalar / (値, 単位) tuple / (値, 単位, 説明) tuple / 同単位 list**
+    のいずれかを受け付ける。tuple 記法のときは
+    Record._result_units / _result_descriptions にも書き戻す (conditions と対称な API)。
+
+    **dict は禁止** (ValidationError)。検索・散布図・LLM 解析の一貫性を保つため、
+    構造体は ``record.add_object(name, obj)`` でファイル化し、results には
+    そこから取り出した代表値 (scalar) だけを残してください。
+    単位混在の係数群 (fit_a, fit_b, fit_chi2 等) は flat に展開してください。
+
+    list は要素数 32 以下に制限 (大配列は ``add_object`` 経由)。
+    1 値あたり 100 KB / results 合計 500 KB の上限あり (Firestore 1 MB 事故防止)。
     """
+
+    # Firestore 1 MB 上限に対するソフトリミット (実際の Firestore 計算とは
+    # 多少ずれるが、JSON サイズ近似で十分余裕を持って弾く)。
+    _MAX_LIST_LEN = 32
+    _MAX_VALUE_BYTES = 100 * 1024
+    _MAX_TOTAL_BYTES = 500 * 1024
 
     def __init__(self, record: Record) -> None:
         self._record = record
         self._data: dict[str, Any] = {}
 
     def __setitem__(self, key: str, value: Any) -> None:
+        from labvault.core.exceptions import ValidationError
         from labvault.core.units import validate_unit
 
+        # tuple は糖衣記法として先に解釈する (scalar/list + unit + desc)。
         if isinstance(value, tuple):
             if len(value) == 2:
                 actual, unit = value
+                self._validate_value(key, actual)
                 self._data[key] = actual
                 validate_unit(unit)
                 self._record._result_units[key] = unit
             elif len(value) >= 3:
                 actual, unit, desc = value[0], value[1], value[2]
+                self._validate_value(key, actual)
                 self._data[key] = actual
                 validate_unit(unit)
                 self._record._result_units[key] = unit
                 self._record._result_descriptions[key] = str(desc)
             else:
+                self._validate_value(key, value[0])
                 self._data[key] = value[0]
         else:
+            # tuple 以外: scalar / list のみ許可。dict は禁止。
+            self._validate_value(key, value)
             self._data[key] = value
+
+        # 合計サイズ点検 (上限超過なら rollback)
+        try:
+            self._check_total_size()
+        except ValidationError:
+            # 直前の代入を取り消して再 raise (整合性を壊さない)
+            del self._data[key]
+            self._record._result_units.pop(key, None)
+            self._record._result_descriptions.pop(key, None)
+            raise
+
         self._record._persist()
+
+    @classmethod
+    def _validate_value(cls, key: str, value: Any) -> None:
+        """results に入れて良い値かを点検する。違反は ValidationError。
+
+        flat 規約: scalar / 同単位 list (len ≤ 32) のみ。dict 禁止。
+        """
+        from labvault.core.exceptions import ValidationError
+
+        if isinstance(value, dict):
+            raise ValidationError(
+                f"results[{key!r}] に dict は入れられません。\n"
+                f"  - 単位混在の係数群: flat 展開してください "
+                f"(例: {key}_a, {key}_b, {key}_chi2)。\n"
+                f"  - 原本を残したい時は record.add_object('{key}.json', obj) で\n"
+                f"    Nextcloud に保存し、results には代表値 (scalar) だけ残す。\n"
+                f"  - 単位なしの構造体・config も同様: \n"
+                f"    record.add_object('{key}.json', obj) でファイル化してください。\n"
+                f"詳細: docs/design/v10/04_sdk_cookbook.md §4.1"
+            )
+
+        if isinstance(value, list) and len(value) > cls._MAX_LIST_LEN:
+            raise ValidationError(
+                f"results[{key!r}] の list 要素数 {len(value)} は上限 "
+                f"{cls._MAX_LIST_LEN} を超えています。\n"
+                f"  - 配列本体は record.add_object('{key}.npy', np.array(...)) で\n"
+                f"    ファイル化してください。\n"
+                f"  - results には代表値 (mean / peak / rms など) だけ\n"
+                f"    scalar で残してください。"
+            )
+
+        size = _estimate_json_bytes(value)
+        if size > cls._MAX_VALUE_BYTES:
+            raise ValidationError(
+                f"results[{key!r}] の値サイズ {size} byte は上限 "
+                f"{cls._MAX_VALUE_BYTES} byte を超えています。\n"
+                f"大きいデータは record.add_object() / record.add_file() で\n"
+                f"ファイル化してください。"
+            )
+
+    def _check_total_size(self) -> None:
+        """results 全体のサイズが Firestore 1 MB の半分を超えていないか点検。"""
+        from labvault.core.exceptions import ValidationError
+
+        total = _estimate_json_bytes(self._data)
+        if total > self._MAX_TOTAL_BYTES:
+            raise ValidationError(
+                f"results 合計サイズ {total} byte が上限 "
+                f"{self._MAX_TOTAL_BYTES} byte を超えています "
+                f"(Firestore 1 MB 制限の安全圏)。\n"
+                f"大きい数値群・配列は record.add_object() でファイル化し、\n"
+                f"results には代表値だけ残してください。"
+            )
 
     def __getitem__(self, key: str) -> Any:
         return self._data[key]
@@ -729,24 +827,34 @@ class Record:
         """
         data: bytes
         ct = content_type
+        original_type: str | None
 
         if isinstance(obj, bytes):
             data = obj
             ct = ct or "application/octet-stream"
+            original_type = "bytes"
         elif isinstance(obj, str):
             data = obj.encode("utf-8")
             if not name.endswith(".txt"):
                 name = name if "." in name else f"{name}.txt"
             ct = ct or "text/plain; charset=utf-8"
-        elif isinstance(obj, (dict, list)):
+            original_type = "str"
+        elif isinstance(obj, dict):
             data = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
             if not name.endswith(".json"):
                 name = name if "." in name else f"{name}.json"
             ct = ct or "application/json"
+            original_type = "dict"
+        elif isinstance(obj, list):
+            data = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
+            if not name.endswith(".json"):
+                name = name if "." in name else f"{name}.json"
+            ct = ct or "application/json"
+            original_type = "list"
         else:
-            data, name, ct = _try_save_special(obj, name, ct)
+            data, name, ct, original_type = _try_save_special(obj, name, ct)
 
-        return self._store_bytes(name, data, ct)
+        return self._store_bytes(name, data, ct, original_type=original_type)
 
     def put(
         self,
@@ -806,12 +914,23 @@ class Record:
             return self.add_file(source, name=name, content_type=content_type)
         return self.add_bytes(name or "untitled", source, content_type=content_type)
 
-    def _store_bytes(self, name: str, data: bytes, content_type: str) -> Record:
+    def _store_bytes(
+        self,
+        name: str,
+        data: bytes,
+        content_type: str,
+        *,
+        original_type: str | None = None,
+    ) -> Record:
         """ストレージへの実書き込み (全 add_* / put の合流点)。
 
         冪等: 同一ファイル名 + 同一 SHA256 ならスキップ。
         同一ファイル名で SHA が違えば上書き。
         ``auto_extract_conditions`` を呼ぶので template の file_parsers も起動する。
+
+        original_type: ``add_object`` 経由でのみ set される semantic タグ
+        ("ndarray" / "figure" / "dataframe" / "dict" / "list" / "str" / "bytes")。
+        ``add_file`` / ``add_bytes`` 経由 (raw 取り込み) は None。
         """
         sha = hashlib.sha256(data).hexdigest()
         for ref in self._data_refs:
@@ -831,6 +950,7 @@ class Record:
                 content_type=content_type,
                 size_bytes=len(data),
                 sha256=sha,
+                original_type=original_type,
             )
         )
         self._auto_extract_conditions(name, data)
@@ -990,6 +1110,7 @@ class Record:
                     "content_type": d.content_type,
                     "size_bytes": d.size_bytes,
                     "sha256": d.sha256,
+                    "original_type": d.original_type,
                 }
                 for d in self._data_refs
             ],
@@ -1130,8 +1251,14 @@ def _parse_dt(raw: str | datetime) -> datetime:
     return dt
 
 
-def _try_save_special(obj: Any, name: str, content_type: str) -> tuple[bytes, str, str]:
-    """numpy / matplotlib / pandas の自動保存を試みる。"""
+def _try_save_special(
+    obj: Any, name: str, content_type: str
+) -> tuple[bytes, str, str, str]:
+    """numpy / matplotlib / pandas の自動保存を試みる。
+
+    返値: (data, name, content_type, original_type)。
+    original_type は DataRef に保存される semantic タグ。
+    """
     # numpy.ndarray
     try:
         import numpy as np
@@ -1145,6 +1272,7 @@ def _try_save_special(obj: Any, name: str, content_type: str) -> tuple[bytes, st
                 buf.getvalue(),
                 name,
                 content_type or "application/octet-stream",
+                "ndarray",
             )
     except ImportError:
         pass
@@ -1161,6 +1289,7 @@ def _try_save_special(obj: Any, name: str, content_type: str) -> tuple[bytes, st
                 csv_data.encode("utf-8"),
                 name,
                 content_type or "text/csv; charset=utf-8",
+                "dataframe",
             )
     except ImportError:
         pass
@@ -1178,6 +1307,7 @@ def _try_save_special(obj: Any, name: str, content_type: str) -> tuple[bytes, st
                 buf.getvalue(),
                 name,
                 content_type or "image/png",
+                "figure",
             )
     except ImportError:
         pass

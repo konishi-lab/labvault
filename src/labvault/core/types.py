@@ -53,13 +53,22 @@ class Link:
 
 @dataclass
 class DataRef:
-    """Nextcloud に保存されたファイルのメタデータ。"""
+    """Nextcloud に保存されたファイルのメタデータ。
+
+    original_type は SDK 経路で何の Python オブジェクトから保存されたかを
+    記録する semantic タグ。``add_object`` 経由で自動付与され、Web UI /
+    MCP / LLM 解析が「これは ndarray が .npy 化されたもの」「これは
+    matplotlib Figure が PNG 化されたもの」を確実に判別できるようにする。
+    ``add_file`` / ``add_bytes`` 経由 (raw 取り込み) は None。
+    """
 
     name: str
     nextcloud_path: str = ""
     content_type: str = ""
     size_bytes: int = 0
     sha256: str = ""
+    # "ndarray" | "figure" | "dataframe" | "dict" | "list" | "str" | "bytes" | None
+    original_type: str | None = None
 
 
 @dataclass

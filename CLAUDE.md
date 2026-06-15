@@ -196,6 +196,12 @@ CLI はプレーンテキスト出力のため、LLM が Bash 経由で使う場
 - 同一 version の再 publish は AR が拒否する (失敗で気付く設計)。やり直したい場合は version を上げる
 - `v*` タグの強制更新は禁止 (publish 履歴と乖離する)
 
+## ファイル保存の使い分け (重要)
+
+- **`results[key] = (値, "単位", "説明")`** が主軸 (Firestore、検索 / 散布図 / aggregate / LLM 集計の index)。**dict は禁止**、単位混在の係数群は flat 展開 (`fit_a`, `fit_b`, `fit_chi2`)、list は 32 要素以下
+- 入らない時 (画像 / 配列 / 構造体 / 大きい) は `add_file(path)` / `add_object(name, obj)` / `add_bytes(name, data)` で Nextcloud に逃がす
+- 詳細: [`docs/design/v10/04_sdk_cookbook.md`](docs/design/v10/04_sdk_cookbook.md) §4.0
+
 ## ハマりどころ
 
 - **エラーレスポンスのキャッシュ**: 4xx/5xx でも RFC 7234 によりブラウザがキャッシュする (`410` はデフォルトでキャッシュ可能、`404` も同様)。**全エラーレスポンスは `Cache-Control: no-store` を付ける** (PR #53 の教訓)。「修正したのに直らない」時は DevTools Network タブで `(from disk cache)` が出ていないか確認。frontend 側も `downloadAuthed` で `_t=${Date.now()}` cachebust 済み。

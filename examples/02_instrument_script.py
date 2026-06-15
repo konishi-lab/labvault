@@ -74,13 +74,17 @@ def main():
     simulate_sputtering(exp)
     print()
 
-    # --- 結果の記録 ---
-    exp.results["film_thickness_nm"] = 62.5
-    exp.results["uniformity_percent"] = 2.1
-    exp.results["sheet_resistance_ohm_sq"] = 1.2e6
+    # --- 結果の記録 (flat scalar + 単位 + 説明 を推奨) ---
+    # 単位混在の数値は flat key + tuple 記法で。検索 / 散布図 / LLM 解析が
+    # 全部効くようになる。
+    exp.results["film_thickness"]    = (62.5,  "nm",     "膜厚")
+    exp.results["uniformity"]        = (2.1,   "%",      "面内一様性 (CV)")
+    exp.results["sheet_resistance"]  = (1.2e6, "ohm/sq", "シート抵抗")
 
-    # --- データファイルの保存 (dict は add_object 推奨、旧 save も alias で動く) ---
-    exp.add_object("process_log", {
+    # --- データファイルの保存 ---
+    # 構造体 (dict) は results には入れず add_object でファイル化する。
+    # results には上の代表値だけ残し、原本 / 詳細はこちらで保存。
+    exp.add_object("process_log.json", {
         "events": exp.events,
         "conditions": exp.get_conditions(),
         "results": exp.results.to_dict(),

@@ -268,6 +268,47 @@ exp.nextcloud_url # "https://nextcloud.example.com/f/12345"
 
 ## 4. データの保存と取得
 
+### 4.0 まず `results`、入らないものだけ `add_*`
+
+**判断フロー**:
+
+```
+Q. 1 行 1 値の scalar (数値 / bool / 文字列) として表現できる?
+  ├ YES → results[key] = (値, "単位", "説明")     ← 主軸 (Firestore)
+  └ NO (画像 / 配列 / 構造体 / 大きい)               ↓
+       ├ ディスク上のパス     → add_file(path)
+       ├ Python オブジェクト → add_object(name, obj)
+       ├ 生バイト             → add_bytes(name, data)
+       ├ ディレクトリ丸ごと   → add_dir(path)
+       └ HPC / DOI 参照のみ   → add_ref(uri=..., size_bytes=...)
+```
+
+`results` は **検索 (`labvault search`) / 散布図 / aggregate / LLM 集計** の
+ためのセマンティック index、`add_*` は **大きい / バイナリ / 構造体の保存先**
+という役割分担です。
+
+#### `results` の規約 (flat 強制)
+
+| 入れて良いもの | NG |
+|---|---|
+| scalar (数値 / bool / str / None) | dict (`ValidationError`) |
+| `(値, "単位")` / `(値, "単位", "説明")` tuple | 33 要素以上の list |
+| 同単位 list (要素数 ≤ 32): `(list, "単位")` | 1 値 100 KB / 合計 500 KB 超 |
+
+**dict は禁止**。単位混在の係数群 (例: `fit_a`, `fit_b`, `fit_chi2`) は
+flat 展開し、原本を残したい時は `add_object("fit.json", fit)` で併用してください。
+
+```python
+# ✗ NG (即座に ValidationError)
+exp.results["fit"] = {"a": 2.873, "b": 0.001, "chi2": 0.42}
+
+# ✓ OK (flat + 原本保存の二段)
+exp.results["fit_a"]    = (2.873, "Å", "格子定数")
+exp.results["fit_b"]    = (0.001, "Å", "")
+exp.results["fit_chi2"] = (0.42,  "",  "正規化残差二乗")
+exp.add_object("fit_full.json", lmfit_result)   # 原本は Nextcloud 側で
+```
+
 ### 4.1 ファイル保存 API の使い分け
 
 役割で 4 つの method を使い分ける (推奨)。`add` / `save` の旧 API も alias
@@ -281,6 +322,12 @@ exp.nextcloud_url # "https://nextcloud.example.com/f/12345"
 | ディレクトリ丸ごと | `add_dir(path)` | `exp.add_dir("sem_images/")` |
 | 巨大ファイルの参照のみ (HPC/DOI) | `add_ref(...)` | `exp.add_ref(location="HPC:/...", size_bytes=...)` |
 | 型が動的に変わるループ | `put(target, *, name=)` | `for n, o in items: rec.put(o, name=n)` |
+
+`add_object` 経由で保存したファイルには `DataRef.original_type` が自動付与
+されます (`"ndarray"` / `"figure"` / `"dataframe"` / `"dict"` / `"list"` /
+`"str"` / `"bytes"`)。これにより Web UI / MCP / LLM が拡張子からの推測でなく
+metadata から「何の Python オブジェクトから保存されたか」を確実に判別できます。
+`add_file` / `add_bytes` (raw 取り込み) は `None`。
 
 ### 4.2 ファイルパス・ディレクトリ
 

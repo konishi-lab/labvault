@@ -25,6 +25,29 @@
   `auto_extract_conditions` (template の file_parsers) は全 add_* 経路で
   維持。
 - `tests/unit/test_record_file_api.py` 新規 37 ケース。
+- **`DataRef.original_type`** — `add_object` 経由で保存された時の
+  Python 型を semantic タグとして記録 (`"ndarray"` / `"figure"` /
+  `"dataframe"` / `"dict"` / `"list"` / `"str"` / `"bytes"`)。
+  `add_file` / `add_bytes` 経由 (raw 取り込み) は `None`。Web UI /
+  MCP / LLM 解析が「`.npy` だが本当に ndarray か」「`.png` だが Figure
+  由来か装置出力か」を拡張子推測ではなくメタデータから確実に判別可能に。
+
+### Changed (BREAKING for new writes)
+
+- **`Record.results[k] = v`** に flat 規約を強制 (LLM 解析品質と検索 /
+  散布図の一貫性のため)。違反は `ValidationError` で即時拒否、`__setitem__`
+  状態は rollback。**既存 record の読み込みは無傷** (`_load` 経路は
+  バイパス) — 新規書き込みのみ規約に従う:
+  - **dict は禁止** — 構造体は `record.add_object("fit.json", fit)` で
+    ファイル化。単位混在の係数群は flat 展開 (`fit_a`, `fit_b`,
+    `fit_chi2`) してください。
+  - **list は 32 要素以下** — 大配列は
+    `record.add_object("spectrum.npy", arr)` でファイル化し、results
+    には代表値 (peak / mean / rms など) だけ scalar で残す。
+  - **1 値 100 KB / results 合計 500 KB 以下** — Firestore 1 MB 上限の
+    安全圏。
+  - エラーメッセージは行動を誘導する内容 (どこに何を入れるか、
+    `add_object` の例示) を含む。
 
 ### Deprecated
 
