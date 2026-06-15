@@ -438,3 +438,59 @@ def test_patch_user_unauth_401(as_unauth: TestClient) -> None:
         json={"display_name": "Bobby"},
     )
     assert res.status_code == 401
+
+
+# ----------------------------------------------------------------------
+# /api/admin/users/{email}/ar/grant  (POST)
+# 認可: super-admin OR 対象 user の所属 team の admin
+# ----------------------------------------------------------------------
+
+
+def test_ar_grant_super_ok(as_super: TestClient, fake_db: FakeDB) -> None:
+    _seed_users(fake_db)
+    res = as_super.post("/api/admin/users/bob@example.com/ar/grant")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["email"] == "bob@example.com"
+    assert body["ar_granted"] is True  # conftest stub で常に True
+    # persist 確認: /api/admin/users で ar_granted が返る
+    listed = as_super.get("/api/admin/users").json()["items"]
+    bob = next(u for u in listed if u["email"] == "bob@example.com")
+    assert bob["ar_granted"] is True
+
+
+def test_ar_grant_team_admin_for_own_team_member_ok(
+    as_team_admin: TestClient, fake_db: FakeDB
+) -> None:
+    """teamA admin は bob (teamA) に対して grant 可。"""
+    _seed_users(fake_db)
+    res = as_team_admin.post("/api/admin/users/bob@example.com/ar/grant")
+    assert res.status_code == 200
+
+
+def test_ar_grant_team_admin_for_other_team_member_403(
+    as_team_admin: TestClient, fake_db: FakeDB
+) -> None:
+    """teamA admin は carol (teamB only) を触れない。"""
+    _seed_users(fake_db)
+    res = as_team_admin.post("/api/admin/users/carol@example.com/ar/grant")
+    assert res.status_code == 403
+
+
+def test_ar_grant_member_403(as_member: TestClient, fake_db: FakeDB) -> None:
+    _seed_users(fake_db)
+    res = as_member.post("/api/admin/users/bob@example.com/ar/grant")
+    assert res.status_code == 403
+
+
+def test_ar_grant_unauth_401(as_unauth: TestClient) -> None:
+    res = as_unauth.post("/api/admin/users/bob@example.com/ar/grant")
+    assert res.status_code == 401
+
+
+def test_ar_grant_unknown_user_404(
+    as_super: TestClient, fake_db: FakeDB
+) -> None:
+    _seed_users(fake_db)
+    res = as_super.post("/api/admin/users/ghost@example.com/ar/grant")
+    assert res.status_code == 404

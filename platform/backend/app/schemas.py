@@ -174,6 +174,9 @@ class AllowedUser(BaseModel):
     active: bool = True
     created_at: datetime | None = None
     last_login_at: datetime | None = None
+    # AR reader grant の直近結果。None=試行記録なし、True=成功、False=失敗。
+    # admin UI が「失敗 user に retry button を出す」のに使う。
+    ar_granted: bool | None = None
 
 
 class UserListResponse(BaseModel):
@@ -191,6 +194,14 @@ class UserTeamsResponse(BaseModel):
     teams: list[TeamMembershipResponse]
     default_team: str
     ar_granted: bool | None = None  # add 時のみ意味あり
+
+
+class GrantArResponse(BaseModel):
+    """`POST /api/admin/users/{email}/ar/grant` のレスポンス。"""
+
+    status: str  # "ok" (grant が成功・失敗のいずれでも "ok"; 結果は ar_granted)
+    email: str
+    ar_granted: bool
 
 
 class UpdateUserRequest(BaseModel):

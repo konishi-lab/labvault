@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   addUserTeam,
+  grantAr,
   removeUserTeam,
   setUserActive,
   updateUser,
@@ -37,6 +38,21 @@ export function UserCard({
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(user.display_name);
   const [savingName, setSavingName] = useState(false);
+
+  const [retryingAr, setRetryingAr] = useState(false);
+
+  const handleRetryAr = async () => {
+    setError(null);
+    setRetryingAr(true);
+    try {
+      await grantAr(user.email);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRetryingAr(false);
+    }
+  };
 
   const handleSaveName = async () => {
     const next = nameDraft.trim();
@@ -200,6 +216,14 @@ export function UserCard({
             <Badge variant="default">super-admin</Badge>
           )}
           {!user.active && <Badge variant="destructive">deactivated</Badge>}
+          {user.active && user.ar_granted === false && (
+            <Badge
+              variant="destructive"
+              title="Artifact Registry の reader 権限の付与に失敗しています。pip install で 403 が出る状態です。"
+            >
+              AR 未付与
+            </Badge>
+          )}
         </CardTitle>
         <div className="text-sm text-muted-foreground">
           <code className="rounded bg-muted px-1 py-0.5">{user.email}</code>
@@ -293,7 +317,18 @@ export function UserCard({
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        <div className="flex items-center justify-end border-t pt-3">
+        <div className="flex items-center justify-end gap-2 border-t pt-3">
+          {user.active && user.ar_granted === false && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRetryAr}
+              disabled={retryingAr}
+              title="Artifact Registry の reader 権限を再付与します (冪等)。"
+            >
+              {retryingAr ? "再付与中..." : "AR を再付与"}
+            </Button>
+          )}
           {(() => {
             const isSelf = currentAdminEmail === user.email;
             return (

@@ -321,6 +321,9 @@ export interface AllowedUserSummary {
   active: boolean;
   created_at: string | null;
   last_login_at: string | null;
+  // null=試行記録なし、true=AR grant 成功 (or 既に付与済)、false=失敗。
+  // false の場合 admin UI は「再付与」ボタンを表示する。
+  ar_granted: boolean | null;
 }
 
 export async function fetchAllowedUsers(): Promise<AllowedUserSummary[]> {
@@ -411,6 +414,24 @@ export async function updateUser(
 
 export const setUserActive = (email: string, active: boolean) =>
   updateUser(email, { active });
+
+export interface GrantArResult {
+  status: string;
+  email: string;
+  ar_granted: boolean;
+}
+
+export async function grantAr(email: string): Promise<GrantArResult> {
+  const res = await authFetch(
+    `${API_BASE}/api/admin/users/${encodeURIComponent(email)}/ar/grant`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`AR grant failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
 
 // --- Personal Access Tokens (PAT) ---
 
