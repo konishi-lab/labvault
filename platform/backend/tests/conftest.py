@@ -30,7 +30,7 @@ from fastapi.testclient import TestClient
 # init_firebase_admin() 呼び出しを止めるためのもの。
 os.environ.setdefault("LABVAULT_DEV_SKIP_AUTH", "1")
 
-from app.auth import User, current_user
+from app.auth import AuthenticatedUser, User, current_authenticated_user, current_user
 from app.main import app
 
 # --------------------------------------------------------------------------
@@ -79,6 +79,26 @@ def user_member() -> User:
 
 
 def _raise_401() -> User:
+    raise HTTPException(status_code=401, detail="not authenticated")
+
+
+# AuthenticatedUser (allowed_users 未照合) を返す factory。
+# `/api/auth/request-access` 等、Firebase 認証のみで通る endpoint 用。
+def auth_only_user(
+    email: str = "applicant@example.com",
+    *,
+    display_name: str = "Applicant",
+) -> AuthenticatedUser:
+    return AuthenticatedUser(
+        uid=f"uid-{email}", email=email, display_name=display_name
+    )
+
+
+def auth_only_no_email() -> AuthenticatedUser:
+    return AuthenticatedUser(uid="uid-no-email", email="", display_name="anon")
+
+
+def _raise_401_auth_only() -> AuthenticatedUser:
     raise HTTPException(status_code=401, detail="not authenticated")
 
 
@@ -179,6 +199,23 @@ def stub_artifact_registry(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
+def slack_notifications(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """`notify_signup_request` の Slack 投稿を握りつぶし、呼び出しを記録する。
+
+    返したリストを assert に使う:
+        assert len(slack_notifications) == 1
+        assert slack_notifications[0]["email"] == "..."
+    """
+    calls: list[dict[str, Any]] = []
+
+    def _capture(**kwargs: Any) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr("app.main.notify_signup_request", _capture)
+    return calls
+
+
+@pytest.fixture()
 def client(fake_db: FakeDB) -> Iterator[TestClient]:
     with TestClient(app) as c:
         yield c
@@ -213,3 +250,31 @@ def as_member(client: TestClient) -> TestClient:
 @pytest.fixture()
 def as_unauth(client: TestClient) -> TestClient:
     return _bind(client, _raise_401)
+
+
+# --------------------------------------------------------------------------
+# Fixtures for AuthenticatedUser-based endpoints (request_access, etc.)
+# --------------------------------------------------------------------------
+
+
+def _bind_authenticated(c: TestClient, factory: Any) -> TestClient:
+    app.dependency_overrides[current_authenticated_user] = factory
+    return c
+
+
+@pytest.fixture()
+def as_applicant(client: TestClient) -> TestClient:
+    """Firebase 認証は通っているが allowed_users 未登録のユーザー。"""
+    return _bind_authenticated(client, auth_only_user)
+
+
+@pytest.fixture()
+def as_applicant_no_email(client: TestClient) -> TestClient:
+    """email が空 (極めて稀。firebase token に email が無いエッジケース)。"""
+    return _bind_authenticated(client, auth_only_no_email)
+
+
+@pytest.fixture()
+def as_unauth_authenticated(client: TestClient) -> TestClient:
+    """Firebase 認証自体が通らないユーザー (401)。"""
+    return _bind_authenticated(client, _raise_401_auth_only)
