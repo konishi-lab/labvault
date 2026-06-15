@@ -73,7 +73,12 @@ export async function downloadAuthed(
   url: string,
   filename: string,
 ): Promise<void> {
-  const res = await authFetch(url);
+  // disk cache に焼き付いた古い失敗レスポンス (例: 410 / 502) を引き当て
+  // ないよう、明示 DL ボタンでは毎回 cachebust する。
+  // backend 側も no-store を付けるが二重保険。
+  const cacheBustedUrl =
+    url + (url.includes("?") ? "&" : "?") + `_t=${Date.now()}`;
+  const res = await authFetch(cacheBustedUrl);
   if (!res.ok) {
     throw new Error(`download failed: HTTP ${res.status}`);
   }

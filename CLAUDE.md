@@ -196,6 +196,11 @@ CLI はプレーンテキスト出力のため、LLM が Bash 経由で使う場
 - 同一 version の再 publish は AR が拒否する (失敗で気付く設計)。やり直したい場合は version を上げる
 - `v*` タグの強制更新は禁止 (publish 履歴と乖離する)
 
+## ハマりどころ
+
+- **エラーレスポンスのキャッシュ**: 4xx/5xx でも RFC 7234 によりブラウザがキャッシュする (`410` はデフォルトでキャッシュ可能、`404` も同様)。**全エラーレスポンスは `Cache-Control: no-store` を付ける** (PR #53 の教訓)。「修正したのに直らない」時は DevTools Network タブで `(from disk cache)` が出ていないか確認。frontend 側も `downloadAuthed` で `_t=${Date.now()}` cachebust 済み。
+- **CORS error の真因が 500 のことがある**: backend ハンドラ内の未捕捉例外は `CORSMiddleware` が走る前に返るため、ブラウザには「CORS error」と表示される。CORS 設定を疑う前に backend ログで 500 を確認 (PR #49 で global exception handler 化済)。
+
 ## インストール済みスキル
 
 - **python-testing-patterns** — pytestのパターン・ベストプラクティス

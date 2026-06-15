@@ -61,3 +61,10 @@ app/
 - **dev_skip と Firestore**: `LABVAULT_DEV_SKIP_AUTH=1` は認証だけスキップする
   ので、handler 内で Firestore を引く処理はそのまま走る。Firestore ADC が
   無い場合は handler ごとに dev_skip 分岐が必要 (例: `auth_me`)。
+- **エラーレスポンスは `Cache-Control: no-store`**: 410 / 404 はデフォルトで
+  キャッシュ可能 (RFC 7234) なため、修正後も browser の disk cache から
+  古いレスポンスが返り続ける罠を踏んだ (PR #53)。`HTTPException` を投げる
+  場所では必ず `headers={"Cache-Control": "no-store"}` を付ける。global
+  exception handler (`app/main.py`) でも 500 に no-store を付与済み。
+  「直したのに直らない」時は DevTools Network タブで `(from disk cache)`
+  サフィックスが出ていないか確認する。
