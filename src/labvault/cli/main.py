@@ -898,7 +898,12 @@ def auth_status() -> None:
 
 @cli.command("mcp")
 def mcp_cmd() -> None:
-    """MCP サーバーを起動する (stdio)."""
+    """MCP サーバーを起動する (stdio, ローカル直結).
+
+    通常は Cloud Run 上のリモート MCP (`<platform_url>/mcp` + PAT) を推奨。
+    本コマンドは SDK が入った環境でローカルの `Lab()` を直接触らせたい
+    上級者向け (オフライン解析 / 装置 PC dev / MCP ツール開発)。
+    """
     import sys
 
     from labvault.core.config import Settings
@@ -909,7 +914,9 @@ def mcp_cmd() -> None:
     storage = "Nextcloud" if settings.nextcloud_url else "InMemory"
     team = settings.team or "default"
 
-    print("labvault MCP server starting...", file=sys.stderr)
+    print("labvault MCP server starting (local stdio)...", file=sys.stderr)
+    print("  通常は Cloud Run 上のリモート MCP 推奨。", file=sys.stderr)
+    print("  詳細: README.md / docs/onboarding.md §3-B", file=sys.stderr)
     print(f"  Team:     {team}", file=sys.stderr)
     print(f"  Metadata: {backend}", file=sys.stderr)
     print(f"  Storage:  {storage}", file=sys.stderr)

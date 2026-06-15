@@ -20,7 +20,8 @@ Web UI のみ Firebase Auth、SDK/CLI/MCP は GCP ADC で認証する。
 | Web UI (Next.js + FastAPI) | Firebase Auth (Google ログイン) + ホワイトリスト | 初回のみ (セッション維持) | **未実装** |
 | Python SDK (`Lab()`) | GCP ADC (`gcloud auth application-default login`) | 初回のみ (トークン自動更新) | 既に動作 |
 | CLI (`labvault new` 等) | SDK と同じ (ADC) | 同上 | 既に動作 |
-| MCP サーバー (`labvault mcp`) | SDK と同じ (ADC) | 同上 | 既に動作 |
+| MCP サーバー (リモート, Cloud Run `/mcp`) | PAT (Bearer) | 初回 token 発行のみ | 既に動作 (推奨) |
+| MCP サーバー (ローカル `labvault mcp`) | SDK と同じ (ADC / PAT) | 同上 | 既に動作 (上級者向け) |
 
 ## Web UI 認証フロー (未実装)
 

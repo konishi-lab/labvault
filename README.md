@@ -87,11 +87,17 @@ claude mcp add --transport http labvault \
 
 Claude Desktop は `claude_desktop_config.json` の `mcpServers` に同等設定 (`type: "http"`, URL, `headers`)。
 
-**ローカル (装置 PC など SDK が入っている環境)** — stdio で起動:
+**ローカル (上級者向け)** — `pip install labvault[mcp]` 済みの環境で stdio 起動:
 
 ```bash
 labvault mcp  # 7ツール: search, get_detail, compare, data_preview, aggregate, get_overview, get_timeline
 ```
+
+主な用途は次の 3 ケースで、通常メンバーはリモートで OK:
+
+- オフライン環境 / Cloud Run に繋げない時の代替
+- 装置 PC 上で SDK の `Lab()` を inspect しながら同じ session で Claude に触らせたい時
+- MCP ツール自体を追加・拡張する開発時 (dogfooding)
 
 ```
 ユーザー: 「power が 50W 以上の実験で、angle 別の pulse_energy の傾向を見せて」

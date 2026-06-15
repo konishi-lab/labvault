@@ -211,6 +211,23 @@ export GOOGLE_APPLICATION_CREDENTIALS=/etc/labvault/sa-key.json
 
 ただし PAT より煩雑なので、特別な理由が無ければ PAT 方式を推奨。
 
+## MCP (補足)
+
+装置 PC で Claude を直接動かすケースは想定していないので、**MCP の
+セットアップは基本不要**。研究室メンバーは自分の Mac / Notebook
+から **リモート MCP** (Cloud Run の `/mcp` に PAT で接続) を使ってください
+([README の MCP セクション](../README.md#llm-連携mcp--cli) 参照)。
+
+例外的に「装置 PC ローカルの未 sync データを Claude に inspect させたい」
+ような上級用途では、SDK install 済みの環境で:
+
+```bash
+labvault mcp  # stdio で起動 → Claude Code に登録
+```
+
+の構成も可能。常用は推奨しないが、装置のキャリブレーション中に Claude と
+ペアで作業したい時の選択肢として残してあります。
+
 ## 参考
 
 - [auth_design.md](./auth_design.md) — 認証全体設計
