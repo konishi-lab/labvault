@@ -104,6 +104,29 @@ class ConditionField:
 
 
 @dataclass
+class ResultField:
+    """テンプレートの結果フィールド定義 (name, type, unit, description)。
+
+    ``ConditionField`` と対称な API。`_ResultsProxy.__setitem__` が template の
+    `result_fields` を引いて unit / description を **scalar 代入時に auto-fill**
+    する。ユーザーが `(value, "unit", "desc")` の tuple 記法で明示した場合は
+    そちらが優先される。
+
+    aliases に挙げた key を ``record.results[alias] = ...`` で代入した時、
+    template 側の name に正規化する (将来拡張)。required=True のフィールドは
+    Record の status を success にした時点で未入力警告 (将来拡張)。
+    """
+
+    name: str
+    display_name: str = ""
+    type: str = "float"  # "float", "int", "str", "bool"
+    unit: str = ""
+    description: str = ""
+    required: bool = False
+    aliases: list[str] | None = None
+
+
+@dataclass
 class FileParserConfig:
     """テンプレートが扱うファイル拡張子とパーサーのマッピング。"""
 
@@ -129,17 +152,25 @@ class TemplateV10:
     default_tags: list[str] = field(default_factory=list)
     condition_fields: list[ConditionField] = field(default_factory=list)
     required_conditions: list[str] = field(default_factory=list)
+    # 結果フィールドのスキーマ (unit / description が auto-fill される)。
+    # ``recommended_results`` (legacy: list[str]) を持つだけの古い template も
+    # 引き続き読める。新しい template はこちらを使ってください。
+    result_fields: list[ResultField] = field(default_factory=list)
     recommended_results: list[str] = field(default_factory=list)
     indexed_fields: list[str] = field(default_factory=list)
     file_parsers: list[FileParserConfig] = field(default_factory=list)
 
     def alias_map(self) -> dict[str, str]:
-        """alias → 正規化された name の lookup を返す。"""
+        """alias → 正規化された name の lookup を返す (conditions のみ)。"""
         out: dict[str, str] = {}
         for f in self.condition_fields:
             for a in f.aliases or []:
                 out[a] = f.name
         return out
+
+    def result_field_map(self) -> dict[str, ResultField]:
+        """name -> ResultField の lookup。``_ResultsProxy`` の auto-fill が引く。"""
+        return {f.name: f for f in self.result_fields}
 
 
 def template_to_dict(t: TemplateV10) -> dict[str, Any]:
@@ -179,6 +210,20 @@ def template_from_dict(d: dict[str, Any]) -> TemplateV10:
         for p in parsers_raw
         if isinstance(p, dict) and p.get("extension") and p.get("parser_name")
     ]
+    result_fields_raw = d.get("result_fields") or []
+    result_fields_obj = [
+        ResultField(
+            name=f["name"],
+            display_name=f.get("display_name", ""),
+            type=f.get("type", "float"),
+            unit=f.get("unit", ""),
+            description=f.get("description", ""),
+            required=bool(f.get("required", False)),
+            aliases=f.get("aliases"),
+        )
+        for f in result_fields_raw
+        if isinstance(f, dict) and f.get("name")
+    ]
     return TemplateV10(
         name=d["name"],
         display_name=d.get("display_name", ""),
@@ -187,6 +232,7 @@ def template_from_dict(d: dict[str, Any]) -> TemplateV10:
         default_tags=list(d.get("default_tags") or []),
         condition_fields=fields_obj,
         required_conditions=list(d.get("required_conditions") or []),
+        result_fields=result_fields_obj,
         recommended_results=list(d.get("recommended_results") or []),
         indexed_fields=list(d.get("indexed_fields") or []),
         file_parsers=parsers_obj,
