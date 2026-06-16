@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **labvault** — Python/Notebookで実験する研究室のための実験データ基盤。測定から解析までのコード・データ・条件が自動で記録され、蓄積されたデータをLLMが横断検索・解析する。
 
-- 実験者向けPython SDK + CLI (16コマンド) + MCP サーバー (7ツール)
+- 実験者向けPython SDK + CLI (17コマンド) + MCP サーバー (7ツール)
 - バックエンド: Firestore（メタデータ）+ Nextcloud（ARIM MDX, 30TBバイナリ）+ Vertex AI（Embedding）
 - LLM連携: ローカル MCP サーバー（`labvault mcp`）でClaude Desktop/Codeがデータを検索・解析。CLI 経由でも同等の分析が可能（トークン効率が良い）
 - Web UI: `platform/` ディレクトリ（Next.js + FastAPI on Cloud Run）
@@ -59,7 +59,7 @@ src/labvault/
 │   └── sync.py      # SyncManager (daemon スレッドで定期同期)
 ├── mcp/           # MCP サーバー (7ツール)
 ├── parsers/       # ファイルパーサープラグイン（.vk4 実装済、.ras等 M3で追加予定）
-└── cli/           # Click CLI (16コマンド)
+└── cli/           # Click CLI (17コマンド)
 
 platform/          # デプロイ可能なサービス群
 ├── frontend/      # Next.js Web UI (レコード閲覧、散布図、一括アップロード等)
@@ -96,7 +96,7 @@ examples/          # すぐ試せるサンプル
 | **M2b** Nextcloud バックエンド | 完了 (ARIM MDX 確認済) |
 | **M2c** SyncManager (自動同期) | 完了 |
 | **M2d** IPython hooks (セル自動記録) | 完了 |
-| **M4** CLI (16コマンド) | 完了 |
+| **M4** CLI (17コマンド) | 完了 |
 | **M4** Embedding (Vertex AI) | 完了 (動作確認済) |
 | **M4** MCP サーバー (7ツール) | 完了 (Claude Code 動作確認済) |
 | **M6** WebApp (Next.js + FastAPI) | 進行中 (レコード閲覧、条件カラム、散布図、一括アップロード) |
@@ -158,7 +158,7 @@ search(conditions={"power": {"gte": 20, "lte": 40}})
 
 ## CLI コマンド
 
-16コマンド: init, new, add, list, show, search, aggregate, overview, delete, restore, note, tag, status, export, doctor, mcp
+17コマンド: init, new, add, list, show, search, aggregate, overview, delete, restore, note, tag, status, export, doctor, mcp, check-results
 
 ### 分析系コマンド（MCP と同等の機能を CLI で提供）
 

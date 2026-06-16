@@ -4,6 +4,20 @@
 で記録する。バージョン番号は [Semantic Versioning](https://semver.org/) に
 従う (`MAJOR.MINOR.PATCH`、SDK API or backend API の破壊的変更は MAJOR)。
 
+## [Unreleased]
+
+### Added
+
+- **`labvault check-results` CLI コマンド** — 既存 record の results に
+  v0.3.0 規約違反 (dict / 32 要素超 list / 100 KB 超の値 / 合計 500 KB 超)
+  が無いかをスキャンする read-only コマンド。違反種別ごとの集計、
+  `--verbose` で詳細、`--csv` でエクスポート可能。新規書き込みは
+  `__setitem__` で hard error になるが、規約以前に書き込まれた既存
+  データの棚卸し用。
+- **`labvault.core.results_audit`** モジュール — `scan_record(dict)` と
+  `summarize(list)` の純粋関数。CLI から呼ばれるロジックを切り出し、
+  他スクリプトからも利用可能に。`_ResultsProxy` と上限値を import で同期。
+
 ## [0.3.0] - 2026-06-15
 
 ### Added
