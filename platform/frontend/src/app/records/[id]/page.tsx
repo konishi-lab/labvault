@@ -14,7 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchRecord, fetchChildren, fetchChildrenConditions } from "@/lib/api";
-import type { RecordDetail, RecordSummary } from "@/lib/api";
+import type { FileInfo, RecordDetail, RecordSummary } from "@/lib/api";
 import { useAuthedBlobUrl, downloadAuthed } from "@/lib/authed-blob";
 import { BulkUploadButton } from "@/components/bulk-upload";
 import { SortableRecordTable } from "@/components/sortable-record-table";
@@ -222,7 +222,7 @@ function FileSection({
   files,
 }: {
   recordId: string;
-  files: { name: string; content_type: string; size_bytes: number }[];
+  files: FileInfo[];
 }) {
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
