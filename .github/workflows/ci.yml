@@ -31,3 +31,31 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev,numpy]"
       - run: pytest
+
+  frontend:
+    # Next.js の TypeScript strict check + 本番 build を PR 時点で回す。
+    # 現状の Deploy frontend ワークフローは push to main でしか走らないため、
+    # マージしてから build 失敗する罠を防ぐ (#62 → #64 の教訓)。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"  # Dockerfile (deploy-frontend) と揃える
+          cache: "npm"
+          cache-dependency-path: platform/frontend/package-lock.json
+      - working-directory: platform/frontend
+        run: npm ci
+      - working-directory: platform/frontend
+        run: npx tsc --noEmit
+      - working-directory: platform/frontend
+        # NEXT_PUBLIC_* は build-time に inline される。CI では実値が不要なので
+        # dummy で埋める (Firebase の runtime 接続は CI では行わない)。
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost
+          NEXT_PUBLIC_FIREBASE_API_KEY: dummy
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: dummy
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: dummy
+          NEXT_PUBLIC_FIREBASE_APP_ID: dummy
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: dummy
+        run: npm run build
