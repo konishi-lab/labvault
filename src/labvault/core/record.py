@@ -629,9 +629,21 @@ class Record:
         title: str,
         *,
         type: str | None = None,
+        template: str | None = None,
         **conditions: Any,
     ) -> Record:
-        """子レコードを作成する。"""
+        """子レコードを作成する。
+
+        ``template`` を指定すると、子は独立した template として紐付き、
+        ``#12a`` の result_fields auto-fill (bare scalar 代入時の unit /
+        description 補完) や file_parsers (拡張子 → conditions 自動抽出)
+        が子の Record で効く。親と子の template は **互いに独立** で、
+        条件・結果は親から自動継承されない (Python の ``**common`` 等で
+        ユーザーが明示的に渡す)。
+
+        孫世代以上も同様: ``parent.sub(...).sub(template=..., ...)`` で
+        N 世代まで自然にネストできる。各世代の template は独立。
+        """
         from labvault.core.types import RecordType
 
         if self._lab is None:
@@ -639,7 +651,7 @@ class Record:
             raise RuntimeError(msg)
 
         rec_type = type or RecordType.MEASUREMENT
-        child = self._lab.new(title, type=rec_type, **conditions)
+        child = self._lab.new(title, type=rec_type, template=template, **conditions)
         child._parent_id = self._id
         child._persist()
 

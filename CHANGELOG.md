@@ -46,6 +46,19 @@
   (XRD template は `result_fields` と `recommended_results` を両方持つ)。
   Web UI の suggest 機能は引き続き動く。
 
+### Added (#12b minimal)
+
+- **`Record.sub(template=...)`** — 子レコード作成時に template を紐付ける
+  kwarg を追加。これまで `parent.sub(...)` は template を子に渡せず、子の
+  results 代入で #12a の auto-fill (unit / description) が効かなかった。
+  本変更で子も独立に template を持てるようになり、scan 実験 / 多測定実験 /
+  孫世代まで auto-fill が全世代で効く。完全 additive (1 行追加)。
+  - 親と子で **異なる template** を独立に使える (continuation NOT inherited)
+  - 共通 conditions は Python の `**common` イディオムで渡す (デフォルト挙動
+    として「親の conditions を子に自動継承」はしない — 明示性優先)
+  - 孫世代以上もそのままネスト可能 (各世代で template を独立指定)
+- テスト 9 件追加 (`tests/unit/test_sub_template.py`)。
+
 ## [0.3.0] - 2026-06-15
 
 ### Added
