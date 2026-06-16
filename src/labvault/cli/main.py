@@ -499,6 +499,92 @@ def status(record_id: str, new_status: str) -> None:
     lab.close()
 
 
+@cli.command("check-results")
+@click.option(
+    "--limit",
+    "-n",
+    default=1000,
+    help="scan する record 数の上限 (default 1000)",
+)
+@click.option(
+    "--csv",
+    "csv_path",
+    default=None,
+    type=click.Path(),
+    help="違反一覧を CSV に書き出す",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="各違反の preview を出力",
+)
+def check_results(limit: int, csv_path: str | None, verbose: bool) -> None:
+    """既存 record の results に v0.3.0 規約違反 (dict / 長 list / size 超過) が
+    無いか scan する。
+
+    新規書き込みは ``_ResultsProxy.__setitem__`` で hard error になるが、
+    規約以前に書き込まれたデータは Firestore 側に残っている可能性がある。
+    本コマンドで棚卸ししてください。書き換えは行わない (read-only)。
+    """
+    import csv as csv_module
+    import time
+
+    from labvault.core.results_audit import scan_record, summarize
+
+    lab = _get_lab()
+    team = lab._team
+    click.echo(f'Scanning team "{team}" (limit={limit})...')
+    started = time.time()
+
+    rows = lab._metadata.list_records(team, limit=limit)
+    elapsed = time.time() - started
+
+    all_violations = []
+    affected_record_ids: set[str] = set()
+    for row in rows:
+        violations = scan_record(row)
+        if violations:
+            all_violations.extend(violations)
+            affected_record_ids.add(str(row.get("id") or ""))
+
+    counts = summarize(all_violations)
+
+    click.echo(f"Scanned {len(rows)} records ({elapsed:.2f}s).")
+    if not all_violations:
+        click.echo("✅ 違反なし。")
+        lab.close()
+        return
+
+    click.echo(
+        f"⚠ Violations: {len(all_violations)} (in {len(affected_record_ids)} records)"
+    )
+    for kind in ("dict", "long_list", "value_too_large", "total_too_large"):
+        n = counts.get(kind, 0)
+        if n:
+            click.echo(f"  {kind:<18} {n}")
+
+    if verbose:
+        click.echo("\n詳細:")
+        for v in all_violations:
+            click.echo(f"  [{v.record_id}] {v.key:<20} {v.kind}")
+            click.echo(f"    {v.detail}")
+            if v.value_preview:
+                click.echo(f"    preview: {v.value_preview}")
+
+    if csv_path:
+        with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+            writer = csv_module.writer(fh)
+            writer.writerow(["record_id", "key", "kind", "detail", "value_preview"])
+            for v in all_violations:
+                writer.writerow([v.record_id, v.key, v.kind, v.detail, v.value_preview])
+        click.echo(f"\nCSV: {csv_path} に書き出しました。")
+
+    if not verbose:
+        click.echo("\nヒント: --verbose で詳細、--csv FILE で書き出し可能。")
+    lab.close()
+
+
 @cli.command()
 @click.argument("output_dir", type=click.Path())
 @click.option("--limit", "-n", default=100, help="エクスポート件数")
