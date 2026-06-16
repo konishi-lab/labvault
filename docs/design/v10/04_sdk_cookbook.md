@@ -710,10 +710,41 @@ lab.define_template(
             default="Ar",
         ),
     ],
-    recommended_results=["thickness_nm", "deposition_rate_nm_per_min"],
+    result_fields=[
+        ResultField(
+            name="thickness_nm",
+            display_name="膜厚",
+            type="float",
+            unit="nm",
+            description="QCM または XRR で測定",
+        ),
+        ResultField(
+            name="deposition_rate_nm_per_min",
+            display_name="成膜レート",
+            type="float",
+            unit="nm/min",
+            description="膜厚 / 成膜時間",
+        ),
+    ],
     indexed_fields=["substrate_temperature_C", "rf_power_W"],
 )
+
+# 使用例: bare scalar で値だけ書けば unit / description が template から
+# 自動補完される。検索・散布図・Web UI chip・LLM 解析が全部効くように。
+rec = lab.new("Fe-Cr 成膜 batch 001", template="sputter_deposition")
+rec.conditions(rf_power_W=30, substrate_temperature_C=200)
+rec.results["thickness_nm"] = 62.5         # → unit="nm", description="膜厚" 自動セット
+rec.results["deposition_rate_nm_per_min"] = 1.04
 ```
+
+### result_fields の auto-fill ルール
+
+- **bare scalar (`rec.results["k"] = value`)**: template に登録があれば
+  unit / description を補完
+- **tuple 記法 (`rec.results["k"] = (value, "unit", "desc")`)**: ユーザー
+  明示として尊重、template より優先 (空文字も尊重)
+- **既存値の保護**: 既に unit / description が入っていれば上書きしない
+- **template 無し / 未登録 key**: no-op (従来通り)
 
 ---
 

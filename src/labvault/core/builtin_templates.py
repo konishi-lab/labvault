@@ -13,6 +13,7 @@ from __future__ import annotations
 from labvault.core.types import (
     ConditionField,
     FileParserConfig,
+    ResultField,
     TemplateV10,
 )
 
@@ -117,15 +118,79 @@ TEMPLATE_XRD = TemplateV10(
         "two_theta_end_deg",
         "sample_name",
     ],
+    result_fields=[
+        ResultField(
+            name="peak_2theta_main_deg",
+            display_name="代表ピーク 2θ",
+            type="float",
+            unit="deg",
+            description="最強回折ピークの 2θ 角",
+        ),
+        ResultField(
+            name="d_spacing_main_A",
+            display_name="代表 d 間隔",
+            type="float",
+            unit="Å",
+            description="代表ピークから計算した d 値",
+        ),
+        ResultField(
+            name="lattice_a_A",
+            display_name="格子定数 a",
+            type="float",
+            unit="Å",
+            description="主格子定数 (cubic は a / hexagonal は a-axis)",
+        ),
+        ResultField(
+            name="lattice_c_A",
+            display_name="格子定数 c",
+            type="float",
+            unit="Å",
+            description="hexagonal / tetragonal などの c-axis 長",
+        ),
+        ResultField(
+            name="phase",
+            display_name="同定相",
+            type="str",
+            description="主相 (例: BCC / FCC / amorphous / Fe2O3 など)",
+        ),
+        ResultField(
+            name="crystallinity",
+            display_name="結晶化度",
+            type="float",
+            unit="%",
+            description="ピーク面積 / 全散乱強度 などから推定",
+        ),
+        ResultField(
+            name="crystallite_size_nm",
+            display_name="結晶子サイズ",
+            type="float",
+            unit="nm",
+            description="Scherrer 式から推定した結晶子径",
+        ),
+        ResultField(
+            name="preferred_orientation",
+            display_name="優先配向",
+            type="str",
+            description="例: (110) / (111) / random",
+        ),
+        ResultField(
+            name="fit_chi2",
+            display_name="fit χ²",
+            type="float",
+            description="Rietveld / プロファイル fit の正規化残差二乗",
+        ),
+    ],
+    # 旧 list[str] 形の recommended_results も残す (後方互換、Web UI suggest 用)
     recommended_results=[
-        "peak_positions_deg",
-        "d_spacings_A",
+        "peak_2theta_main_deg",
+        "d_spacing_main_A",
         "lattice_a_A",
         "lattice_c_A",
         "phase",
         "crystallinity",
         "crystallite_size_nm",
         "preferred_orientation",
+        "fit_chi2",
     ],
     indexed_fields=["target", "method", "sample_name"],
     file_parsers=[
@@ -182,6 +247,35 @@ TEMPLATE_SEM = TemplateV10(
         ),
     ],
     required_conditions=["acceleration_voltage_kV", "magnification", "sample_name"],
+    result_fields=[
+        ResultField(
+            name="particle_size_mean_nm",
+            display_name="平均粒径",
+            type="float",
+            unit="nm",
+            description="観察視野中の粒子径の算術平均",
+        ),
+        ResultField(
+            name="particle_size_std_nm",
+            display_name="粒径標準偏差",
+            type="float",
+            unit="nm",
+            description="粒径分布の標準偏差 (1 sigma)",
+        ),
+        ResultField(
+            name="grain_count",
+            display_name="グレイン数",
+            type="int",
+            description="解析対象視野に検出された粒子数",
+        ),
+        ResultField(
+            name="surface_coverage",
+            display_name="被覆率",
+            type="float",
+            unit="%",
+            description="視野中の対象相の面積率",
+        ),
+    ],
     indexed_fields=["sample_name"],
     file_parsers=[
         FileParserConfig(extension=".tif", parser_name="tiff_sem_parser"),
@@ -235,6 +329,36 @@ TEMPLATE_SQUID = TemplateV10(
         ),
     ],
     required_conditions=["measurement_mode", "sample_name"],
+    result_fields=[
+        ResultField(
+            name="saturation_magnetization_emu_per_g",
+            display_name="飽和磁化",
+            type="float",
+            unit="emu/g",
+            description="MH 曲線の高磁場側の飽和値",
+        ),
+        ResultField(
+            name="coercivity_Oe",
+            display_name="保磁力",
+            type="float",
+            unit="Oe",
+            description="MH 曲線で磁化 = 0 となる磁場",
+        ),
+        ResultField(
+            name="remanent_magnetization_emu_per_g",
+            display_name="残留磁化",
+            type="float",
+            unit="emu/g",
+            description="H=0 における磁化",
+        ),
+        ResultField(
+            name="curie_temp_K",
+            display_name="キュリー温度",
+            type="float",
+            unit="K",
+            description="MT 曲線で強磁性 - 常磁性転移温度",
+        ),
+    ],
     indexed_fields=["measurement_mode", "sample_name"],
     file_parsers=[
         FileParserConfig(extension=".dat", parser_name="mpms_dat_parser"),
@@ -281,6 +405,28 @@ TEMPLATE_TEM = TemplateV10(
         ),
     ],
     required_conditions=["acceleration_voltage_kV", "mode", "sample_name"],
+    result_fields=[
+        ResultField(
+            name="particle_size_nm",
+            display_name="粒径",
+            type="float",
+            unit="nm",
+            description="観察対象の粒子径",
+        ),
+        ResultField(
+            name="lattice_spacing_nm",
+            display_name="格子面間隔",
+            type="float",
+            unit="nm",
+            description="HRTEM 像から計測した格子縞の間隔",
+        ),
+        ResultField(
+            name="crystallographic_plane",
+            display_name="観察面",
+            type="str",
+            description="SAED / HRTEM で同定した結晶面 (例: (111))",
+        ),
+    ],
     indexed_fields=["mode", "sample_name"],
     file_parsers=[
         FileParserConfig(extension=".dm3", parser_name="dm3_parser"),
@@ -334,6 +480,34 @@ TEMPLATE_RAMAN = TemplateV10(
         ),
     ],
     required_conditions=["laser_wavelength_nm", "sample_name"],
+    result_fields=[
+        ResultField(
+            name="peak_main_wavenumber_cm-1",
+            display_name="代表ピーク波数",
+            type="float",
+            unit="cm^-1",
+            description="最強ピークのラマンシフト",
+        ),
+        ResultField(
+            name="peak_fwhm_cm-1",
+            display_name="ピーク FWHM",
+            type="float",
+            unit="cm^-1",
+            description="代表ピークの半値全幅",
+        ),
+        ResultField(
+            name="I_D_over_I_G",
+            display_name="D/G 強度比",
+            type="float",
+            description="グラフェン等の D バンド / G バンド強度比",
+        ),
+        ResultField(
+            name="signal_to_noise",
+            display_name="S/N",
+            type="float",
+            description="代表ピーク強度 / ベースライン rms",
+        ),
+    ],
     indexed_fields=["laser_wavelength_nm", "sample_name"],
     file_parsers=[
         FileParserConfig(extension=".wdf", parser_name="wdf_parser"),

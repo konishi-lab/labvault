@@ -68,8 +68,10 @@ class _ResultsProxy:
         from labvault.core.exceptions import ValidationError
         from labvault.core.units import validate_unit
 
+        was_tuple = isinstance(value, tuple)
+
         # tuple は糖衣記法として先に解釈する (scalar/list + unit + desc)。
-        if isinstance(value, tuple):
+        if was_tuple:
             if len(value) == 2:
                 actual, unit = value
                 self._validate_value(key, actual)
@@ -90,6 +92,9 @@ class _ResultsProxy:
             # tuple 以外: scalar / list のみ許可。dict は禁止。
             self._validate_value(key, value)
             self._data[key] = value
+            # bare scalar 代入時のみ template から auto-fill する。
+            # tuple 記法はユーザーが明示しているので尊重する (空文字も OK)。
+            self._auto_fill_from_template(key)
 
         # 合計サイズ点検 (上限超過なら rollback)
         try:
@@ -102,6 +107,25 @@ class _ResultsProxy:
             raise
 
         self._record._persist()
+
+    def _auto_fill_from_template(self, key: str) -> None:
+        """template.result_fields から unit / description を補完する。
+
+        bare scalar 代入時のみ呼ばれる (tuple 記法はユーザー明示なので触らない)。
+        既に値が入っている場合は保護する。template が無い / key が
+        result_fields に無い場合は何もしない。
+        """
+        record = self._record
+        tpl = record._resolve_template()
+        if tpl is None or not getattr(tpl, "result_fields", None):
+            return
+        rf = tpl.result_field_map().get(key)
+        if rf is None:
+            return
+        if not record._result_units.get(key) and rf.unit:
+            record._result_units[key] = rf.unit
+        if not record._result_descriptions.get(key) and rf.description:
+            record._result_descriptions[key] = rf.description
 
     @classmethod
     def _validate_value(cls, key: str, value: Any) -> None:

@@ -25,6 +25,26 @@
 - **Backend `FileInfo` schema に `original_type: str \| None`** を追加し
   `/api/records/{id}` と `/api/records/{id}/files` のレスポンスに含める
   (テスト 3 件追加)。
+- **`ResultField` dataclass** — `ConditionField` と対称な template フィールド
+  定義 (name / display_name / type / unit / description / required / aliases)。
+  `TemplateV10.result_fields: list[ResultField]` で持つ。
+- **template-driven 自動 unit / description 補完** — record が template に
+  紐付いていて、bare scalar で `rec.results[key] = value` を代入した時、
+  template の `result_fields` から unit / description を自動で補完する。
+  ユーザーが tuple 記法 `(値, "単位", "説明")` で明示した値、および既存の
+  unit / description は上書きしない。これにより script 実験で「**値だけ
+  書けば検索 / 散布図 / Web UI / LLM 解析が全部効く**」状態になる。
+- **builtin templates の `result_fields` 整備** — XRD は 9 fields (代表
+  ピーク 2θ / 格子定数 / 相 / fit χ² など)、SEM / SQUID / TEM / Raman は
+  代表 2-4 fields を unit + description 付きで定義。
+- **テスト 14 件追加**: auto-fill / tuple override / 既存値保護 /
+  template 無し / 不明 key / round trip / builtin の result_fields 有無。
+
+### Backward compatibility
+
+- 旧 `recommended_results: list[str]` フィールドは **互換 alias として残置**
+  (XRD template は `result_fields` と `recommended_results` を両方持つ)。
+  Web UI の suggest 機能は引き続き動く。
 
 ## [0.3.0] - 2026-06-15
 
