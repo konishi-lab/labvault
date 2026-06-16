@@ -759,16 +759,49 @@ exp = lab.new("Fe-Cr薄膜 総合評価", type="experiment")
 # 子レコード（個別の測定）
 xrd = exp.sub("XRD測定", type="measurement")
 xrd.conditions(target="Cu", voltage_kV=40)
-xrd.add("xrd_data.ras")
+xrd.add_file("xrd_data.ras")
 
 sem = exp.sub("SEM観察", type="measurement")
 sem.conditions(accelerating_voltage_kV=15, magnification=50000)
-sem.add("sem_50k.tiff")
+sem.add_file("sem_50k.tiff")
 
 # 子レコード一覧
 for child in exp.children():
     print(f"{child.id}: {child.title} [{child.status}]")
 ```
+
+### 7.1.1 親と子で別 template (推奨パターン)
+
+`parent.sub(template=...)` で子に独立した template を紐付けられる。
+**親と子の template は互いに完全独立** で、conditions / results / file
+parsers / auto-fill (#12a) はそれぞれ自分の template で動く。共通条件は
+Python の ``**common`` で渡す:
+
+```python
+common = dict(operator="hiro", batch_no="2026-06", instrument="sputter-A")
+
+# 親 (実験全体) は実験デザイン用の template
+series = lab.new(
+    "Fe-Cr power scan",
+    template="thin_film_experiment",   # 親 template
+    **common,
+)
+
+# 子 (個別測定) は測定スキーマ用の template
+for power in [20, 30, 40, 50, 60]:
+    child = series.sub(
+        f"power={power}W",
+        template="XRD",                # 子 template (親とは別)
+        rf_power_W=power,
+        **common,                       # Python の **共通条件
+    )
+    child.add_file(f"xrd_{power}W.ras")
+    child.results["peak_2theta_main_deg"] = 32.1  # ← XRD template の result_fields
+                                                  # から unit="deg" / desc auto-fill
+```
+
+孫世代も同様: `series.sub(...).sub(template=...)` で 3 階層以上も
+ネストできる。各世代の template は完全独立。
 
 ### 7.2 リンク
 
