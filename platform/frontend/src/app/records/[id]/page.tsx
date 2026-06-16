@@ -74,6 +74,52 @@ function fileTypeBadge(name: string): string {
   return styles[ext] || "";
 }
 
+// DataRef.original_type は SDK が `add_object` 経路で付与する semantic タグ。
+// "ndarray" → np.ndarray, "figure" → matplotlib.Figure, ... のように
+// 「何の Python オブジェクト由来か」を拡張子推測ではなく metadata から
+// 判別可能にする。null の場合は raw 取り込み (add_file / add_bytes) または
+// 旧 record で未付与のもの。ヒントだけ出すサブバッジとして表示。
+function originLabel(original: string | null): string | null {
+  if (!original) return null;
+  switch (original) {
+    case "ndarray":
+      return "Array";
+    case "figure":
+      return "Figure";
+    case "dataframe":
+      return "Table";
+    case "dict":
+      return "Dict";
+    case "list":
+      return "List";
+    case "str":
+      return "Text";
+    case "bytes":
+      return "Bytes";
+    default:
+      return original; // 将来追加される type は raw 値を出す
+  }
+}
+
+function originBadgeStyle(original: string | null): string {
+  if (!original) return "";
+  switch (original) {
+    case "ndarray":
+      return "bg-orange-50 text-orange-700 border-orange-200";
+    case "figure":
+      return "bg-pink-50 text-pink-700 border-pink-200";
+    case "dataframe":
+      return "bg-green-50 text-green-700 border-green-200";
+    case "dict":
+    case "list":
+      return "bg-blue-50 text-blue-700 border-blue-200";
+    case "str":
+    case "bytes":
+    default:
+      return "bg-slate-50 text-slate-700 border-slate-200";
+  }
+}
+
 function previewType(name: string): "vk4" | "image" | null {
   const lower = name.toLowerCase();
   if (lower.endsWith(".vk4")) return "vk4";
@@ -237,6 +283,15 @@ function FileSection({
                     >
                       {fileExt(file.name)}
                     </Badge>
+                    {originLabel(file.original_type) && (
+                      <Badge
+                        variant="outline"
+                        className={`shrink-0 text-xs ${originBadgeStyle(file.original_type)}`}
+                        title={`保存元の Python 型: ${file.original_type}`}
+                      >
+                        {originLabel(file.original_type)}
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-muted-foreground">
