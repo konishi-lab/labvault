@@ -26,6 +26,11 @@ class FileInfo(BaseModel):
     name: str
     content_type: str = ""
     size_bytes: int = 0
+    # 元の Python 型 ("ndarray" / "figure" / "dataframe" / "dict" / "list" /
+    # "str" / "bytes")。add_object 経路で自動付与。add_file / add_bytes 経由
+    # (raw 取り込み) は None。Web UI が拡張子推測でなく metadata から
+    # 「これは Figure 由来」「これは ndarray」を判別するのに使う。
+    original_type: str | None = None
 
 
 class RecordSummary(BaseModel):

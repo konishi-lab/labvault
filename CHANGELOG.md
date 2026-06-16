@@ -17,6 +17,14 @@
 - **`labvault.core.results_audit`** モジュール — `scan_record(dict)` と
   `summarize(list)` の純粋関数。CLI から呼ばれるロジックを切り出し、
   他スクリプトからも利用可能に。`_ResultsProxy` と上限値を import で同期。
+- **Web UI: ファイルバッジに `original_type` を反映** — `add_object` 経由で
+  保存されたファイルに「Figure」「Array」「Table」「Dict」「List」「Text」
+  「Bytes」のサブバッジを表示。`add_file` / `add_bytes` 経由 (raw 取り込み)
+  および旧 record (`original_type=None`) はバッジ無し、拡張子バッジは従来通り。
+  hover で raw 値 (`ndarray` / `figure` / etc.) が tooltip に表示される。
+- **Backend `FileInfo` schema に `original_type: str \| None`** を追加し
+  `/api/records/{id}` と `/api/records/{id}/files` のレスポンスに含める
+  (テスト 3 件追加)。
 
 ## [0.3.0] - 2026-06-15
 

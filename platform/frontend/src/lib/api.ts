@@ -53,6 +53,10 @@ export interface FileInfo {
   name: string;
   content_type: string;
   size_bytes: number;
+  // 元の Python 型 ("ndarray" / "figure" / "dataframe" / "dict" / "list" /
+  // "str" / "bytes")。add_object 経路で自動付与。null は raw 取り込み
+  // (add_file / add_bytes) または旧 record で未付与のもの。
+  original_type: string | null;
 }
 
 export interface RecordDetail extends RecordSummary {

@@ -69,6 +69,7 @@ def _to_detail(rec: Any) -> RecordDetail:
                 "name": ref.name,
                 "content_type": ref.content_type,
                 "size_bytes": ref.size_bytes,
+                "original_type": ref.original_type,
             }
             for ref in rec.list_data()
         ],
