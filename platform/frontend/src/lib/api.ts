@@ -35,6 +35,9 @@ export interface RecordSummary {
   updated_by: string;
   updated_at: string;
   parent_id: string | null;
+  // template 名 (Record._template_name)。Web UI が context chip
+  // `[template: XRD]` を表示するために使う。template 未紐付けは null。
+  template_name?: string | null;
 }
 
 export interface NoteResponse {
@@ -98,6 +101,7 @@ export async function fetchRecords(params?: {
   type?: string;
   conditions?: Record<string, unknown>;
   createdBy?: string;
+  template?: string;
   limit?: number;
   offset?: number;
 }): Promise<RecordListResponse> {
@@ -111,6 +115,7 @@ export async function fetchRecords(params?: {
     searchParams.set("conditions", JSON.stringify(params.conditions));
   }
   if (params?.createdBy) searchParams.set("created_by", params.createdBy);
+  if (params?.template) searchParams.set("template", params.template);
   if (params?.limit) searchParams.set("limit", String(params.limit));
   if (params?.offset) searchParams.set("offset", String(params.offset));
 
@@ -133,6 +138,7 @@ export async function searchRecords(
     type?: string;
     conditions?: Record<string, unknown>;
     createdBy?: string;
+    template?: string;
     limit?: number;
   }
 ): Promise<RecordSummary[]> {
@@ -145,6 +151,7 @@ export async function searchRecords(
     searchParams.set("conditions", JSON.stringify(params.conditions));
   }
   if (params?.createdBy) searchParams.set("created_by", params.createdBy);
+  if (params?.template) searchParams.set("template", params.template);
   if (params?.limit) searchParams.set("limit", String(params.limit));
 
   const res = await authFetch(`${API_BASE}/api/search?${searchParams}`);

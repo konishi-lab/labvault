@@ -49,6 +49,7 @@ function RecordsContent() {
   const query = searchParams.get("q") || "";
   const rawConditions = searchParams.get("conditions");
   const mineOnly = searchParams.get("mine") === "1";
+  const templateFilter = searchParams.get("template") || "";
 
   const { user } = useAuth();
   const currentUserEmail = user?.email || null;
@@ -124,12 +125,14 @@ router.push(`/records?${params.toString()}`);
       ? searchRecords(query, {
           conditions: hasConditions ? conditionsObj : undefined,
           createdBy,
+          template: templateFilter || undefined,
           limit: PAGE_LIMIT,
         }).then((items) => ({ items, has_more: items.length >= PAGE_LIMIT }))
       : fetchRecords({
           limit: PAGE_LIMIT,
           conditions: hasConditions ? conditionsObj : undefined,
           createdBy,
+          template: templateFilter || undefined,
         }).then((res) => ({
           items: res.items,
           has_more: !!res.has_more,
@@ -142,7 +145,7 @@ router.push(`/records?${params.toString()}`);
       })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [query, conditionsObj, mineOnly, currentUserEmail]);
+  }, [query, conditionsObj, mineOnly, currentUserEmail, templateFilter]);
 
   // 「自分の record を優先表示」: sort 指定なしのとき、自分の作った record
   // を先頭に持ち上げる (相対順は created_at desc を維持)。mineOnly が ON の
@@ -165,9 +168,15 @@ router.push(`/records?${params.toString()}`);
     return <p className="py-8 text-center text-destructive">エラー: {error}</p>;
   }
 
+  const handleClearTemplate = () => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("template");
+    router.push(`/records?${params.toString()}`);
+  };
+
   return (
     <div className="space-y-4">
-      {/* フィルタバー: 自分のみ toggle + condition chip */}
+      {/* フィルタバー: 自分のみ toggle + template chip + condition chip */}
       <div className="flex items-center gap-2 flex-wrap">
         <Button
           size="sm"
@@ -184,6 +193,17 @@ router.push(`/records?${params.toString()}`);
         >
           {mineOnly ? "✓ 自分のみ" : "自分のみ"}
         </Button>
+        {templateFilter && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleClearTemplate}
+            className="border-purple-200 text-purple-700 hover:bg-purple-50"
+            title={`template "${templateFilter}" でフィルタ中 (クリックで解除)`}
+          >
+            template: {templateFilter} ×
+          </Button>
+        )}
         <ConditionFilterPanel
           filters={filters}
           onChange={handleFiltersChange}

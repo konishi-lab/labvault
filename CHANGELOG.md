@@ -8,6 +8,23 @@
 
 ### Added
 
+- **Web UI: Copy as SDK + context chip (template / parent)** — agent teams
+  UX レビュー Top5 #4。再現フローの 70% を解消する 2 つの仕掛け:
+  - **context chip**: レコード詳細のヘッダに `[template: XRD]`
+    `[parent: AB3F]` のリンクバッジ。クリックで `/records?template=XRD` /
+    親 record 詳細へ。半年前 record から同種の record / 親実験全体に
+    1 クリックで横展開できる
+  - **Copy as SDK ボタン**: 条件カードヘッダに「Copy as SDK」ボタン。
+    `lab.new("title", template="XRD", operator="hiro", rf_power_W=30)`
+    の Python snippet を clipboard へ。Python リテラル escape 込み
+    (str / int / float / bool / None / list)。conditions の key が
+    Python identifier safe な場合のみ kwarg に展開
+  - **`/records?template=XXX` フィルタ**: URL クエリと chip ボタン
+    (クリックで解除) を /records に追加
+- **Backend**: `RecordSummary.template_name` 追加、`/api/records` と
+  `/api/search` に `template` クエリパラメータ追加 (post-filter)。
+- backend test 6 件追加 (`test_records_template_filter.py`)。
+
 - **Web UI: CSV ダウンロード + ID 一覧コピー** — `/records` 一覧と
   record 詳細の子レコード表に **ツールバー** を追加。
   - 「CSV ダウンロード」: 表示中レコードを BOM 付き UTF-8 CSV で保存

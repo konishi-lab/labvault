@@ -44,6 +44,9 @@ class RecordSummary(BaseModel):
     updated_by: str = ""
     updated_at: datetime
     parent_id: str | None = None
+    # template 名 (`Record._template_name`)。Web UI が context chip
+    # `[template: XRD]` を表示するために使う。template 未紐付けは None。
+    template_name: str | None = None
 
 
 class RecordDetail(RecordSummary):
