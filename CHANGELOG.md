@@ -8,6 +8,26 @@
 
 ### Added
 
+- **Web UI: 検索 query と condition filter の併用解禁** + **「自分のみ」filter
+  chip** + **件数ヘッダ** + **自分の record を先頭に優先表示** —
+  agent teams UX レビュー (Day-one action) と「自分のものを優先的に出したい」
+  ユーザー要望の合流。
+  - `/api/search` と `/api/records` に **`created_by` クエリ** を追加。同時に
+    `RecordListResponse.has_more` を追加し、limit 切り捨て時に warning 表記。
+  - frontend `/records` の load 経路を統合: query / conditions / created_by
+    を **同時** に渡せる (これまで query があると conditions が無視されていた)
+  - **「自分のみ」toggle**: ヘッダの button、URL `?mine=1` に同期。ON で
+    `created_by=自分のemail` filter
+  - **件数ヘッダ**: `N 件表示中` / `N+ 件以上ヒット (条件を絞り込んでください)`
+  - **自分の record 優先表示**: mineOnly OFF + sort なし時、自分の作った record
+    を上部に持ち上げ、テーブル row には薄い青ハイライト + `自分` バッジ
+  - **クライアントページネーション**: limit 200 + pageSize 50 で
+    SortableRecordTable がページ送り
+- **`InMemoryMetadataBackend.list_records` に `parent_id` kwarg** を追加し、
+  Firestore backend と signature を統一 (test 用に backend 経由で
+  `/api/records` を叩けるように)。
+- 上記のための backend test 8 件 (`test_records_filters.py`)。
+
 - **Web UI: results card に「template 由来 / 手動入力」の視覚的区別** —
   `add_object` の auto-fill (PR #63) で template から unit/description が
   補完された値は **斜体の灰色 (slate-400 italic)** で表示、手動で入力した値は

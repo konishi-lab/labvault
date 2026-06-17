@@ -79,7 +79,10 @@ export interface RecordDetail extends RecordSummary {
 
 export interface RecordListResponse {
   items: RecordSummary[];
+  // 表示中の件数 (= items.length)。総ヒット数ではない。
   total: number;
+  // サーバが limit に達して打ち切った可能性 (true なら「N+ 件」表示)。
+  has_more?: boolean;
 }
 
 export interface HealthResponse {
@@ -94,6 +97,7 @@ export async function fetchRecords(params?: {
   status?: string;
   type?: string;
   conditions?: Record<string, unknown>;
+  createdBy?: string;
   limit?: number;
   offset?: number;
 }): Promise<RecordListResponse> {
@@ -106,6 +110,7 @@ export async function fetchRecords(params?: {
     // 挙がっている key は Firestore に push down される (PR #14)。
     searchParams.set("conditions", JSON.stringify(params.conditions));
   }
+  if (params?.createdBy) searchParams.set("created_by", params.createdBy);
   if (params?.limit) searchParams.set("limit", String(params.limit));
   if (params?.offset) searchParams.set("offset", String(params.offset));
 
@@ -122,13 +127,24 @@ export async function fetchRecord(id: string): Promise<RecordDetail> {
 
 export async function searchRecords(
   query: string,
-  params?: { tags?: string; status?: string; type?: string; limit?: number }
+  params?: {
+    tags?: string;
+    status?: string;
+    type?: string;
+    conditions?: Record<string, unknown>;
+    createdBy?: string;
+    limit?: number;
+  }
 ): Promise<RecordSummary[]> {
   const searchParams = new URLSearchParams();
   if (query) searchParams.set("q", query);
   if (params?.tags) searchParams.set("tags", params.tags);
   if (params?.status) searchParams.set("status", params.status);
   if (params?.type) searchParams.set("type", params.type);
+  if (params?.conditions && Object.keys(params.conditions).length > 0) {
+    searchParams.set("conditions", JSON.stringify(params.conditions));
+  }
+  if (params?.createdBy) searchParams.set("created_by", params.createdBy);
   if (params?.limit) searchParams.set("limit", String(params.limit));
 
   const res = await authFetch(`${API_BASE}/api/search?${searchParams}`);

@@ -67,7 +67,12 @@ class RecordDetail(RecordSummary):
 
 class RecordListResponse(BaseModel):
     items: list[RecordSummary]
+    # 表示中の件数 (= items の長さ)。総ヒット数ではない (Firestore に対し
+    # post-filter を含む場合、サーバ側で正確な total を出すのは現状高コスト)。
     total: int
+    # サーバが limit に達して打ち切った可能性を示す。frontend は
+    # 「N+ 件 (もっと絞り込んでください)」のような表記を出す。
+    has_more: bool = False
 
 
 class HealthResponse(BaseModel):

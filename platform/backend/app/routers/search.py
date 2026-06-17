@@ -25,10 +25,15 @@ def search_records(
     conditions: str | None = Query(
         None, description='JSON形式の条件フィルタ (例: {"power":20})'
     ),
+    created_by: str | None = None,
     limit: int = 20,
     lab: Lab = Depends(get_lab),
 ) -> list[RecordSummary]:
-    """レコードを検索する。"""
+    """レコードを検索する。
+
+    created_by は record の created_by フィールドと完全一致でフィルタする
+    (自分の record だけ見たい時に email を渡す)。
+    """
     tag_list = tags.split(",") if tags else None
     cond_dict: dict[str, Any] | None = None
     if conditions:
@@ -42,13 +47,16 @@ def search_records(
             type=type,
             parent_id=parent_id,
             conditions=cond_dict,
-            limit=limit,
+            limit=limit * 3 if created_by else limit,
         )
+        if created_by:
+            records = [r for r in records if r.created_by == created_by][:limit]
     else:
         records = lab.list(
             tags=tag_list,
             status=status,
             type=type,
+            created_by=created_by,
             limit=limit * 5 if (parent_id or cond_dict) else limit,
         )
         if parent_id is not None:
