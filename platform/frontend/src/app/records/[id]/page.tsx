@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -377,12 +378,39 @@ export default function RecordDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
         <BackButton />
         <h1 className="text-2xl font-bold tracking-tight">{record.title}</h1>
         <Badge variant="secondary" className={statusColor[record.status]}>
           {record.status}
         </Badge>
+        {/* context chip: template と parent への 1-click 横展開 (#3) */}
+        {record.template_name && (
+          <Link
+            href={`/records?template=${encodeURIComponent(record.template_name)}`}
+            title={`template "${record.template_name}" の record を一覧表示`}
+          >
+            <Badge
+              variant="outline"
+              className="text-xs cursor-pointer hover:bg-purple-50 border-purple-200 text-purple-700"
+            >
+              template: {record.template_name}
+            </Badge>
+          </Link>
+        )}
+        {record.parent_id && (
+          <Link
+            href={`/records/${record.parent_id}`}
+            title="親 record (実験全体) の詳細へ"
+          >
+            <Badge
+              variant="outline"
+              className="text-xs cursor-pointer hover:bg-blue-50 border-blue-200 text-blue-700"
+            >
+              parent: {record.parent_id}
+            </Badge>
+          </Link>
+        )}
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -437,6 +465,10 @@ export default function RecordDetailPage() {
             conditions={conditions}
             units={record.condition_units || {}}
             descriptions={record.condition_descriptions || {}}
+            // Copy as SDK ボタン用: title と template_name を渡して
+            // lab.new(...) snippet を生成。
+            recordTitle={record.title}
+            templateName={record.template_name ?? null}
             onUpdate={(units, descs) =>
               setRecord({
                 ...record,

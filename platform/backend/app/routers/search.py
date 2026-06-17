@@ -26,6 +26,7 @@ def search_records(
         None, description='JSON形式の条件フィルタ (例: {"power":20})'
     ),
     created_by: str | None = None,
+    template: str | None = None,
     limit: int = 20,
     lab: Lab = Depends(get_lab),
 ) -> list[RecordSummary]:
@@ -69,6 +70,12 @@ def search_records(
             ]
         records = records[:limit]
 
+    # template フィルタ (post-filter)。
+    if template:
+        records = [
+            r for r in records if getattr(r, "template_name", None) == template
+        ]
+
     return [
         RecordSummary(
             id=r.id,
@@ -80,6 +87,7 @@ def search_records(
             created_at=r.created_at,
             updated_at=r.updated_at,
             parent_id=r.parent_id,
+            template_name=getattr(r, "template_name", None),
         )
         for r in records
     ]

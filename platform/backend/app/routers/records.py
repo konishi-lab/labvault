@@ -39,6 +39,7 @@ def _to_summary(rec: Any) -> RecordSummary:
         updated_by=rec.updated_by,
         updated_at=rec.updated_at,
         parent_id=rec.parent_id,
+        template_name=getattr(rec, "template_name", None),
     )
 
 
@@ -66,6 +67,7 @@ def _to_detail(rec: Any) -> RecordDetail:
         updated_by=rec.updated_by,
         updated_at=rec.updated_at,
         parent_id=rec.parent_id,
+        template_name=getattr(rec, "template_name", None),
         conditions=rec.get_conditions(),
         condition_units=rec.get_condition_units(),
         condition_descriptions=rec.get_condition_descriptions(),
@@ -106,6 +108,7 @@ def list_records(
     type: str | None = None,
     conditions: str | None = None,
     created_by: str | None = None,
+    template: str | None = None,
     limit: int = 20,
     offset: int = 0,
     lab: Lab = Depends(get_lab),
@@ -196,6 +199,12 @@ def list_records(
         items = filtered
     elif len(items) > limit:
         items = items[:limit]
+
+    # template フィルタ (post-filter)。indexed_fields にしないので
+    # 数の多い team では遅くなる可能性があるが、template 名でのドリル
+    # ダウンは UI のショートカット用途で、頻度は低い前提。
+    if template:
+        items = [r for r in items if getattr(r, "template_name", None) == template]
 
     # 内部 fetch_limit に達した = サーバー側で more がある可能性
     has_more = len(items) >= limit and len(items) > 0

@@ -18,12 +18,19 @@ export function ConditionsCard({
   conditions,
   units,
   descriptions,
+  recordTitle,
+  templateName,
   onUpdate,
 }: {
   recordId: string;
   conditions: [string, unknown][];
   units: Record<string, string>;
   descriptions: Record<string, string>;
+  // Copy as SDK ボタン用 (任意): record の title と template_name を渡すと
+  // `lab.new(title, template=..., **conditions)` snippet を生成する。
+  // 省略時はボタンを表示しない (再現対象を持たない context での誤誘導防止)。
+  recordTitle?: string;
+  templateName?: string | null;
   onUpdate: (
     units: Record<string, string>,
     descriptions: Record<string, string>
@@ -33,6 +40,8 @@ export function ConditionsCard({
   const [editUnit, setEditUnit] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [saving, setSaving] = useState(false);
+  const [copiedAt, setCopiedAt] = useState<number | null>(null);
+  const copyJustNow = copiedAt && Date.now() - copiedAt < 2000;
 
   const startEdit = (key: string) => {
     setEditingKey(key);
@@ -67,10 +76,78 @@ export function ConditionsCard({
     }
   };
 
+  // Python リテラルへの変換。conditions の値は flat scalar 規約により
+  // str / int / float / bool / None / 短い list のみ (v0.3.0 規約)。
+  const toPyLiteral = (value: unknown): string => {
+    if (value === null || value === undefined) return "None";
+    if (typeof value === "boolean") return value ? "True" : "False";
+    if (typeof value === "number") return String(value);
+    if (Array.isArray(value)) {
+      return `[${value.map(toPyLiteral).join(", ")}]`;
+    }
+    // str: シングルクオート、内部の \ と ' を escape
+    const s = String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    return `'${s}'`;
+  };
+
+  const buildSnippet = (): string => {
+    const titleLiteral = toPyLiteral(recordTitle || "");
+    const lines = [`lab.new(`, `    ${titleLiteral},`];
+    if (templateName) {
+      lines.push(`    template=${toPyLiteral(templateName)},`);
+    }
+    for (const [key, value] of conditions) {
+      // Python identifier safe な key のみ kwarg に。それ以外は念のため
+      // **{} 形式で出すのが安全だが、conditions の key は alias 正規化
+      // 済で英数 _ のみのはず。検証のみ。
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        lines.push(`    ${key}=${toPyLiteral(value)},`);
+      }
+    }
+    lines.push(`)`);
+    return lines.join("\n");
+  };
+
+  const handleCopySnippet = async () => {
+    const snippet = buildSnippet();
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setCopiedAt(Date.now());
+      setTimeout(() => setCopiedAt(null), 2000);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = snippet;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        setCopiedAt(Date.now());
+        setTimeout(() => setCopiedAt(null), 2000);
+      } catch {
+        // 何もできない
+      }
+      ta.remove();
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">条件</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-base">条件</CardTitle>
+          {recordTitle && (
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={handleCopySnippet}
+              title="この record の条件を `lab.new(...)` snippet として clipboard にコピー (Notebook に貼り付けて再現)"
+            >
+              {copyJustNow ? "✓ コピーしました" : "Copy as SDK"}
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         {conditions.map(([key, value], i) => (
