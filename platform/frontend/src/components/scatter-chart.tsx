@@ -151,9 +151,14 @@ function AxisInput({
 export function ConditionScatterChart({
   records,
   conditionsMap,
+  unitsMap,
 }: {
   records: RecordSummary[];
   conditionsMap: Map<string, Record<string, unknown>>;
+  // 子レコードの units を集約した map (例: { rf_power_W: "W",
+  // peak_2theta_deg: "deg" })。指定された expr が単純な field 名のとき、
+  // 軸ラベルを `key [unit]` 形式に拡張するために使う (#16 quick win)。
+  unitsMap?: Record<string, string>;
 }) {
   const [xExpr, setXExpr] = useState("");
   const [yExpr, setYExpr] = useState("");
@@ -171,8 +176,16 @@ export function ConditionScatterChart({
   const numericKeyList = Array.from(numericKeys).sort();
   const allKeyList = Array.from(allKeys).sort();
 
-  const xLabel = xExpr || "X";
-  const yLabel = yExpr || "Y";
+  // expr が単一フィールド名で、その unit が分かるなら `name [unit]` 形式に。
+  // 式 (例: "a + b") の場合は unit が定義不能なので expr をそのまま返す。
+  const formatAxisLabel = (expr: string, fallback: string): string => {
+    if (!expr) return fallback;
+    if (isExpression(expr)) return expr;
+    const unit = unitsMap?.[expr];
+    return unit ? `${expr} [${unit}]` : expr;
+  };
+  const xLabel = formatAxisLabel(xExpr, "X");
+  const yLabel = formatAxisLabel(yExpr, "Y");
   const ready = xExpr && yExpr;
 
   const groupedData: Map<string, ChartPoint[]> = new Map();

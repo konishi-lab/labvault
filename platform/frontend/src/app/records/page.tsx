@@ -89,7 +89,10 @@ function RecordsContent() {
       } else {
         params.delete("conditions");
       }
-      router.replace(`/records?${params.toString()}`);
+      // router.push にすることで戻るボタンで前の filter 状態に戻れる
+// (#16 quick win)。chip の追加/削除/トグルは確定アクションなので
+// 1 操作 = 1 history entry の方が自然。
+router.push(`/records?${params.toString()}`);
     },
     [router, searchParams],
   );
@@ -101,7 +104,10 @@ function RecordsContent() {
     } else {
       params.set("mine", "1");
     }
-    router.replace(`/records?${params.toString()}`);
+    // router.push にすることで戻るボタンで前の filter 状態に戻れる
+// (#16 quick win)。chip の追加/削除/トグルは確定アクションなので
+// 1 操作 = 1 history entry の方が自然。
+router.push(`/records?${params.toString()}`);
   }, [router, searchParams, mineOnly]);
 
   useEffect(() => {

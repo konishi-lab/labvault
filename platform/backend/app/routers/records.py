@@ -334,6 +334,11 @@ def get_children_conditions(
                 "title": c.title,
                 "conditions": c.get_conditions(),
                 "results": results,
+                # scatter 軸ラベルで `[unit]` を出すために units を同梱。
+                # 子はだいたい同じ template で揃うので、frontend で集約して
+                # 1 つの unitsMap として scatter に渡す。
+                "condition_units": c.get_condition_units(),
+                "result_units": c.get_result_units(),
             }
         )
     return items

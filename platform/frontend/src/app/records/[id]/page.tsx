@@ -600,6 +600,11 @@ function ChildrenSection({
   const [fieldsMap, setFieldsMap] = useState<
     Map<string, Record<string, unknown>>
   >(new Map());
+  // 子レコードの全 condition_units / result_units を 1 つの map に集約。
+  // scatter 軸ラベルで `key [unit]` を出すのに使う。同じ key で複数子が
+  // 単位を持つ場合は最初の non-empty が勝つ (基本的に同じ template なので
+  // 揃うはず)。
+  const [unitsMap, setUnitsMap] = useState<Record<string, string>>({});
   const [conditionKeys, setConditionKeys] = useState<string[]>([]);
   const [resultKeys, setResultKeys] = useState<string[]>([]);
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -611,6 +616,7 @@ function ChildrenSection({
     fetchChildrenConditions(recordId)
       .then((items) => {
         const map = new Map<string, Record<string, unknown>>();
+        const units: Record<string, string> = {};
         const cKeys = new Set<string>();
         const rKeys = new Set<string>();
         for (const item of items) {
@@ -618,8 +624,16 @@ function ChildrenSection({
           map.set(item.id, { ...item.conditions, ...item.results });
           Object.keys(item.conditions).forEach((k) => cKeys.add(k));
           Object.keys(item.results).forEach((k) => rKeys.add(k));
+          // units を集約 (最初の non-empty が勝つ)
+          for (const [k, v] of Object.entries(item.condition_units || {})) {
+            if (v && !units[k]) units[k] = v;
+          }
+          for (const [k, v] of Object.entries(item.result_units || {})) {
+            if (v && !units[k]) units[k] = v;
+          }
         }
         setFieldsMap(map);
+        setUnitsMap(units);
         setConditionKeys(Array.from(cKeys).sort());
         setResultKeys(Array.from(rKeys).sort());
         setDataLoaded(true);
@@ -655,6 +669,7 @@ function ChildrenSection({
           <ConditionScatterChart
             records={filtered}
             conditionsMap={fieldsMap}
+            unitsMap={unitsMap}
           />
         </div>
       )}
