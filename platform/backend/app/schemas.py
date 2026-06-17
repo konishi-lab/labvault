@@ -53,6 +53,12 @@ class RecordDetail(RecordSummary):
     results: dict[str, Any] = {}
     result_units: dict[str, str] = {}
     result_descriptions: dict[str, str] = {}
+    # template.result_fields に登録された unit / description (auto-fill 元)。
+    # Web UI が「この値は template 由来か手動入力か」を判別するために使う:
+    # result_units[key] と template_result_units[key] が等しい → template 由来。
+    # template が紐付いていない record では空 dict。
+    template_result_units: dict[str, str] = {}
+    template_result_descriptions: dict[str, str] = {}
     notes: list[NoteResponse] = []
     files: list[FileInfo] = []
     links: list[LinkResponse] = []

@@ -454,6 +454,8 @@ export default function RecordDetailPage() {
             results={results}
             units={record.result_units || {}}
             descriptions={record.result_descriptions || {}}
+            templateUnits={record.template_result_units || {}}
+            templateDescriptions={record.template_result_descriptions || {}}
             allResults={record.results}
             onUpdate={(units, descs) =>
               setRecord({

@@ -4,6 +4,20 @@
 で記録する。バージョン番号は [Semantic Versioning](https://semver.org/) に
 従う (`MAJOR.MINOR.PATCH`、SDK API or backend API の破壊的変更は MAJOR)。
 
+## [Unreleased]
+
+### Added
+
+- **Web UI: results card に「template 由来 / 手動入力」の視覚的区別** —
+  `add_object` の auto-fill (PR #63) で template から unit/description が
+  補完された値は **斜体の灰色 (slate-400 italic)** で表示、手動で入力した値は
+  従来通り **青字 / 通常 muted** で表示。hover で「template から自動補完」
+  または「手動で入力された」と tooltip が出る。
+- **Backend `RecordDetail` に `template_result_units` /
+  `template_result_descriptions`** を追加。record に紐付いた template の
+  `result_fields` から取得 (template 無しの record では空 dict)。frontend が
+  比較で provenance を判定する基盤。backend test 4 件追加。
+
 ## [0.4.0] - 2026-06-16
 
 ### Added
