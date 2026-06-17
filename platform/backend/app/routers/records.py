@@ -43,6 +43,18 @@ def _to_summary(rec: Any) -> RecordSummary:
 
 
 def _to_detail(rec: Any) -> RecordDetail:
+    # template の result_fields から unit / description の auto-fill 元を抽出。
+    # Web UI が「これは template 由来」「これは手動入力」を視覚的に区別するのに使う。
+    template_result_units: dict[str, str] = {}
+    template_result_descriptions: dict[str, str] = {}
+    tpl = rec._resolve_template() if hasattr(rec, "_resolve_template") else None
+    if tpl is not None:
+        for rf in getattr(tpl, "result_fields", []) or []:
+            if rf.unit:
+                template_result_units[rf.name] = rf.unit
+            if rf.description:
+                template_result_descriptions[rf.name] = rf.description
+
     return RecordDetail(
         id=rec.id,
         title=rec.title,
@@ -60,6 +72,8 @@ def _to_detail(rec: Any) -> RecordDetail:
         results=rec.results.to_dict(),
         result_units=rec.get_result_units(),
         result_descriptions=rec.get_result_descriptions(),
+        template_result_units=template_result_units,
+        template_result_descriptions=template_result_descriptions,
         notes=[
             {"text": n.text, "created_at": n.created_at, "author": n.author}
             for n in rec.notes

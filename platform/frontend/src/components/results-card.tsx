@@ -18,6 +18,8 @@ export function ResultsCard({
   results,
   units,
   descriptions,
+  templateUnits,
+  templateDescriptions,
   allResults,
   onUpdate,
 }: {
@@ -25,6 +27,10 @@ export function ResultsCard({
   results: [string, unknown][];
   units: Record<string, string>;
   descriptions: Record<string, string>;
+  // template.result_fields に登録された unit/desc。一致したものは
+  // 「template 由来 (auto-fill)」、それ以外は「手動入力」として色分け。
+  templateUnits: Record<string, string>;
+  templateDescriptions: Record<string, string>;
   allResults: Record<string, unknown>;
   onUpdate: (
     units: Record<string, string>,
@@ -136,16 +142,38 @@ export function ResultsCard({
                 >
                   <div>
                     <span className="text-muted-foreground">{key}</span>
-                    {unit && (
-                      <span className="text-xs text-blue-600 ml-1">
-                        [{unit}]
-                      </span>
-                    )}
-                    {desc && (
-                      <span className="text-xs text-muted-foreground ml-1">
-                        — {desc}
-                      </span>
-                    )}
+                    {unit &&
+                      (templateUnits[key] === unit ? (
+                        <span
+                          className="text-xs ml-1 text-slate-400 italic"
+                          title="template から自動補完された単位"
+                        >
+                          [{unit}]
+                        </span>
+                      ) : (
+                        <span
+                          className="text-xs ml-1 text-blue-600"
+                          title="手動で入力された単位"
+                        >
+                          [{unit}]
+                        </span>
+                      ))}
+                    {desc &&
+                      (templateDescriptions[key] === desc ? (
+                        <span
+                          className="text-xs ml-1 text-slate-400 italic"
+                          title="template から自動補完された説明"
+                        >
+                          — {desc}
+                        </span>
+                      ) : (
+                        <span
+                          className="text-xs ml-1 text-muted-foreground"
+                          title="手動で入力された説明"
+                        >
+                          — {desc}
+                        </span>
+                      ))}
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="font-mono">{String(value)}</span>
