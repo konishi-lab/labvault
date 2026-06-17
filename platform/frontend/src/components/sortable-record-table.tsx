@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { RecordSummary } from "@/lib/api";
+import { downloadCsv, toCsv, todayStamp } from "@/lib/csv";
 
 const statusColor: Record<string, string> = {
   running: "bg-blue-100 text-blue-800",
@@ -132,8 +133,87 @@ export function SortableRecordTable({
   const headClass =
     "cursor-pointer hover:text-foreground select-none transition-colors";
 
+  // 「コピーしました」を 2 秒だけ表示する feedback。
+  const [copiedAt, setCopiedAt] = useState<number | null>(null);
+  const copyJustNow = copiedAt && Date.now() - copiedAt < 2000;
+
+  const handleCopyIds = async () => {
+    const text = records.map((r) => r.id).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedAt(Date.now());
+      setTimeout(() => setCopiedAt(null), 2000);
+    } catch {
+      // clipboard 不可 (古いブラウザ / iframe) のときは select 用 textarea fallback
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        setCopiedAt(Date.now());
+        setTimeout(() => setCopiedAt(null), 2000);
+      } catch {
+        // 何もできない
+      }
+      ta.remove();
+    }
+  };
+
+  const handleDownloadCsv = () => {
+    // 現在表示中の records を、SDK で扱いやすい columns に絞って出力。
+    // 条件カラムや結果カラムを足したい場合は将来拡張するが、まず最小限。
+    const headers = [
+      "id",
+      "title",
+      "type",
+      "status",
+      "created_by",
+      "created_at",
+      "updated_at",
+      "parent_id",
+    ];
+    const rows = records.map((r) => [
+      r.id,
+      r.title,
+      r.type,
+      r.status,
+      r.created_by,
+      r.created_at,
+      r.updated_at,
+      r.parent_id ?? "",
+    ]);
+    const csv = toCsv(headers, rows);
+    downloadCsv(`labvault-records-${todayStamp()}.csv`, csv);
+  };
+
   return (
     <div className="space-y-2">
+      {/* エクスポート toolbar */}
+      <div className="flex items-center gap-2 text-xs">
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={handleDownloadCsv}
+          title="表示中のレコード一覧を CSV でダウンロード (Excel 日本語対応)"
+        >
+          CSV ダウンロード
+        </Button>
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={handleCopyIds}
+          title="表示中のレコード ID を改行区切りでコピー (Notebook の lab.get_many([...]) 等で貼り付け想定)"
+        >
+          {copyJustNow ? "✓ コピーしました" : "ID 一覧コピー"}
+        </Button>
+        <span className="text-muted-foreground ml-auto">
+          {records.length} 件
+        </span>
+      </div>
+
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>

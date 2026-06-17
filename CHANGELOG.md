@@ -8,6 +8,18 @@
 
 ### Added
 
+- **Web UI: CSV ダウンロード + ID 一覧コピー** — `/records` 一覧と
+  record 詳細の子レコード表に **ツールバー** を追加。
+  - 「CSV ダウンロード」: 表示中レコードを BOM 付き UTF-8 CSV で保存
+    (`id, title, type, status, created_by, created_at, updated_at, parent_id`)。
+    Excel 日本語版で文字化けなし。ファイル名 `labvault-records-YYYY-MM-DD.csv`。
+  - 「ID 一覧コピー」: ID を改行区切りで clipboard へ。
+    Notebook で `lab.get_many([...])` への貼り付けを想定。フォーカス・clipboard
+    API 非対応 (古ブラウザ / iframe) 環境は `execCommand` fallback。
+  - feedback: コピー成功時に `✓ コピーしました` を 2 秒トースト表示。
+  - 件数 hint: ツールバー右端に `N 件` を表示。
+- `src/lib/csv.ts` 新規 (CSV escape / quote-always / BOM 付き download)。
+
 - **UX Quick wins (3 つまとめ)** — agent teams UX レビュー (#16) から:
   - **scatter 軸ラベルに `[unit]` 表示** — `/children/conditions` レスポンスに
     子の `condition_units` / `result_units` を同梱、frontend で全子を集約して
