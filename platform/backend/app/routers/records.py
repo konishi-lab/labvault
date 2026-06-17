@@ -105,6 +105,7 @@ def list_records(
     status: str | None = None,
     type: str | None = None,
     conditions: str | None = None,
+    created_by: str | None = None,
     limit: int = 20,
     offset: int = 0,
     lab: Lab = Depends(get_lab),
@@ -114,6 +115,9 @@ def list_records(
     conditions は JSON 文字列で渡す (例: `{"target": "Cu"}` を URL encode)。
     template の indexed_fields に挙がっている key は `idx_<key>` として
     Firestore に push down され、それ以外は post-filter される (PR #14)。
+
+    created_by は record の created_by フィールドと完全一致でフィルタする
+    (典型的には自分が作った record だけ見たい時に email を渡す)。
     """
     import json
 
@@ -155,6 +159,7 @@ def list_records(
             tags=tag_list,
             status=status,
             record_type=type,
+            created_by=created_by,
             parent_id=None,  # ルートレコードのみ
             conditions=push_down or None,
             limit=fetch_limit,
@@ -165,7 +170,12 @@ def list_records(
         items = [_Record._from_dict(r, lab=lab) for r in records]
     else:
         items = lab.list(
-            tags=tag_list, status=status, type=type, limit=fetch_limit, offset=offset
+            tags=tag_list,
+            status=status,
+            type=type,
+            created_by=created_by,
+            limit=fetch_limit,
+            offset=offset,
         )
         items = [r for r in items if r.parent_id is None]
 
@@ -184,10 +194,16 @@ def list_records(
                 if len(filtered) >= limit:
                     break
         items = filtered
+    elif len(items) > limit:
+        items = items[:limit]
+
+    # 内部 fetch_limit に達した = サーバー側で more がある可能性
+    has_more = len(items) >= limit and len(items) > 0
 
     return RecordListResponse(
         items=[_to_summary(r) for r in items],
         total=len(items),
+        has_more=has_more,
     )
 
 

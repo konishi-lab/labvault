@@ -46,7 +46,8 @@ export function SortableRecordTable({
   conditionColumns,
   availableConditionKeys,
   onColumnsChange,
-  pageSize,
+  pageSize = 50,
+  currentUserEmail,
 }: {
   records: RecordSummary[];
   defaultSort?: string;
@@ -55,6 +56,8 @@ export function SortableRecordTable({
   availableConditionKeys?: string[];
   onColumnsChange?: (cols: string[]) => void;
   pageSize?: number;
+  // 自分の created_by と一致する row に薄いハイライト + 「自分」バッジ。
+  currentUserEmail?: string | null;
 }) {
   const [sortKey, setSortKey] = useState(defaultSort);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -169,18 +172,33 @@ export function SortableRecordTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {paged.map((rec) => (
+            {paged.map((rec) => {
+              const isMine =
+                !!currentUserEmail && rec.created_by === currentUserEmail;
+              return (
               <TableRow
                 key={rec.id}
-                className="cursor-pointer hover:bg-muted/50"
+                className={`cursor-pointer hover:bg-muted/50 ${
+                  isMine ? "bg-blue-50/40" : ""
+                }`}
               >
                 <TableCell className="font-mono font-semibold">
-                  <Link
-                    href={`/records/${rec.id}`}
-                    className="text-primary hover:underline"
-                  >
-                    {rec.id}
-                  </Link>
+                  <div className="flex items-center gap-1.5">
+                    <Link
+                      href={`/records/${rec.id}`}
+                      className="text-primary hover:underline"
+                    >
+                      {rec.id}
+                    </Link>
+                    {isMine && (
+                      <span
+                        className="text-[10px] text-blue-700 bg-blue-100 rounded px-1 py-0.5"
+                        title={`自分 (${currentUserEmail}) が作成`}
+                      >
+                        自分
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="max-w-[40ch]">
                   <Link
@@ -214,7 +232,8 @@ export function SortableRecordTable({
                   {formatDate(rec.created_at)}
                 </TableCell>
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
         </Table>
       </div>

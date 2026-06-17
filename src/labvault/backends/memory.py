@@ -44,6 +44,7 @@ class InMemoryMetadataBackend:
         status: str | None = None,
         record_type: str | None = None,
         created_by: str | None = None,
+        parent_id: str | None | object = "__unset__",
         conditions: dict[str, Any] | None = None,
         limit: int = 100,
         offset: int = 0,
@@ -61,6 +62,10 @@ class InMemoryMetadataBackend:
             records = [r for r in records if r.get("type") == record_type]
         if created_by:
             records = [r for r in records if r.get("created_by") == created_by]
+        # parent_id フィルタ (Firestore backend と signature を揃える)。
+        # "__unset__" sentinel は「フィルタ無し」、None は「root only」。
+        if parent_id != "__unset__":
+            records = [r for r in records if r.get("parent_id") == parent_id]
         # top-level field の等値フィルタ (idx_* を想定)。Firestore の where と
         # 振る舞いを揃えるため、key が record に無ければ無条件で除外する。
         if conditions:
