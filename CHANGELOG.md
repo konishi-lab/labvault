@@ -8,6 +8,19 @@
 
 ### Added
 
+- **UX Quick wins (3 つまとめ)** — agent teams UX レビュー (#16) から:
+  - **scatter 軸ラベルに `[unit]` 表示** — `/children/conditions` レスポンスに
+    子の `condition_units` / `result_units` を同梱、frontend で全子を集約して
+    1 つの units map に。`ConditionScatterChart` の expr が単一フィールド名で
+    units map に該当 key があるとき、ラベルが `rf_power_W [W]` 形式に。
+    v0.4.0 の auto-fill の価値が散布図にも届く (論文図用途で必須)。
+  - **inline 編集行に pencil icon を常時薄表示** (`text-muted-foreground/40`)。
+    hover で濃く (`group-hover:text-muted-foreground`)。これまで title tooltip
+    だけだった affordance を iPad / 装置 PC ユーザーにも届ける。
+  - **`/records` フィルタ変更を `router.push` 化** — ブラウザ「戻る」ボタンが
+    機能、condition chip 追加/削除/「自分のみ」toggle の前状態に戻れる。
+- backend test 2 件追加 (`test_children_conditions_units.py`)。
+
 - **Web UI: 検索 query と condition filter の併用解禁** + **「自分のみ」filter
   chip** + **件数ヘッダ** + **自分の record を先頭に優先表示** —
   agent teams UX レビュー (Day-one action) と「自分のものを優先的に出したい」

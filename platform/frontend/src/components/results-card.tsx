@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { Edit2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -136,7 +137,7 @@ export function ResultsCard({
                 </div>
               ) : (
                 <div
-                  className="flex justify-between items-start cursor-pointer hover:bg-muted/30 rounded px-1 -mx-1 py-0.5 transition-colors"
+                  className="group flex justify-between items-start cursor-pointer hover:bg-muted/30 rounded px-1 -mx-1 py-0.5 transition-colors"
                   onClick={() => startEdit(key)}
                   title="クリックして単位・説明を編集"
                 >
@@ -187,6 +188,12 @@ export function ResultsCard({
                         {analysisId}
                       </Link>
                     )}
+                    {/* 編集 affordance: 常時薄表示。hover でクリック可能と
+                        伝わるため iPad / 装置 PC でも発見可能 (#16 quick win)。 */}
+                    <Edit2
+                      className="h-3 w-3 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors"
+                      aria-hidden
+                    />
                   </div>
                 </div>
               )}

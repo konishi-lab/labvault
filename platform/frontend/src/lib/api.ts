@@ -174,10 +174,15 @@ export async function createRecord(data: {
 }
 
 export interface ChildConditions {
+  // scatter 軸ラベルで `[unit]` を出すために、子レコードの units を同梱。
+  // 通常は子が同じ template を共有するので、全子をマージして 1 つの
+  // units map を作る (空でない値が勝つ)。
   id: string;
   title: string;
   conditions: Record<string, unknown>;
   results: Record<string, unknown>;
+  condition_units?: Record<string, string>;
+  result_units?: Record<string, string>;
 }
 
 export async function fetchChildrenConditions(
