@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -44,17 +44,26 @@ function _serializeFilters(filters: ConditionFilter[]): string {
   return JSON.stringify(obj);
 }
 
-// 「/records?」のような **空のクエリ文字列を含む URL** は、Next.js 16 の
-// 一部 production prerender 経路で「同一 URL とみなされて再 navigate が
-// 走らない」罠を踏むことがある (dev server では再現しない)。空のとき
-// は `?` 自体を落とした文字列を返すヘルパ。
-function _recordsUrl(params: URLSearchParams): string {
+// Next.js 16 の docs 推奨パターン: filter UI のような「同じ page で
+// 検索パラメータだけ変える」操作は `router.push` ではなく
+// `window.history.pushState` を使う。`router.push` は production で
+// 「同じ pathname なら navigation を dedupe」する挙動を持ち、
+// useSearchParams の更新が走らないケースがある (`/records?mine=1` →
+// `/records` で button 状態が解除されない bug の真因と推定)。
+// `pushState` は Next.js Router と統合されているので、
+// useSearchParams / usePathname の購読側にも反映される。
+//
+// 空クエリのときは `?` を落とす (`/records?` のような trailing `?` 付き
+// URL も同様に navigation dedupe を踏みやすい)。
+function _updateRecordsUrl(params: URLSearchParams) {
   const qs = params.toString();
-  return qs ? `/records?${qs}` : "/records";
+  const url = qs ? `/records?${qs}` : "/records";
+  if (typeof window !== "undefined") {
+    window.history.pushState(null, "", url);
+  }
 }
 
 function RecordsContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const query = searchParams.get("q") || "";
   const rawConditions = searchParams.get("conditions");
@@ -100,12 +109,13 @@ function RecordsContent() {
       } else {
         params.delete("conditions");
       }
-      // router.push にすることで戻るボタンで前の filter 状態に戻れる
-// (#16 quick win)。chip の追加/削除/トグルは確定アクションなので
-// 1 操作 = 1 history entry の方が自然。
-router.push(_recordsUrl(params));
+      // window.history.pushState は Next.js Router と統合され、戻る
+      // ボタンでも前の filter 状態に戻れる (#16 quick win)。chip の
+      // 追加/削除/トグルは確定アクションなので 1 操作 = 1 history
+      // entry の方が自然。
+      _updateRecordsUrl(params);
     },
-    [router, searchParams],
+    [searchParams],
   );
 
   const handleMineToggle = useCallback(() => {
@@ -115,11 +125,8 @@ router.push(_recordsUrl(params));
     } else {
       params.set("mine", "1");
     }
-    // router.push にすることで戻るボタンで前の filter 状態に戻れる
-// (#16 quick win)。chip の追加/削除/トグルは確定アクションなので
-// 1 操作 = 1 history entry の方が自然。
-router.push(_recordsUrl(params));
-  }, [router, searchParams, mineOnly]);
+    _updateRecordsUrl(params);
+  }, [searchParams, mineOnly]);
 
   useEffect(() => {
     setLoading(true);
@@ -181,7 +188,7 @@ router.push(_recordsUrl(params));
   const handleClearTemplate = () => {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("template");
-    router.push(_recordsUrl(params));
+    _updateRecordsUrl(params);
   };
 
   return (
