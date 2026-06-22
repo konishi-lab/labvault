@@ -350,6 +350,15 @@ echo "$PAT" | labvault auth set-token --token-stdin --user instrument-xrd-1
 - [ ] テーブルに最新 50 件 (or 設定値) 表示
 - [ ] 並び順 (created_at / updated_at / title) ソート切替が効く
 - [ ] 検索バー: テキスト検索が `/api/search` (vector) を呼ぶ
+- [ ] **「自分のみ」フィルタ**:
+  - [ ] ボタンクリックで URL に `?mine=1` が付き、自分が作成した record
+        だけ表示される
+  - [ ] ON 状態 (`✓ 自分のみ`) でもう一度クリックで `?mine=1` が消え、
+        全 record が表示される
+  - [ ] **(回帰)** `/records?mine=1` を **URL 直入力で cold load** した
+        状態で「✓ 自分のみ」をクリック → URL から `?mine=1` が消えて
+        ボタンが解除される (PR #76 — `router.push` の navigation dedupe
+        を回避するため `window.history.pushState` 経由で URL 更新)
 - [ ] **条件 chip**:
   - [ ] 「条件名」入力欄を focus → datalist で template の `indexed_fields`
         候補 (target / sample_name / method / mode / measurement_mode /
@@ -360,6 +369,13 @@ echo "$PAT" | labvault auth set-token --token-stdin --user instrument-xrd-1
   - [ ] ブラウザ「戻る」で chip 操作の履歴が辿れる (URL 同期されているため)
   - [ ] indexed_fields にない key (例: `power`) を入力しても add できる
         (post-filter 経由)
+- [ ] **数値サマリ panel** (PR #73):
+  - [ ] キー入力 (`power` 等) → n / mean / std / min / max / median が
+        表示される
+  - [ ] 条件 chip / 「自分のみ」/ template フィルタを変えると panel が
+        再計算される
+  - [ ] フィルタ集合が 500 件を超えた場合 `⚠ 500 件サンプル` バッジが
+        amber で出て、数値が灰色 (標本値) として表示される
 
 ### 5.4 `/records/{id}` 詳細
 
@@ -640,6 +656,22 @@ npx next dev --port 3765
 | §1.1 `labvault init` に PAT / platform URL オプション無し | 🔵 backlog |
 | §1.3 各 CLI サブコマンドの `--help` が薄い | ❌ |
 | §1.2 `-t` / `-T` の慣習違い | 🔵 (破壊的変更注意) |
+
+### 12.3 round-3 (2026-06-22 — Next.js 16 移行 + UX Top5 + 戦略案 #6 Phase A)
+
+| 所見 | 状態 |
+|---|---|
+| §5.3 `/records?mine=1` cold load → 「自分のみ」クリックしても解除されない (Major) | ✅ PR #76 (`router.push` の navigation dedupe を回避するため `window.history.pushState` 経由で URL 更新。dev では再現せず production のみで起きていた。Next.js 16 docs 推奨パターン) |
+| §5.3 filter URL の末尾に空 `?` が残る (`/records?`) | ✅ PR #75 (空クエリ時は `?` 自体を抑止する helper を追加) |
+| 緊急 trio: Firestore `created_by` index 欠落 / aggregate bool 漏れ / 404 Cache-Control 漏れ (Critical) | ✅ PR #74 (詳細は backlog 🚨 緊急枠 参照) |
+| firebase-tools 14.10.x が multi-database で `--only firestore:indexes` をクラッシュさせるバグ | ✅ CLAUDE.md ハマりどころに記録、回避は `--only firestore:<dbname>` |
+
+**Next.js 16 / production-only 再現バグ への教訓**: `router.push` で同じ
+pathname に navigation する filter UI は production の RSC dedupe で
+`useSearchParams` の更新が走らないケースがある。**filter URL の更新は
+`window.history.pushState` を使うのが Next.js 16 推奨パターン** (公式
+docs `04-linking-and-navigating.md` 参照)。dev server (turbopack HMR) は
+別経路で動作するため再現しない。
 
 ### 12.2 round-2 (2026-06-02 午後、frontend dev_skip 投入後)
 
