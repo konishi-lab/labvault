@@ -56,11 +56,7 @@ dev = [
     "pytest>=8.1",
     "pytest-cov>=6.1",
     "ruff>=0.11",
-    # mypy 1.20+ / 2.x は numpy 2.4 stub の PEP 695 `type` 文を
-    # python_version="3.11" 設定で reject するため lint が落ちる。
-    # 当面 1.19 系に固定 (numpy / mypy 側の解決を待つ)。本プロジェクトの
-    # コードは future annotations 前提なので mypy 1.19 で十分カバーできる。
-    "mypy>=1.9,<1.20",
+    "mypy>=1.9",
     "types-Pillow>=10.0",
     "ipython>=8.0",
 ]
@@ -90,7 +86,11 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
-python_version = "3.11"
+# numpy 2.5+ の stub が PEP 695 `type` 文 (Python 3.12+) を使うため、
+# python_version="3.11" だと numpy import 時点で mypy が syntax error
+# を吐く。runtime の 3.11 互換は CI matrix (test 3.11/3.12/3.13) で
+# 担保しているので、ここは parsing 通過のため 3.12 に揃える。
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
