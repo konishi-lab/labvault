@@ -169,6 +169,64 @@ export async function fetchHealth(): Promise<HealthResponse> {
   return res.json();
 }
 
+// `/api/records/aggregate` のレスポンス型 (backend の AggregateResponse と一致)。
+// 値が空でも stats.count=0 で返るので null 判定不要。
+export interface StatsBlock {
+  count: number;
+  mean: number;
+  std: number;
+  min: number;
+  max: number;
+  median: number;
+}
+
+export interface AggregateResponse {
+  key: string;
+  record_count: number;
+  value_count: number;
+  stats: StatsBlock;
+  group_by?: string | null;
+  groups: Record<string, StatsBlock>;
+  truncated: boolean;
+}
+
+// 現フィルタ集合に対する key の数値統計。/records StatsPanel で
+// 「表示中 200 件でなく、フィルタにマッチする全集合の n / min / max /
+// mean / median」を出すのに使う。limit はサーバ走査上限 (default 500)。
+export async function fetchAggregate(
+  key: string,
+  params?: {
+    tags?: string;
+    status?: string;
+    type?: string;
+    conditions?: Record<string, unknown>;
+    createdBy?: string;
+    template?: string;
+    parentId?: string;
+    groupBy?: string;
+    limit?: number;
+  },
+): Promise<AggregateResponse> {
+  const searchParams = new URLSearchParams();
+  searchParams.set("key", key);
+  if (params?.tags) searchParams.set("tags", params.tags);
+  if (params?.status) searchParams.set("status", params.status);
+  if (params?.type) searchParams.set("type", params.type);
+  if (params?.conditions && Object.keys(params.conditions).length > 0) {
+    searchParams.set("conditions", JSON.stringify(params.conditions));
+  }
+  if (params?.createdBy) searchParams.set("created_by", params.createdBy);
+  if (params?.template) searchParams.set("template", params.template);
+  if (params?.parentId) searchParams.set("parent_id", params.parentId);
+  if (params?.groupBy) searchParams.set("group_by", params.groupBy);
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  const res = await authFetch(
+    `${API_BASE}/api/records/aggregate?${searchParams}`,
+  );
+  if (!res.ok) throw new Error(`Failed to aggregate: ${res.status}`);
+  return res.json();
+}
+
 export async function createRecord(data: {
   title: string;
   type?: string;

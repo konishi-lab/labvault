@@ -11,6 +11,7 @@ from labvault.core.exceptions import RecordNotFoundError
 
 from ..auth import User, current_user, get_lab
 from ..schemas import (
+    AggregateResponse,
     ConditionsUpdate,
     ConditionUnitsUpdate,
     NoteCreate,
@@ -20,6 +21,7 @@ from ..schemas import (
     RecordSummary,
     ResultUnitsUpdate,
     ResultUpdate,
+    StatsBlock,
     StatusUpdate,
     TagsUpdate,
 )
@@ -242,6 +244,170 @@ def create_record(
         **body.conditions,
     )
     return _to_detail(rec)
+
+
+def _compute_stats(vals: list[float]) -> StatsBlock:
+    """数値リスト → StatsBlock。空集合は count=0 で返す (他フィールドは 0.0)。"""
+    import statistics
+
+    if not vals:
+        return StatsBlock(count=0)
+    return StatsBlock(
+        count=len(vals),
+        mean=round(statistics.mean(vals), 4),
+        std=round(statistics.stdev(vals), 4) if len(vals) > 1 else 0.0,
+        min=min(vals),
+        max=max(vals),
+        median=round(statistics.median(vals), 4),
+    )
+
+
+# `/{record_id}` より前に declare すること (FastAPI ルーティング順)。
+@router.get("/aggregate", response_model=AggregateResponse)
+def aggregate_records(
+    key: str,
+    tags: str | None = None,
+    status: str | None = None,
+    type: str | None = None,
+    conditions: str | None = None,
+    created_by: str | None = None,
+    template: str | None = None,
+    parent_id: str | None = None,
+    group_by: str | None = None,
+    limit: int = 500,
+    lab: Lab = Depends(get_lab),
+) -> AggregateResponse:
+    """現フィルタ集合に対する数値キーの統計集計。
+
+    `/api/records` と同じフィルタ ( tags / status / type / conditions /
+    created_by / template / parent_id) を受け、`key` (conditions または
+    results のどちらに入っていても可) を numeric として取り出して n /
+    min / max / mean / median / std を返す。
+
+    Web UI の `/records` StatsPanel から呼ばれて「現在表示中の N 件で
+    なく、フィルタにマッチする全集合の統計」を出すのに使う。limit を
+    超えた場合 truncated=True (default 500 = scatter 用の安全上限)。
+
+    aggregate は post-filter で必ず numeric チェックする (`isinstance`)
+    ので、 conditions に「power に "20W" を文字列で入れた record」が
+    混ざっていても value_count から除外される。
+    """
+    import json
+
+    tag_list = tags.split(",") if tags else None
+
+    parsed_conditions: dict[str, Any] = {}
+    if conditions:
+        try:
+            loaded = json.loads(conditions)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"conditions must be valid JSON: {e}",
+            ) from e
+        if not isinstance(loaded, dict):
+            raise HTTPException(
+                status_code=400, detail="conditions must be a JSON object"
+            )
+        parsed_conditions = loaded
+
+    if limit < 1 or limit > 5000:
+        raise HTTPException(
+            status_code=400, detail="limit must be between 1 and 5000"
+        )
+
+    # push-down 対象 (idx_<key>) の振り分け。list_records と同じ流儀。
+    push_down: dict[str, Any] = {}
+    if parsed_conditions:
+        indexed_keys = lab._get_indexed_keys()
+        for k, value in parsed_conditions.items():
+            if (
+                k in indexed_keys
+                and not isinstance(value, dict)
+                and isinstance(value, (str, int, float, bool))
+            ):
+                push_down[f"idx_{k}"] = value
+
+    # parent_id が指定された場合はそれを使う。さもなくば parent_id=None
+    # (ルートレコード集合) を default — `/records` の挙動と揃える。
+    effective_parent = parent_id if parent_id is not None else None
+    fetch_limit = min(limit + 1, 5001)  # +1 で truncated 判定
+
+    if hasattr(lab._metadata, "list_records"):
+        records = lab._metadata.list_records(
+            lab._team,
+            tags=tag_list,
+            status=status,
+            record_type=type,
+            created_by=created_by,
+            parent_id=effective_parent,
+            conditions=push_down or None,
+            limit=fetch_limit,
+        )
+        from labvault.core.record import Record as _Record
+
+        items = [_Record._from_dict(r, lab=lab) for r in records]
+    else:
+        items = lab.list(
+            tags=tag_list,
+            status=status,
+            type=type,
+            created_by=created_by,
+            limit=fetch_limit,
+        )
+        if parent_id is None:
+            items = [r for r in items if r.parent_id is None]
+        else:
+            items = [r for r in items if r.parent_id == parent_id]
+
+    # post-filter で push-down に乗らない条件 + template フィルタを適用。
+    if parsed_conditions:
+        from labvault.core.lab import _match_condition
+
+        items = [
+            r
+            for r in items
+            if all(
+                _match_condition(r.get_conditions().get(k), v)
+                for k, v in parsed_conditions.items()
+            )
+        ]
+    if template:
+        items = [r for r in items if getattr(r, "template_name", None) == template]
+
+    truncated = len(items) > limit
+    if truncated:
+        items = items[:limit]
+
+    values: list[float] = []
+    groups: dict[str, list[float]] = {}
+    for rec in items:
+        cond = rec.get_conditions()
+        res = rec.results.to_dict()
+        # results を優先 (同名 key で衝突した場合 — まれ)。
+        merged = {**cond, **res}
+        if key not in merged:
+            continue
+        v = merged[key]
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            continue
+        values.append(float(v))
+        if group_by:
+            gv = merged.get(group_by, None)
+            label = "unknown" if gv is None else str(gv)
+            groups.setdefault(label, []).append(float(v))
+
+    return AggregateResponse(
+        key=key,
+        record_count=len(items),
+        value_count=len(values),
+        stats=_compute_stats(values),
+        group_by=group_by,
+        groups={k: _compute_stats(v) for k, v in sorted(groups.items())}
+        if group_by
+        else {},
+        truncated=truncated,
+    )
 
 
 @router.get("/{record_id}", response_model=RecordDetail)
