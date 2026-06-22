@@ -56,7 +56,11 @@ dev = [
     "pytest>=8.1",
     "pytest-cov>=6.1",
     "ruff>=0.11",
-    "mypy>=1.9",
+    # mypy 2.x は numpy 2.4 stub の PEP 695 `type` 文を python_version="3.11"
+    # 設定で reject するため lint が落ちる。当面 1.x に固定 (numpy 側の
+    # 解決を待つ)。本プロジェクトのコードは future annotations 前提なので
+    # mypy 1.19 で十分。
+    "mypy>=1.9,<2",
     "types-Pillow>=10.0",
     "ipython>=8.0",
 ]
