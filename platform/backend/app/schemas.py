@@ -83,6 +83,44 @@ class RecordListResponse(BaseModel):
     has_more: bool = False
 
 
+class StatsBlock(BaseModel):
+    """数値集合の要約統計 (`/api/records/aggregate` のサブ構造)。
+
+    値が空のときは null を返さず {"count": 0} を返したい — pydantic は
+    field 不在を null と区別しないので、呼び出し側で常に count を見て
+    判定する。
+    """
+
+    count: int
+    mean: float = 0.0
+    std: float = 0.0
+    min: float = 0.0
+    max: float = 0.0
+    median: float = 0.0
+
+
+class AggregateResponse(BaseModel):
+    """`/api/records/aggregate` のレスポンス。
+
+    指定した `key` (conditions または results) を numeric として
+    抜き出し、`record_count` 件のうち value が見つかった `value_count`
+    件で `stats` を計算する。`group_by` 指定時は `groups[label]` に
+    label 別の stats を返す (labels は文字列化)。
+
+    Web UI の `/records` StatsPanel で「現在のフィルタ集合の n /
+    min / max / mean / median」を出すのに使う。limit は record の
+    走査上限 (=500 default) で、超過した場合 `truncated=true`。
+    """
+
+    key: str
+    record_count: int
+    value_count: int
+    stats: StatsBlock
+    group_by: str | None = None
+    groups: dict[str, StatsBlock] = {}
+    truncated: bool = False
+
+
 class HealthResponse(BaseModel):
     status: str
     team: str

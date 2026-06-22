@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import type { RecordSummary } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { StatsPanel } from "@/components/stats-panel";
 
 const PAGE_LIMIT = 200;
 
@@ -231,6 +232,22 @@ router.push(`/records?${params.toString()}`);
           )}
         </div>
       )}
+
+      {/* 数値サマリ panel (戦略案 #6 Phase A)。「現フィルタにマッチする
+          全集合 (上限 500) の n / mean / std / min / max / median」を
+          backend で計算して出す。frontend 集計だと「表示中 200 件で
+          打ち切った窓の統計」になってしまうのを構造的に防ぐ。 */}
+      <StatsPanel
+        filters={{
+          query,
+          conditions:
+            Object.keys(conditionsObj).length > 0 ? conditionsObj : undefined,
+          createdBy:
+            mineOnly && currentUserEmail ? currentUserEmail : undefined,
+          template: templateFilter || undefined,
+        }}
+        keySuggestions={keySuggestions}
+      />
 
       {loading ? (
         <div className="space-y-3">
