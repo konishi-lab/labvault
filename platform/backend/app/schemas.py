@@ -62,6 +62,11 @@ class RecordDetail(RecordSummary):
     # template が紐付いていない record では空 dict。
     template_result_units: dict[str, str] = {}
     template_result_descriptions: dict[str, str] = {}
+    # template が要求する必須 condition / result の key リスト。Web UI の
+    # sticky summary chip 行で「結果 3/9 必須」のような充足率表示に使う。
+    # template 未紐付けは空 list。
+    template_required_conditions: list[str] = []
+    template_required_results: list[str] = []
     notes: list[NoteResponse] = []
     files: list[FileInfo] = []
     links: list[LinkResponse] = []

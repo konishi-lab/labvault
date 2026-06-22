@@ -86,7 +86,11 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
-python_version = "3.11"
+# numpy 2.5+ の stub が PEP 695 `type` 文 (Python 3.12+) を使うため、
+# python_version="3.11" だと numpy import 時点で mypy が syntax error
+# を吐く。runtime の 3.11 互換は CI matrix (test 3.11/3.12/3.13) で
+# 担保しているので、ここは parsing 通過のため 3.12 に揃える。
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

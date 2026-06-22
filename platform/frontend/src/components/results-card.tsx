@@ -23,6 +23,7 @@ export function ResultsCard({
   templateDescriptions,
   allResults,
   onUpdate,
+  anchorId,
 }: {
   recordId: string;
   results: [string, unknown][];
@@ -37,6 +38,8 @@ export function ResultsCard({
     units: Record<string, string>,
     descriptions: Record<string, string>,
   ) => void;
+  // sticky summary chip からの smooth scroll 用 anchor。
+  anchorId?: string;
 }) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editUnit, setEditUnit] = useState("");
@@ -77,7 +80,7 @@ export function ResultsCard({
   };
 
   return (
-    <Card>
+    <Card id={anchorId} className="scroll-mt-20">
       <CardHeader>
         <CardTitle className="text-base">結果</CardTitle>
       </CardHeader>
