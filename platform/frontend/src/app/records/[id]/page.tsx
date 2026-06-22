@@ -26,6 +26,7 @@ import { ResultsCard } from "@/components/results-card";
 import { ConditionFilterPanel } from "@/components/condition-filter";
 import type { ConditionFilter } from "@/components/condition-filter";
 import { ConditionScatterChart } from "@/components/scatter-chart";
+import { SummaryChips } from "@/components/summary-chips";
 import type { NoteResponse } from "@/lib/api";
 
 const statusColor: Record<string, string> = {
@@ -221,14 +222,21 @@ function ImageModal({
 function FileSection({
   recordId,
   files,
+  anchorId,
 }: {
   recordId: string;
   files: FileInfo[];
+  // sticky summary chip からの smooth scroll 用 anchor。
+  // 2 つの Card のうち最初に存在する方 (画像 → 無ければデータ) に付ける。
+  anchorId?: string;
 }) {
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
   const imageFiles = files.filter((f) => previewType(f.name) !== null);
   const dataFiles = files.filter((f) => previewType(f.name) === null);
+  // 画像と data の 2 つの Card のうち、最初に rendering される方に anchor を付ける。
+  const anchorOnImage = anchorId && imageFiles.length > 0;
+  const anchorOnData = anchorId && !anchorOnImage && dataFiles.length > 0;
 
   return (
     <>
@@ -241,7 +249,10 @@ function FileSection({
       )}
 
       {imageFiles.length > 0 && (
-        <Card className="md:col-span-2">
+        <Card
+          id={anchorOnImage ? anchorId : undefined}
+          className="md:col-span-2 scroll-mt-20"
+        >
           <CardHeader>
             <CardTitle className="text-base">
               画像 ({imageFiles.length})
@@ -264,7 +275,10 @@ function FileSection({
       )}
 
       {dataFiles.length > 0 && (
-        <Card className="md:col-span-2">
+        <Card
+          id={anchorOnData ? anchorId : undefined}
+          className="md:col-span-2 scroll-mt-20"
+        >
           <CardHeader>
             <CardTitle className="text-base">
               データファイル ({dataFiles.length})
@@ -413,6 +427,18 @@ export default function RecordDetailPage() {
         )}
       </div>
 
+      <SummaryChips
+        conditionsCount={conditions.length}
+        resultsCount={results.length}
+        filesCount={record.files.length}
+        notesCount={record.notes.length}
+        childrenCount={children.length}
+        conditionKeys={Object.keys(record.conditions)}
+        resultKeys={Object.keys(record.results)}
+        requiredConditions={record.template_required_conditions ?? []}
+        requiredResults={record.template_required_results ?? []}
+      />
+
       <div className="grid gap-6 md:grid-cols-2">
         {/* 基本情報 */}
         <Card>
@@ -462,6 +488,7 @@ export default function RecordDetailPage() {
         {conditions.length > 0 && (
           <ConditionsCard
             recordId={id}
+            anchorId="section-conditions"
             conditions={conditions}
             units={record.condition_units || {}}
             descriptions={record.condition_descriptions || {}}
@@ -483,6 +510,7 @@ export default function RecordDetailPage() {
         {results.length > 0 && (
           <ResultsCard
             recordId={id}
+            anchorId="section-results"
             results={results}
             units={record.result_units || {}}
             descriptions={record.result_descriptions || {}}
@@ -501,7 +529,11 @@ export default function RecordDetailPage() {
 
         {/* ファイル */}
         {record.files.length > 0 && (
-          <FileSection recordId={id} files={record.files} />
+          <FileSection
+            recordId={id}
+            files={record.files}
+            anchorId="section-files"
+          />
         )}
 
         {/* 条件 / 結果 / ファイル / 子レコードが全て空のときの案内。
@@ -524,7 +556,7 @@ export default function RecordDetailPage() {
           )}
 
         {/* メモ */}
-        <Card className="md:col-span-2">
+        <Card id="section-notes" className="md:col-span-2 scroll-mt-20">
           <CardHeader>
             <CardTitle className="text-base">
               メモ ({record.notes.length})
@@ -706,7 +738,10 @@ function ChildrenSection({
         </div>
       )}
 
-      <Card className="md:col-span-2">
+      <Card
+        id="section-children"
+        className="md:col-span-2 scroll-mt-20"
+      >
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">

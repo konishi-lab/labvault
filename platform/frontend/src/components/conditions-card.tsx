@@ -21,6 +21,7 @@ export function ConditionsCard({
   recordTitle,
   templateName,
   onUpdate,
+  anchorId,
 }: {
   recordId: string;
   conditions: [string, unknown][];
@@ -35,6 +36,8 @@ export function ConditionsCard({
     units: Record<string, string>,
     descriptions: Record<string, string>
   ) => void;
+  // sticky summary chip からの smooth scroll 用 anchor。
+  anchorId?: string;
 }) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editUnit, setEditUnit] = useState("");
@@ -133,7 +136,7 @@ export function ConditionsCard({
   };
 
   return (
-    <Card>
+    <Card id={anchorId} className="scroll-mt-20">
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-base">条件</CardTitle>

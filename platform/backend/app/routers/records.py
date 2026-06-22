@@ -48,6 +48,8 @@ def _to_detail(rec: Any) -> RecordDetail:
     # Web UI が「これは template 由来」「これは手動入力」を視覚的に区別するのに使う。
     template_result_units: dict[str, str] = {}
     template_result_descriptions: dict[str, str] = {}
+    template_required_conditions: list[str] = []
+    template_required_results: list[str] = []
     tpl = rec._resolve_template() if hasattr(rec, "_resolve_template") else None
     if tpl is not None:
         for rf in getattr(tpl, "result_fields", []) or []:
@@ -55,6 +57,12 @@ def _to_detail(rec: Any) -> RecordDetail:
                 template_result_units[rf.name] = rf.unit
             if rf.description:
                 template_result_descriptions[rf.name] = rf.description
+            if rf.required:
+                template_required_results.append(rf.name)
+        # required_conditions は TemplateV10 直下の list[str] (v10 で確立済)
+        template_required_conditions = list(
+            getattr(tpl, "required_conditions", []) or []
+        )
 
     return RecordDetail(
         id=rec.id,
@@ -76,6 +84,8 @@ def _to_detail(rec: Any) -> RecordDetail:
         result_descriptions=rec.get_result_descriptions(),
         template_result_units=template_result_units,
         template_result_descriptions=template_result_descriptions,
+        template_required_conditions=template_required_conditions,
+        template_required_results=template_required_results,
         notes=[
             {"text": n.text, "created_at": n.created_at, "author": n.author}
             for n in rec.notes

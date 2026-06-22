@@ -74,6 +74,10 @@ export interface RecordDetail extends RecordSummary {
   // それ以外は手動入力。template が無い record では {}。
   template_result_units: Record<string, string>;
   template_result_descriptions: Record<string, string>;
+  // template が要求する必須 key リスト (sticky summary chip 行で
+  // 充足率 `結果 3/9 必須` を出すのに使う)。template 未紐付けは空。
+  template_required_conditions?: string[];
+  template_required_results?: string[];
   notes: NoteResponse[];
   files: FileInfo[];
   links: LinkResponse[];
