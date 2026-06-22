@@ -204,8 +204,10 @@ CLI はプレーンテキスト出力のため、LLM が Bash 経由で使う場
 
 ## ハマりどころ
 
-- **エラーレスポンスのキャッシュ**: 4xx/5xx でも RFC 7234 によりブラウザがキャッシュする (`410` はデフォルトでキャッシュ可能、`404` も同様)。**全エラーレスポンスは `Cache-Control: no-store` を付ける** (PR #53 の教訓)。「修正したのに直らない」時は DevTools Network タブで `(from disk cache)` が出ていないか確認。frontend 側も `downloadAuthed` で `_t=${Date.now()}` cachebust 済み。
+- **エラーレスポンスのキャッシュ**: 4xx/5xx でも RFC 7234 によりブラウザがキャッシュする (`410` はデフォルトでキャッシュ可能、`404` も同様)。**全エラーレスポンスは `Cache-Control: no-store` を付ける** (PR #53 / PR #74 の教訓)。PR #74 で `@app.exception_handler(HTTPException)` を入れて HTTPException 全部に no-store を強制付与する形になったので、サイト個別の `headers={...}` は不要 (ただし手動設定があれば尊重する)。「修正したのに直らない」時は DevTools Network タブで `(from disk cache)` が出ていないか確認。frontend 側も `downloadAuthed` で `_t=${Date.now()}` cachebust 済み。
 - **CORS error の真因が 500 のことがある**: backend ハンドラ内の未捕捉例外は `CORSMiddleware` が走る前に返るため、ブラウザには「CORS error」と表示される。CORS 設定を疑う前に backend ログで 500 を確認 (PR #49 で global exception handler 化済)。
+- **Firestore index deploy は `--only firestore:<database名>` で**: 本プロジェクトの Firestore database 名は `(default)` ではなく `labvault`。firebase-tools 14.10.x は `firebase deploy --only firestore:indexes` を multi-database 環境で **silently no-op + クラッシュ** させるバグを持つ (`TypeError: Cannot read properties of undefined (reading 'map')`)。正しい invocation: `firebase deploy --only firestore:labvault --project klab-laser-process`。
+- **Firestore composite index は CI では検証不能**: エミュレータは index 不要なので、本番で `FailedPrecondition: requires an index` が起きるクエリは CI を素通りする (PR #74 で `created_by` フィルタが本番で 500 を返していた件)。新しい複合クエリを足したら `firestore.indexes.json` と `tests/unit/test_firestore_indexes.py` の両方を更新する。
 
 ## インストール済みスキル
 

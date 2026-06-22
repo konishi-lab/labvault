@@ -3,17 +3,7 @@
 「次に着手する候補」を優先度別に並べたキュー。完了したら `multitenant_next_steps.md` /
 `design/v10/05_milestones.md` の該当エントリにも反映する。
 
-最終更新: 2026-06-22 (PR #74 反映 — 緊急 A1-A3 解消)
-
----
-
-## 🚨 緊急 — 残務 (本番側)
-
-A1-A3 のコード修正は PR #74 で完了。残るは本番反映のみ:
-
-- ⏳ **`firebase deploy --only firestore:indexes --project klab-laser-process`**
-  を hirosuke が実行 → index 構築完了まで本番「自分のみ」フィルタは
-  500 を返し続けるので、deploy + 反映確認まで未消化扱い
+最終更新: 2026-06-22 (PR #74 反映 + Firestore index deploy 完了)
 
 ---
 
