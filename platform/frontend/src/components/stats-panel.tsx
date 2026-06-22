@@ -64,6 +64,7 @@ interface StatsPanelProps {
     conditions?: Record<string, unknown>;
     createdBy?: string;
     template?: string;
+    parentId?: string;
   };
   keySuggestions?: string[];
 }
@@ -94,6 +95,12 @@ function StatsRow({
 
   const { key, record_count, value_count, stats, truncated } = agg;
   const hasValues = stats.count > 0;
+  // truncated = backend が 500 件で打ち切った状態。「数字だけ読まれる」
+  // 罠を避けるため、stats 自体を灰色化して「サンプル」の見た目に落とす
+  // (記号は出すが、確定値として使えないことを視覚的に表す)。
+  const numbersClass = truncated
+    ? "text-muted-foreground/70"
+    : "";
 
   return (
     <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 border-b border-border/40 last:border-b-0">
@@ -103,14 +110,16 @@ function StatsRow({
           <Badge
             variant="outline"
             className="text-[10px] border-amber-300 text-amber-800 bg-amber-50"
-            title="フィルタにヒットする record が limit を超えたため、最初の 500 件のみで集計しました"
+            title="フィルタにヒットする record が 500 件を超えたため、最初の 500 件 (= 作成日新しい順) のみで集計しました。確定値ではなく標本値として扱ってください。"
           >
-            500+ で打ち切り
+            ⚠ 500 件サンプル
           </Badge>
         )}
       </div>
       {hasValues ? (
-        <div className="grid grid-cols-6 gap-3 text-xs tabular-nums">
+        <div
+          className={`grid grid-cols-6 gap-3 text-xs tabular-nums ${numbersClass}`}
+        >
           <span>
             <span className="text-muted-foreground">n </span>
             {stats.count}
@@ -162,6 +171,11 @@ function StatsRow({
 }
 
 export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
+  // parent_id 未指定 = backend が parent_id=None で root のみ走査する。
+  // 「power の全実験統計」を期待するユーザーへ仕様を明示するため header
+  // に注釈を出す。明示的に parent_id を渡してきた呼び出し側 (将来の親
+  // record 詳細ページ等) では出さない。
+  const isRootOnly = !filters.parentId;
   const [keys, setKeys] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [results, setResults] = useState<
@@ -236,7 +250,7 @@ export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
   return (
     <Card className="border-slate-200">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium flex items-center gap-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
           数値サマリ
           <span
             className="text-xs font-normal text-muted-foreground"
@@ -244,6 +258,14 @@ export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
           >
             (フィルタ全集合, 上限 500)
           </span>
+          {isRootOnly && (
+            <span
+              className="text-xs font-normal text-muted-foreground"
+              title="/records 一覧はルートレコードのみ表示しているため、子レコードの値は集計に含まれません。子も含めて見るには 親 record 詳細ページ (将来の Phase) または CLI `labvault aggregate` を使う必要があります。"
+            >
+              · ルートレコードのみ
+            </span>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
