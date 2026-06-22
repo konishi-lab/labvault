@@ -49,9 +49,7 @@ def test_created_by_mine_only_index_exists() -> None:
         ("updated_at", "DESCENDING"),
     )
     data = json.loads(INDEXES_PATH.read_text())
-    found = [
-        idx for idx in data["indexes"] if _fields_of(idx) == expected
-    ]
+    found = [idx for idx in data["indexes"] if _fields_of(idx) == expected]
     assert len(found) == 1, f"Missing composite index: {expected}"
 
 
@@ -68,7 +66,5 @@ def test_created_by_root_filter_index_exists() -> None:
         ("updated_at", "DESCENDING"),
     )
     data = json.loads(INDEXES_PATH.read_text())
-    found = [
-        idx for idx in data["indexes"] if _fields_of(idx) == expected
-    ]
+    found = [idx for idx in data["indexes"] if _fields_of(idx) == expected]
     assert len(found) == 1, f"Missing composite index: {expected}"

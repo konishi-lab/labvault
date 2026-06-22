@@ -45,9 +45,10 @@ def lab(monkeypatch: pytest.MonkeyPatch) -> Lab:
 def test_bool_excluded_from_numeric_aggregate(lab: Lab) -> None:
     """conditions に True/False が混ざっても mean に流れ込まないこと。
 
-    backend / MCP / CLI が共通で `isinstance(v, (int, float)) and not isinstance(v, bool)`
+    backend / MCP / CLI が共通で
+    `isinstance(v, (int, float)) and not isinstance(v, bool)`
     を使うようになったので、ここで純 python ロジックの「あるべき挙動」
-    を testだけ起こす。
+    を test だけ起こす。
     """
     # 数値の record 3 件 + bool record 2 件
     for v in [10.0, 20.0, 30.0]:

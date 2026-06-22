@@ -396,7 +396,9 @@ def create_server(
         conditions_summary: dict[str, Any] = {}
         for k, vals in condition_keys.items():
             numeric_vals = [
-                v for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)
+                v
+                for v in vals
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
             ]
             if numeric_vals and len(numeric_vals) == len(vals):
                 conditions_summary[k] = {

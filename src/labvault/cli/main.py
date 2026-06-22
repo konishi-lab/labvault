@@ -712,7 +712,9 @@ def overview(parent_id: str) -> None:
         click.echo("\nConditions:")
         for k, vals in sorted(condition_keys.items()):
             nums = [
-                v for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)
+                v
+                for v in vals
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
             ]
             if nums and len(nums) == len(vals):
                 click.echo(
