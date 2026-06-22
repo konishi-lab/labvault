@@ -644,7 +644,10 @@ def aggregate(
         if key not in merged:
             continue
         val = merged[key]
-        if not isinstance(val, (int, float)):
+        # bool は int の subclass なので isinstance(v, (int, float)) を
+        # すり抜けて True/False が 1.0/0.0 として mean に混入する。
+        # MCP / backend /api/records/aggregate と整合性を取るため明示的に除外。
+        if not isinstance(val, (int, float)) or isinstance(val, bool):
             continue
         values.append(float(val))
         if group_by:
@@ -697,7 +700,8 @@ def overview(parent_id: str) -> None:
         for k, v in rec.get_conditions().items():
             condition_keys.setdefault(k, []).append(v)
         for k, v in rec.results.to_dict().items():
-            if isinstance(v, (int, float)):
+            # bool は int の subclass。aggregate と同じ流儀で除外。
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
                 result_keys.setdefault(k, []).append(float(v))
 
     click.echo(f"Parent: {parent_id}  Children: {len(children)}")
@@ -707,7 +711,9 @@ def overview(parent_id: str) -> None:
     if condition_keys:
         click.echo("\nConditions:")
         for k, vals in sorted(condition_keys.items()):
-            nums = [v for v in vals if isinstance(v, (int, float))]
+            nums = [
+                v for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)
+            ]
             if nums and len(nums) == len(vals):
                 click.echo(
                     f"  {k}: min={min(nums)}  max={max(nums)}  "

@@ -100,6 +100,30 @@ app.add_middleware(
 logger = logging.getLogger(__name__)
 
 
+@app.exception_handler(HTTPException)
+async def _http_exception_no_store_handler(
+    request: Request, exc: HTTPException
+) -> JSONResponse:
+    """全 HTTPException に `Cache-Control: no-store` を強制付与する。
+
+    PR #53 の教訓: RFC 7234 によりブラウザは 404 / 410 をデフォルトで
+    キャッシュ可能。修正後も disk cache から古いレスポンスが返って
+    「直したのに直らない」を引き起こす。サイトごとに
+    `headers={"Cache-Control": "no-store"}` を書くと漏れが必ず発生する
+    ので、handler 1 箇所で全 HTTPException に no-store を付ける。
+
+    既に headers に Cache-Control が設定されていた場合は尊重する
+    (将来 cacheable な 304 を返したい場合の逃げ道)。
+    """
+    headers: dict[str, str] = dict(exc.headers or {})
+    headers.setdefault("Cache-Control", "no-store")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=headers,
+    )
+
+
 @app.exception_handler(Exception)
 async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """ハンドラ内の未捕捉例外を CORS ヘッダ付きの 500 に変換する。
