@@ -44,6 +44,15 @@ function _serializeFilters(filters: ConditionFilter[]): string {
   return JSON.stringify(obj);
 }
 
+// 「/records?」のような **空のクエリ文字列を含む URL** は、Next.js 16 の
+// 一部 production prerender 経路で「同一 URL とみなされて再 navigate が
+// 走らない」罠を踏むことがある (dev server では再現しない)。空のとき
+// は `?` 自体を落とした文字列を返すヘルパ。
+function _recordsUrl(params: URLSearchParams): string {
+  const qs = params.toString();
+  return qs ? `/records?${qs}` : "/records";
+}
+
 function RecordsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -94,7 +103,7 @@ function RecordsContent() {
       // router.push にすることで戻るボタンで前の filter 状態に戻れる
 // (#16 quick win)。chip の追加/削除/トグルは確定アクションなので
 // 1 操作 = 1 history entry の方が自然。
-router.push(`/records?${params.toString()}`);
+router.push(_recordsUrl(params));
     },
     [router, searchParams],
   );
@@ -109,7 +118,7 @@ router.push(`/records?${params.toString()}`);
     // router.push にすることで戻るボタンで前の filter 状態に戻れる
 // (#16 quick win)。chip の追加/削除/トグルは確定アクションなので
 // 1 操作 = 1 history entry の方が自然。
-router.push(`/records?${params.toString()}`);
+router.push(_recordsUrl(params));
   }, [router, searchParams, mineOnly]);
 
   useEffect(() => {
@@ -172,7 +181,7 @@ router.push(`/records?${params.toString()}`);
   const handleClearTemplate = () => {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("template");
-    router.push(`/records?${params.toString()}`);
+    router.push(_recordsUrl(params));
   };
 
   return (
