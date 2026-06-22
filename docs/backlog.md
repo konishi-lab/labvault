@@ -3,78 +3,221 @@
 「次に着手する候補」を優先度別に並べたキュー。完了したら `multitenant_next_steps.md` /
 `design/v10/05_milestones.md` の該当エントリにも反映する。
 
-最終更新: 2026-06-22 (PR #73 反映)
+最終更新: 2026-06-22 (3 観点レビュー反映 / 緊急枠新設)
 
 ---
 
-## 🔥 アクティブ
+## 🚨 緊急 (本番事故 / バグ — 明日着手)
 
-### 1. 人力 QA / 受入れテスト
-**規模**: 環境ごとに半日 / **詳細**: [`docs/qa_checklist.md`](qa_checklist.md)
+backend レビューで検出した実害可能性の高い 3 件。1 PR にまとめる予定。
 
-複数 OS × 複数 Python × 複数ブラウザの組合せで実機動作を確認する。
-SDK / CLI / MCP / WebUI / 装置 PC ワークフローの主要シナリオを網羅。
-release 前 (semver タグ前) または大きな PR マージ後に通す。
+### A1. Firestore composite index 欠落 (`created_by`)
+**規模**: 30 分 + `firebase deploy --only firestore:indexes`
 
-### 2. team admin による pending 承認 (2 段階フロー設計)
-**規模**: 設計 30 分 + 実装 1〜2 時間
+PR #68 で導入した「自分のみ」フィルタが、本番 Firestore で
+`FailedPrecondition: requires an index` を返して 500。CI はエミュレータ
+なので index 不要で通ってしまう。`firestore.indexes.json` に
+`(deleted_at ASC, created_by ASC, updated_at DESC)` と
+`(deleted_at ASC, parent_id ASC, created_by ASC, updated_at DESC)` を追加。
 
-current: pending は super-admin だけが見える。
-target: super-admin が「target team を指名」した時点で、その team の admin
-にも pending queue が回ってきて承認できる。
+### A2. aggregate の `bool` 除外漏れ (MCP / CLI)
+**規模**: 15 分 (3 行コピペ)
 
-申請段階で team list を申請者に晒さない (security) のが大前提。
-設計が固まったら別 issue / PR に分割。
+backend (`records.py:392`) は `isinstance(v, bool)` を除外しているが、
+MCP (`mcp/server.py:343`) と CLI (`cli/main.py:647`) の同等ロジックに
+ガードが無い。`status` 等を bool で持つ record があると `True/False` が
+1.0/0.0 に丸まって mean に混入し、**MCP と backend で値がズレるバグ**。
+中長期では C1 (aggregate モジュール抽出) で根本解決するが、それまでは
+コピペで先に潰す。
+
+### A3. 404 レスポンスの `Cache-Control: no-store` 漏れ
+**規模**: 30 分
+
+#53 の教訓 (RFC 7234 でブラウザが 404 をキャッシュする) に反して、
+`records.py:422, 435, 447, 464, 500, 540` と `metadata.py:103, 169, 289`
+の `HTTPException(404, ...)` 全てで `headers={"Cache-Control": "no-store"}`
+が無い。ヘルパ `_not_found()` を 1 つ置いて全置換。
 
 ---
 
-## 戦略案 (要設計、規模 large)
+## 🔥 戦略 (差別化に直結 — 7 月中に決断)
 
-### 6. `/records` 一覧上で scatter + 数値サマリ
-**規模**: 残り 1〜2 週 (Phase A は PR #73 で出荷済み)
+Roadmap レビューで明らかになった「差別化資産が宙に浮いている」問題。
 
-検索 + condition フィルタで絞った任意集合 (子レコード前提から脱却) に対し、
-scatter と数値サマリ (n / min / max / mean / median) を表示。解析者の
-「Web UI で一次分析 → Notebook で深掘り」往復が完成。
+### B1. CellLog (R13) の Web / MCP 露出
+**規模**: 2〜3 日
 
-**段階導入** (前提整備 = 嘘グラフ回避):
+比較資料の最大差別化軸 ( = 「LLM が Notebook 履歴を辿る」) が、現在
+**Web 詳細にも MCP にも露出無し**で利用率ゼロ。実装は `/cell_logs`
+endpoint と SDK 側 hooks まで来ているが、(1) Web 詳細に CellLog タブ、
+(2) MCP に `get_notebook_log` ツール、を 1 PR で出すだけで「比較資料の嘘」
+が真になる。
 
-- **Phase A** ✅ **済 (PR #73)**: 数値サマリ panel + `/api/records/aggregate`。
-  backend で全集合 (上限 500) を走査、truncated 時は標本表示 + ⚠ バッジ。
-  「表示中 200 件で集計」の罠を構造的に回避。
+### B2. template 利用率の判断 (浸透 or M3 凍結)
+**規模**: 1 日 + 1 ヶ月観察
+
+konishi-lab 4863 record のうち **4860 件 (99.9%) が template 未紐付け**。
+M3 の便利機能 (push-down / chip suggest / required check / auto-fill /
+parser auto-trigger) は事実上空回り。判断手順:
+
+1. 保留枠の「retroactive template 紐付け」を**人力でなく自分で 1 日で書く**
+2. ルールベース (tag / 拡張子 / title) で推測 → dry-run 確認 → apply
+3. Web UI で「未紐付け」バッジを出す (新規 record にも認知圧をかける)
+4. 1 ヶ月運用して採用率が伸びるか観察
+
+伸びなければ **M3 関連改善は全停止、追加 parser (#10) も deprecation**、
+M5 の execute_code (R16) に予算移管。
+
+---
+
+## 🛠️ 構造的負債 (Phase B 前後で 1 つずつ)
+
+backend レビュー独自の指摘。今すぐ落ちないが、本番安定性と開発速度に
+直結。
+
+### C1. `labvault.core.aggregate` モジュール抽出
+**規模**: 1 日
+
+aggregate ロジックが backend (`records.py:382-410`) / MCP
+(`mcp/server.py:312-359`) / CLI (`cli/main.py:617-671`) で 3 重実装。
+`compute_aggregate(records, key, group_by) -> AggregateResult` を純粋
+関数として切り出し、3 経路を delegate に書き換え。A2 の bool ガード
+ズレが構造的に再発しなくなる。`get_overview` の numeric 統計も同関数で
+書き直し。
+
+### C2. `Lab.list()` の API 拡張で `_metadata` 直アクセス撤廃
+**規模**: 2 日
+
+`records.py:171, 336, 466, 502` で `hasattr(lab._metadata, "list_records")`
+分岐があり、Backend Protocol を逆参照している。`Lab.list(parent_id=...,
+parent_id_unset=False, conditions=..., created_by=...)` を SDK 側に
+昇格し、backend は `lab.list()` だけを使う形に。同時に `lab._team` →
+`lab.team` プロパティ化 (30+ 箇所)。
+
+### C3. observability (structured log) 投入
+**規模**: 半日
+
+`records.py` / `metadata.py` 全体で `logger` インスタンスが存在しない。
+最低 `aggregate` / `bulk_upload` / `list_records` に Cloud Logging 互換
+の JSON ログを入れる。slow query や push-down 失敗が完全ブラックボックス。
+
+### C4. Firestore client lifecycle (broken pipe 対策)
+**規模**: 半日
+
+`get_lab` シングルトンが broken pipe で永続 500 になりうる
+(Cloud Run 24h 連続稼働で発現)。FastAPI lifespan で client を再生成
+できる経路を作る。
+
+### C5. (Stretch) async backend ラッパ
+**規模**: 1〜2 日
+
+`platform/backend` は FastAPI なので本来 async が自然。`metadata.py:273`
+の `storage_upload` 等で Nextcloud 障害時に uvicorn worker が全滅する
+可能性。`run_in_threadpool` 経由のラッパを挟む短期解。Backend Protocol
+に async 変種を追加する長期解は M5 以降。
+
+---
+
+## 💡 Phase B 前に潰したい UX (まとめて 1 PR)
+
+UX レビュー独自の指摘。詳細ヘッダ整理 + ホーム 3 chip までを「Phase B
+前作業」として 1 PR (4〜6h)。残りは Phase B 内で対応。
+
+### D1. 詳細ヘッダのバッジ色数を 15 → 4 に削減
+- status のみ色 (青 / 緑 / 赤 / 黄)
+- `template:` / `parent:` は outline + 先頭アイコン (`📎` / `↑`) で
+  「これはリンク」とだけ伝える
+- `FileSection` の拡張子別 7 色 + `originLabel` 4 色は mono-tone + アイコンに
+
+### D2. `SummaryChips` に異常値 chip を追加
+**規模**: 1〜2 日 (backend Δ 計算が要る)
+
+子 record の場合、親シリーズの median ± 2σ を超える `results.*` があれば
+`⚠ pulse_energy +2.4σ` chip を生やす。「ちゃんと記録できたか」の本質は
+「異常な値になっていないか」なので、件数 chip だけでは不十分。Phase B
+で扱う `/api/records/fields` の前段として、子の `results` 統計を親 record
+レスポンスに同梱する設計が要る。
+
+### D3. 「自分のみ」+ 暗黙ソートの二重を解消
+**規模**: 30 分
+
+`/records` で「自分の record を上部にソート」が暗黙 ON だが、UI 操作子
+無し。**「なぜ俺の record が上にあるんだ」を聞きに来るパターンが発生
+している**。`bg-blue-50/40` + 「自分」バッジで識別は十分なので、暗黙
+ソートは廃止 or 明示トグル化。
+
+### D4. StatsPanel の初見ゼロ状態を埋める
+**規模**: 1 時間
+
+PI が初見で開くと localStorage 空で何も出ない。template フィルタ確定中
+なら、その template の `required_results` を初期表示にして「Phase A が
+動いている」ことを示す。
+
+### D5. ホームを最小コストで dashboard 化 (#7 を縮小)
+**規模**: 半日
+
+`/` を full dashboard hub (#7, 3〜4 週) に作り変えると bookmark 破壊で
+ROI 劣後。最小コスト版として 3 chip だけ追加:
+
+- 「今週投入された record 件数」
+- 「成功 / 失敗 ratio」
+- 「team メンバー別投入件数」
+
+`fetchRecords({limit:200})` で frontend 集計可能。Cloud 集計 endpoint は
+Phase C と同時にまとめて作るのが効率良し。
+
+---
+
+## 🎯 戦略案 #6: `/records` scatter + 集計の段階導入
+
+(Phase A は PR #73 で出荷済み)
+
+検索 + condition フィルタで絞った任意集合 (子レコード前提から脱却) に
+対し、scatter と数値サマリを表示。解析者の「Web UI で一次分析 →
+Notebook で深掘り」往復が完成。
+
+- **Phase A** ✅ **済 (PR #73)**: 数値サマリ panel + `/api/records/aggregate`
 - **Phase B**: scatter chart を `/records` に。既存 `ConditionScatterChart`
-  を流用、フィルタ集合の conditions+results を一括 fetch する
-  `/api/records/fields` を新設 (上限 1000、超過は警告 + 抽出)。
-- **Phase C**: `RecordSummary` に `flat_fields` を追加 + Firestore
-  push-down 強化。500 / 1000 件の上限を撤廃。indexed_fields の入った key
-  だけは sub-second で表示可能に。
-- **Phase D**: aggregate に複数 key 同時取得 (`keys: list[str]`) + 行表示の
-  GROUP BY UI。Firestore コスト面の N+1 解消。
+  を流用、`/api/records/fields` 一括 fetch (上限 1000、超過は警告 + 抽出)。
+  D1〜D5 の UX 修正と前後する
+- **Phase C**: `RecordSummary.flat_fields` + Firestore push-down 強化で
+  500 / 1000 件の上限を撤廃。indexed_fields の入った key は sub-second
+- **Phase D**: aggregate に `keys: list[str]` で複数同時取得 + GROUP BY UI。
+  Firestore N+1 解消
 
 **残課題 (PR #73 review より)**:
-- StatsPanel は default で 5 key 並列 fetch、フィルタ変更ごとに再走査。
-  数 user の同時利用で Firestore コストが見え始めたら Phase D を前倒し
-- localStorage の保存 key は team 横断 (team 切替時に key が残る)。
-  実害は「数値が出ない行が残る」のみだが、Phase B の前に team-prefix 化
+- StatsPanel は default で 5 key 並列 fetch + フィルタ変更ごとに再走査。
+  Firestore コストが見え始めたら Phase D を前倒し
+- localStorage の保存 key は team 横断 — Phase B 前に team-prefix 化 (B1 と同 PR で済)
 
 (UX レビュー Strategic Bet A)
 
-### 7. ダッシュボード活動 hub 化
-**規模**: 3〜4 週
+### ⛔ #7. ダッシュボード活動 hub 化 → 凍結
+**判断**: Roadmap レビュー提言に従い**今期は凍結**。代わりに D5 (3 chip
+だけホームに足す) で最小コスト価値出し。full hub は 3〜4 週かかり、
+bookmark / Notebook URL 破壊リスクを背負って ROI が劣後。Phase B 完了後に
+PI から再要望が来たら判断。
 
-`/` を最近 5 件の薄い索引から、(a) 今週/今月のサマリ (新規件数 sparkline,
-status 分布, contributor top 5), (b) activity feed, (c) record 0 件時の
-「最初の record を作る」3 ステップカードに格上げ。
+(UX レビュー Strategic Bet B — 据え置き)
 
-**前提整備**:
-1. `/api/stats/weekly` エンドポイント (200 件 fetch のクライアント集計は破綻)
-2. users コレクションの bulk fetch + cache (avatar 表示用)
-3. team scoped での 0 件判定 (複数 team 所属対応)
+---
 
-**判断**: `/` を作り変えると既存 bookmark / Notebook URL が陳腐化。
-`/dashboard` 新設で安全側に倒す案あり。PI UX 確認が先行。
+## 既存 アクティブ (規模 small)
 
-(UX レビュー Strategic Bet B)
+### #2. team admin による pending 承認 (2 段階フロー設計)
+**規模**: 設計 30 分 + 実装 1〜2 時間
+
+current: pending は super-admin だけが見える。target: super-admin が
+「target team を指名」した時点で、その team の admin にも pending queue が
+回ってきて承認できる。申請段階で team list を申請者に晒さない (security)
+のが大前提。設計が固まったら別 issue / PR に分割。
+
+### #1. 人力 QA / 受入れテスト
+**規模**: 環境ごとに半日 / **詳細**: [`docs/qa_checklist.md`](qa_checklist.md)
+
+複数 OS × 複数 Python × 複数ブラウザの組合せで実機動作を確認。
+release 前 (semver タグ前) または大きな PR マージ後に通す。直近で
+PR #67〜#73 を続けて入れたので、Phase B 着手前に 1 回回しておきたい。
 
 ---
 
@@ -94,22 +237,6 @@ agent teams 議論で将来候補として残ったのが:
 **保留理由**: 現状 `**common` dict + for ループで十分書ける。実運用で
 「同じ pattern を 100 回書いてる」と確信してから足す方が API 表面を
 無駄に膨らませない。完全 additive なので後付け可能。
-
-### 既存 record の retroactive template 紐付け
-**規模**: 設計 30 分 + 実装 1 時間
-
-2026-05-25 の `idx_*` backfill で発覚: konishi-lab team の 4863 record
-のうち **4860 件が template 未紐付け** (MDG import の歴史的データなど)。
-これらは PR #14 の push down 高速化、PR #20 の chip suggest、必須条件
-チェック、alias 正規化、file_parsers 自動起動 — つまり M3 関連の便利
-機能全部の蚊帳の外。
-
-ルールベース (tag / 拡張子 / title) で template を推測 → dry-run で
-人が確認 → 一括 set、というスクリプトで救出可能。
-
-**保留理由**: template 機能 (M3) そのものが実運用でどれだけ使われるか
-未知数。template を新規 record に積極的に当てる運用が定着した時点で、
-過去 record にも遡及する意味が出てくる。先に template の有用性検証。
 
 ### corrupt `nextcloud_path` の Firestore 棚卸し / 一度きり migration
 **規模**: スクリプト 1 時間 + dry-run / apply
@@ -146,11 +273,18 @@ PAT モードどちらも end-to-end 成功)。残りは **未承認 user の体
 ### 9. `nextcloud_poller`
 Nextcloud の `_inbox/` を監視して自動 record 化。
 
-### 10. 追加パーサー (低優先)
+### 10. 追加パーサー
 `.dm3` (TEM), `.dat` (MPMS/PPMS), `.wdf` (Raman), `bruker_raw_parser`
-(.raw), `xy_parser` (.xy) など。`docs/design/v10/05_milestones.md` の
-M5 セクション参照。XRD template には宣言済だが parser 本体は未実装で、
-拡張子マッチ時に UserWarning でスキップされる現状を許容している。
+(.raw), `xy_parser` (.xy) など。
+
+**B2 (template 文化判断) の結果次第**: template 利用率が伸びなければ
+M3 関連改善とともに **deprecation 検討対象**。XRD template に宣言済だが
+parser 本体は未実装、拡張子マッチ時に UserWarning でスキップされる
+現状を許容している。
+
+### 11. R16 `execute_code` (LLM コード実行)
+M3 凍結判断 (B2) で予算移管対象。`run_analysis` の骨格はあるが sandbox 無し。
+比較資料で重要差別化を謳う割に手付かず。
 
 ---
 
