@@ -643,3 +643,27 @@ export async function fetchIndexedFieldSuggestions(): Promise<string[]> {
     return [];
   }
 }
+
+// D4: 指定 template の result_fields のうち `required=true` の key を
+// 宣言順で返す。StatsPanel の初期表示 (template 紐付き record 用) に使う。
+// `/api/metadata/templates` の raw dict を直接 filter する (template 名 1
+// 件用の専用 endpoint は無くても済む)。
+export async function fetchTemplateRequiredResultKeys(
+  templateName: string,
+): Promise<string[]> {
+  try {
+    const res = await authFetch(`${API_BASE}/api/metadata/templates`);
+    if (!res.ok) return [];
+    const templates = (await res.json()) as Array<{
+      name?: string;
+      result_fields?: Array<{ name?: string; required?: boolean }>;
+    }>;
+    const tpl = templates.find((t) => t.name === templateName);
+    if (!tpl) return [];
+    return (tpl.result_fields ?? [])
+      .filter((rf) => rf.required && typeof rf.name === "string")
+      .map((rf) => rf.name as string);
+  } catch {
+    return [];
+  }
+}

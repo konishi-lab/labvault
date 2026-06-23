@@ -63,25 +63,16 @@ function fileIcon(name: string): string {
   return icons[ext] || "\u{1F4CE}"; // 📎 default
 }
 
-function fileTypeBadge(name: string): string {
-  const ext = fileExt(name).toLowerCase();
-  const styles: Record<string, string> = {
-    vk4: "bg-purple-100 text-purple-800 border-purple-200",
-    csv: "bg-green-100 text-green-800 border-green-200",
-    json: "bg-blue-100 text-blue-800 border-blue-200",
-    npy: "bg-orange-100 text-orange-800 border-orange-200",
-    png: "bg-pink-100 text-pink-800 border-pink-200",
-    jpg: "bg-pink-100 text-pink-800 border-pink-200",
-    ras: "bg-indigo-100 text-indigo-800 border-indigo-200",
-  };
-  return styles[ext] || "";
-}
+// D1 (PR #81): 拡張子別の 7 色 / original_type 別の 4 色は、隣の絵文字
+// アイコン + ラベル文字列だけで充分情報量を持つので削除。status の 4 色
+// (青 / 緑 / 赤 / 黄) と意味衝突する (csv 緑 = success 緑 等) のを構造的に
+// 解消し、accessibility (色覚多様性) も改善する。
 
 // DataRef.original_type は SDK が `add_object` 経路で付与する semantic タグ。
 // "ndarray" → np.ndarray, "figure" → matplotlib.Figure, ... のように
 // 「何の Python オブジェクト由来か」を拡張子推測ではなく metadata から
 // 判別可能にする。null の場合は raw 取り込み (add_file / add_bytes) または
-// 旧 record で未付与のもの。ヒントだけ出すサブバッジとして表示。
+// 旧 record で未付与のもの。本 PR から色なし span のヒント表示に降格。
 function originLabel(original: string | null): string | null {
   if (!original) return null;
   switch (original) {
@@ -101,25 +92,6 @@ function originLabel(original: string | null): string | null {
       return "Bytes";
     default:
       return original; // 将来追加される type は raw 値を出す
-  }
-}
-
-function originBadgeStyle(original: string | null): string {
-  if (!original) return "";
-  switch (original) {
-    case "ndarray":
-      return "bg-orange-50 text-orange-700 border-orange-200";
-    case "figure":
-      return "bg-pink-50 text-pink-700 border-pink-200";
-    case "dataframe":
-      return "bg-green-50 text-green-700 border-green-200";
-    case "dict":
-    case "list":
-      return "bg-blue-50 text-blue-700 border-blue-200";
-    case "str":
-    case "bytes":
-    default:
-      return "bg-slate-50 text-slate-700 border-slate-200";
   }
 }
 
@@ -289,24 +261,25 @@ function FileSection({
             {dataFiles.map((file, i) => (
               <div key={file.name}>
                 {i > 0 && <Separator className="mb-2" />}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
                     <span className="shrink-0">{fileIcon(file.name)}</span>
                     <span className="font-mono truncate">{file.name}</span>
+                    {/* D1: 拡張子バッジを muted + アイコン (色なし) に統一 */}
                     <Badge
                       variant="outline"
-                      className={`shrink-0 text-xs ${fileTypeBadge(file.name)}`}
+                      className="shrink-0 text-xs font-mono bg-muted text-muted-foreground border-transparent"
                     >
                       {fileExt(file.name)}
                     </Badge>
+                    {/* D1: original_type は色なしの中黒 span に降格 */}
                     {originLabel(file.original_type) && (
-                      <Badge
-                        variant="outline"
-                        className={`shrink-0 text-xs ${originBadgeStyle(file.original_type)}`}
+                      <span
+                        className="shrink-0 text-xs text-muted-foreground/70"
                         title={`保存元の Python 型: ${file.original_type}`}
                       >
-                        {originLabel(file.original_type)}
-                      </Badge>
+                        · {originLabel(file.original_type)}
+                      </span>
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -399,7 +372,9 @@ export default function RecordDetailPage() {
         <Badge variant="secondary" className={statusColor[record.status]}>
           {record.status}
         </Badge>
-        {/* context chip: template と parent への 1-click 横展開 (#3) */}
+        {/* D1: context chip は outline + 先頭アイコンで統一 (色なし)。
+            status の 4 色だけ意味色として残し、リンクであることだけを
+            伝える chip は muted/outline で揃える。 */}
         {record.template_name && (
           <Link
             href={`/records?template=${encodeURIComponent(record.template_name)}`}
@@ -407,9 +382,9 @@ export default function RecordDetailPage() {
           >
             <Badge
               variant="outline"
-              className="text-xs cursor-pointer hover:bg-purple-50 border-purple-200 text-purple-700"
+              className="text-xs cursor-pointer hover:bg-muted gap-1"
             >
-              template: {record.template_name}
+              <span aria-hidden>📎</span>template: {record.template_name}
             </Badge>
           </Link>
         )}
@@ -420,9 +395,9 @@ export default function RecordDetailPage() {
           >
             <Badge
               variant="outline"
-              className="text-xs cursor-pointer hover:bg-blue-50 border-blue-200 text-blue-700"
+              className="text-xs cursor-pointer hover:bg-muted gap-1"
             >
-              parent: {record.parent_id}
+              <span aria-hidden>↑</span>parent: {record.parent_id}
             </Badge>
           </Link>
         )}
