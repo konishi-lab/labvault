@@ -3,7 +3,116 @@
 「次に着手する候補」を優先度別に並べたキュー。完了したら `multitenant_next_steps.md` /
 `design/v10/05_milestones.md` の該当エントリにも反映する。
 
-最終更新: 2026-06-23 (PR #81 反映 — D1+D3+D4+D5 UX 整理完了)
+最終更新: 2026-06-23 (3 観点クリティカルレビュー反映 — 緊急枠新設)
+
+---
+
+## 🚨 緊急 (本日 5 PR の review で発覚、明日朝イチ)
+
+3 観点 (敵対的バグ探索 / 本番運用 SRE / PR 間相互作用) で見つかった
+**今すぐ直さないと本番で実害が出る** バグ。1 PR で 30〜45 分。
+
+### N1. StatsPanel が template fetch 失敗で永遠 Skeleton (silent fail)
+`platform/frontend/src/components/stats-panel.tsx:219-239`
+
+`fetchTemplateRequiredResultKeys(filters.template)` の await が try/catch
+されておらず、`/api/metadata/templates` が 500 や network 失敗を返すと
+promise reject。`setInitialized(true)` に到達できず Skeleton が
+**永遠に消えない** + error UI も出ない silent fail。
+
+修正: try/finally で `setInitialized(true)` を保証 (5 行)。
+
+### N2. StatsPanel が無限再 fetch ループ
+`platform/frontend/src/components/stats-panel.tsx:268-296`
+
+useEffect deps が `allKeys.join("|")`。`previewKeys` は
+`keySuggestions.slice(0, 3)` を毎 render で新配列生成するので、親の
+`/records/page.tsx` が再 render するたびに識別子が変わって毎回 3 件
+fetch が走る。**Firestore コスト + 体感ガタ**。
+
+修正: deps を `[initialized, JSON.stringify(allKeys), JSON.stringify(filters)]`
+に固定 (1 行)。または `useMemo` で `previewKeys` の identity を安定化。
+
+### N3. transient_firestore_exceptions の `Aborted` over-catch
+`platform/backend/app/dependencies.py:190-193`
+
+`Aborted` (Firestore transaction 衝突) を catch すると **全 team Lab +
+Firestore singleton を破棄** する形になっている。トランザクション衝突
+は 1 リクエストの retry で済む話なので、複数ユーザー同時アクセスで
+cascading reset → cold start レイテンシ蓄積。
+
+修正: `Aborted` だけ別 branch にして「reset せず 503 retry を返す」分岐
+を作る (3 行)。
+
+---
+
+## ⚠ 高優先 (今週中、別 PR)
+
+### N4. bulk_upload SSE: クライアント abort で `done` event 永久未出
+`platform/backend/app/routers/bulk_upload.py:186-313`
+
+`event_stream()` に try/finally が無い。クライアントが SSE を mid-stream
+で abort すると `GeneratorExit` で関数が殺され、`bulk_upload.done` event
+が出ない。Cloud Logging で `start` のみ累積し、error_count 集計
+ダッシュボードが「成功」と誤判定する。**長時間 upload のキャンセル
+こそ可視化したい failure mode**。
+
+### N5. observability の log handler 二重出力
+`platform/backend/app/observability.py:46-66`
+
+`setup_json_logging()` は root logger に追加 handler を attach するだけで
+既存 handler を消さない。Cloud Run + uvicorn 環境で **1 行が 2 行に
+重複出力** され、Cloud Logging のコスト/ノイズが 2 倍。
+
+修正: 既存 StreamHandler を検出してスキップ or 置換 (5 行)。
+
+### N6. PII リーク risk: `condition_keys` field
+`platform/backend/app/routers/records.py:182`
+
+`sorted(parsed_conditions.keys())` を構造化ログに乗せている。template
+で定義された key (`power`, `target`) は安全だが、**ユーザーがフリー
+フォームで送ってきた key** (例: `patient_name`, `xxx@example.com`) が
+そのまま jsonPayload に出る。
+
+修正: `observability.py` に `_safe_keys(keys)` ヘルパ追加、英数字 +
+短文字数のみ pass、それ以外 `<redacted>` に置換 (1 行 hot fix 可能)。
+
+### N7. dashboard の C2/C3 が 200 件打ち切りでも警告無し
+`platform/frontend/src/lib/dashboard.ts:60-100`
+
+C1 (今週件数) は `truncated` 警告バッジが出るが、C2 (30 日 status) /
+C3 (今週 template top 3) も同じ 200 件集合を見ているのに警告無し。
+**他の chip が嘘の数字を堂々と表示**する形。
+
+修正: `truncated=true` のとき C2/C3 にも amber 注釈を回す。
+
+### N8. exception handler 内の二次例外で 500 素通り
+`platform/backend/app/main.py:147-176`
+
+`_cors_safe_exception_handler` 内で `reset_lab()` → `lab.close()` を呼ぶ。
+`close()` の内部で再度 transient_firestore_exceptions が raise されると、
+handler 内の二次例外として ASGI が捕捉し直す形になり、`Cache-Control:
+no-store` 無しの素 500 になる可能性。`log_event` 自身が壊れた logger
+経由で例外を出すケースも同じ穴。
+
+修正: handler 全体を broad try/except で囲む defensive fallback。
+
+---
+
+## ℹ️ 中優先 (Phase B 前に消化)
+
+| # | 内容 | 場所 |
+|---|---|---|
+| N9 | EventTimer の slow が fetch + post-filter 混在で原因切り分け不可 | `records.py:177-253, 366-434` |
+| N10 | StatsPanel template 切替時の keys 残留 (SQUID に XRD の `lattice_a_A` 残る) | `stats-panel.tsx:219-251` |
+| N11 | Cloud Logging で `firestore.client_reset` 頻度の alert 未設定 | Cloud Monitoring 設定 |
+| N12 | テスト用 `/__test/raise_transient` route が global `app` に永続登録 → 将来テスト汚染 | `test_firestore_lifecycle.py:143` |
+| N13 | SummaryChips にセル数 chip 抜け (CellLog があるのに sticky 行で 0 表示) | `summary-chips.tsx:113-131` |
+| N14 | InMemory ↔ Firestore で cell_number 同値時の順序保証ズレ | `memory.py:91-94` vs `firestore.py:148` |
+| N15 | CellLog endpoint が `lab.get` + `get_cell_logs` で 2 RPC | `records.py` cell_logs handler |
+| N16 | DST/timezone 跨ぎで dashboard 週境界 1 時間ズレ | `dashboard.ts:21` |
+| N17 | MCP aggregate `record_count` の意味が core 抽出後に変化 (parent_id 指定時に値変動) | `mcp/server.py:320-332` |
+| N18 | observability emit が search / metadata / files / preview にまだ無い | 各 router |
 
 ---
 
