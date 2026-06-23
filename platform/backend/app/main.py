@@ -145,22 +145,62 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
 
     傍ら、サーバ側には ``logger.exception`` でフルスタックトレースを残す
     (Cloud Run logs に出る)。
+
+    **C4 (PR #80)**: Firestore / gRPC の transient 例外 (ServiceUnavailable
+    等) を検出した場合は、Lab + Firestore client のシングルトンを破棄して
+    503 を返す。次のリクエストで client が作り直されるので、Cloud Run の
+    24h 連続稼働で broken pipe / idle timeout が起きても永続 500 にならない。
     """
+    from .dependencies import (
+        reset_firestore_db,
+        reset_lab,
+        transient_firestore_exceptions,
+    )
+    from .observability import log_event
+
+    origin = request.headers.get("origin") or ""
+    base_headers: dict[str, str] = {"Cache-Control": "no-store"}
+    if origin in _default_origins:
+        base_headers["Access-Control-Allow-Origin"] = origin
+        base_headers["Access-Control-Allow-Credentials"] = "true"
+        base_headers["Vary"] = "Origin"
+
+    # transient (Firestore / gRPC connection 系) → client を捨てて 503 を返す。
+    # 永続 500 を防ぐのが目的なので、ここで明示的に「次回 retry すれば回復
+    # する可能性」をクライアントに伝える。
+    if isinstance(exc, transient_firestore_exceptions()):
+        dropped_labs = reset_lab()
+        reset_fs = reset_firestore_db()
+        log_event(
+            logger,
+            "firestore.client_reset",
+            level=logging.WARNING,
+            exception_type=type(exc).__name__,
+            message=str(exc)[:500],
+            path=request.url.path,
+            method=request.method,
+            dropped_labs=dropped_labs,
+            reset_firestore_db=reset_fs,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "Firestore client transient error, please retry",
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+                # frontend が「retry してもいい」と判定するためのヒント。
+                # PR #74 の `Cache-Control: no-store` と組み合わせて、
+                # ブラウザが 503 を disk cache から返すのを防ぐ。
+                "transient": True,
+            },
+            headers={**base_headers, "Retry-After": "1"},
+        )
+
     logger.exception(
         "unhandled exception in %s %s",
         request.method,
         request.url.path,
     )
-    origin = request.headers.get("origin") or ""
-    headers: dict[str, str] = {
-        # エラーレスポンスはブラウザにキャッシュさせない。500 自体は
-        # RFC 7234 でデフォルト非キャッシュだが、ダメ押し。
-        "Cache-Control": "no-store",
-    }
-    if origin in _default_origins:
-        headers["Access-Control-Allow-Origin"] = origin
-        headers["Access-Control-Allow-Credentials"] = "true"
-        headers["Vary"] = "Origin"
     return JSONResponse(
         status_code=500,
         content={
@@ -171,7 +211,7 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
             # ユーザのみ。診断のメリットが上回る。
             "message": str(exc),
         },
-        headers=headers,
+        headers=base_headers,
     )
 
 # 認証必須ルータ: 全ハンドラで Firebase ID token + allowed_users を検証
