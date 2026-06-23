@@ -274,6 +274,44 @@ export async function fetchChildren(
   return res.json();
 }
 
+// IPython hooks 自動収集の Notebook セルログ (R13)。`/api/records/{id}/cell_logs`
+// の backend schema と一致。new_vars/changed_vars/deleted_vars は変数の
+// digest (type/shape/hash) のみで、生の値は含まれない。
+export interface CellLogEntry {
+  cell_id: string;
+  record_id: string;
+  cell_number: number;
+  execution_count: number;
+  source: string;
+  source_hash: string;
+  new_vars: Record<string, unknown>;
+  changed_vars: Record<string, unknown>;
+  deleted_vars: string[];
+  duration_sec: number;
+  executed_at: string | null;
+  error: { type: string; message: string } | null;
+  session_id: string;
+}
+
+export interface CellLogListResponse {
+  items: CellLogEntry[];
+  total: number;
+  has_more: boolean;
+}
+
+export async function fetchCellLogs(
+  id: string,
+  params?: { limit?: number },
+): Promise<CellLogListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  const res = await authFetch(
+    `${API_BASE}/api/records/${id}/cell_logs?${searchParams}`,
+  );
+  if (!res.ok) throw new Error(`Failed to fetch cell logs: ${res.status}`);
+  return res.json();
+}
+
 export async function addTags(
   id: string,
   tags: string[]

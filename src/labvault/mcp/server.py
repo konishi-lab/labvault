@@ -426,6 +426,30 @@ def create_server(
             "results": results_summary,
         }
 
+    @mcp.tool(
+        description="この record に紐付いた Notebook セル実行ログ。"
+        "ソースコード・実行時刻・新規/変更/削除された変数 (digest)・"
+        "エラーを cell_number 昇順で返す。"
+        "「この実験は Notebook で何をやったか」「どのコードからこの結果が"
+        "出たか」を辿るのに使う。",
+    )
+    def get_notebook_log(
+        record_id: str,
+        limit: int = 50,
+        team: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """labvault の最大差別化資産 R13 (IPython hooks 自動記録) を
+        LLM 側から消費するための tool。Web UI の CellLog セクションと
+        同じ source データを返す。
+
+        return: list of dict — CellLog dataclass と同じキー。
+        new_vars / changed_vars / deleted_vars は変数の **digest**
+        (type / shape / hash) のみで、生の値は含まれない (機微情報保護)。
+        """
+        lab = _get_lab(team)
+        rec = lab.get(record_id)
+        return rec.cell_logs(limit=limit)
+
     @mcp.tool(description="レコードの時系列履歴。作成順にイベントを一覧表示。")
     def get_timeline(
         record_id: str | None = None,

@@ -666,6 +666,26 @@ class Record:
         all_records = self._lab.list(limit=1000)
         return [r for r in all_records if r.parent_id == self._id]
 
+    def cell_logs(self, *, limit: int = 100) -> builtins.list[dict[str, Any]]:
+        """この record に紐付いた Notebook セル実行ログを返す。
+
+        IPython hooks (``CellTracker``) が `pre_run_cell` / `post_run_cell`
+        で自動収集したログを、backend (Firestore / InMemory / Platform)
+        から cell_number 昇順で取り出す。各 dict は ``CellLog`` dataclass
+        と同じキー (cell_id / cell_number / execution_count / source /
+        new_vars / changed_vars / deleted_vars / duration_sec /
+        executed_at / error / session_id)。
+
+        LLM が「この record を作った Notebook で何をやったか」を辿る
+        差別化の中核データ (R13) なので、CLI / MCP / Web UI からも
+        この accessor (or 等価な backend endpoint) を経由して読む。
+        """
+        if self._lab is None:
+            return []
+        return list(
+            self._lab._metadata.get_cell_logs(self._team, self._id, limit=limit)
+        )
+
     # --- 解析 ---
 
     def run_analysis(

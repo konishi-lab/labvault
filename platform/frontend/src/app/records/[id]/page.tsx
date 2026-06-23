@@ -27,6 +27,7 @@ import { ConditionFilterPanel } from "@/components/condition-filter";
 import type { ConditionFilter } from "@/components/condition-filter";
 import { ConditionScatterChart } from "@/components/scatter-chart";
 import { SummaryChips } from "@/components/summary-chips";
+import { CellLogSection } from "@/components/cell-log-section";
 import type { NoteResponse } from "@/lib/api";
 
 const statusColor: Record<string, string> = {
@@ -583,6 +584,10 @@ export default function RecordDetailPage() {
             />
           </CardContent>
         </Card>
+
+        {/* Notebook セルログ (R13 露出) — IPython hooks 自動記録の record
+            のみ表示 (CellLogSection が空ならカード自体出さない) */}
+        <CellLogSection recordId={id} anchorId="section-cells" />
 
         {/* サブレコード */}
         {children.length > 0 && (

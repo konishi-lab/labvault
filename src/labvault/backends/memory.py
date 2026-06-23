@@ -86,8 +86,13 @@ class InMemoryMetadataBackend:
     def get_cell_logs(
         self, team: str, record_id: str, *, limit: int = 100
     ) -> list[dict[str, Any]]:
+        # Firestore backend は cell_number 昇順で返す (firestore.py:148)。
+        # SDK / Web / MCP の callers はその順序を前提にしているので、
+        # InMemory も同じ contract に揃える (テスト経路で挿入順がバラつ
+        # いた場合に Firestore と挙動差が出るのを防ぐ)。
         logs = self._cell_logs.get(team, {}).get(record_id, [])
-        return copy.deepcopy(logs[:limit])
+        sorted_logs = sorted(logs, key=lambda d: d.get("cell_number", 0))
+        return copy.deepcopy(sorted_logs[:limit])
 
     # --- Template ---
 
