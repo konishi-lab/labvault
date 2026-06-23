@@ -68,6 +68,12 @@ function RecordsContent() {
   const query = searchParams.get("q") || "";
   const rawConditions = searchParams.get("conditions");
   const mineOnly = searchParams.get("mine") === "1";
+  // D3: 「自分のみ」+ 暗黙ソートの二重を解消。
+  //   - mineOnly=1: backend で自分の record のみに絞り込み (旧仕様)
+  //   - boost=1: 全員出すが「自分の record を上に並べる」(明示トグル)
+  //   - 両方なし: 完全フラット (作成日順)
+  // 旧仕様 (mine=1 のみ) で来たユーザーには backward-compat で同じ挙動。
+  const boostMine = searchParams.get("boost") === "1";
   const templateFilter = searchParams.get("template") || "";
 
   const { user } = useAuth();
@@ -118,15 +124,24 @@ function RecordsContent() {
     [searchParams],
   );
 
-  const handleMineToggle = useCallback(() => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (mineOnly) {
+  // D3: 3 値セグメント [全員] [自分を上に] [自分のみ] のハンドラ。
+  // URL は 2 つの独立 bool で表現 (互換性のため):
+  //   "all"     → mine 削除 / boost 削除
+  //   "boost"   → boost=1 / mine 削除
+  //   "mine"    → mine=1 / boost 削除
+  type MineMode = "all" | "boost" | "mine";
+  const mineMode: MineMode = mineOnly ? "mine" : boostMine ? "boost" : "all";
+  const handleMineModeChange = useCallback(
+    (next: MineMode) => {
+      const params = new URLSearchParams(searchParams.toString());
       params.delete("mine");
-    } else {
-      params.set("mine", "1");
-    }
-    _updateRecordsUrl(params);
-  }, [searchParams, mineOnly]);
+      params.delete("boost");
+      if (next === "mine") params.set("mine", "1");
+      if (next === "boost") params.set("boost", "1");
+      _updateRecordsUrl(params);
+    },
+    [searchParams],
+  );
 
   useEffect(() => {
     setLoading(true);
@@ -164,11 +179,11 @@ function RecordsContent() {
       .finally(() => setLoading(false));
   }, [query, conditionsObj, mineOnly, currentUserEmail, templateFilter]);
 
-  // 「自分の record を優先表示」: sort 指定なしのとき、自分の作った record
-  // を先頭に持ち上げる (相対順は created_at desc を維持)。mineOnly が ON の
-  // 場合は backend で絞り込み済なのでこのソートは no-op。
+  // D3: 「自分を上に」は `boost=1` で **明示** トグルされた時のみ。
+  // 旧仕様の暗黙ソートは「なぜ俺の record が上にあるんだ」の問い合わせ
+  // 原因だったので廃止。`mine=1` は backend で絞り込み済なので no-op。
   const orderedRecords = useMemo(() => {
-    if (!currentUserEmail || mineOnly) return records;
+    if (!boostMine || !currentUserEmail || mineOnly) return records;
     const mine: RecordSummary[] = [];
     const others: RecordSummary[] = [];
     for (const r of records) {
@@ -179,7 +194,7 @@ function RecordsContent() {
       }
     }
     return [...mine, ...others];
-  }, [records, currentUserEmail, mineOnly]);
+  }, [records, currentUserEmail, mineOnly, boostMine]);
 
   if (error) {
     return <p className="py-8 text-center text-destructive">エラー: {error}</p>;
@@ -193,32 +208,22 @@ function RecordsContent() {
 
   return (
     <div className="space-y-4">
-      {/* フィルタバー: 自分のみ toggle + template chip + condition chip */}
+      {/* フィルタバー: D3 セグメント + template chip + condition chip */}
       <div className="flex items-center gap-2 flex-wrap">
-        <Button
-          size="sm"
-          variant={mineOnly ? "default" : "outline"}
-          onClick={handleMineToggle}
+        <MineModeSegment
+          mode={mineMode}
+          onChange={handleMineModeChange}
           disabled={!currentUserEmail}
-          title={
-            currentUserEmail
-              ? mineOnly
-                ? "全員の record を表示"
-                : "自分が作った record のみ表示"
-              : "ログイン情報を取得中"
-          }
-        >
-          {mineOnly ? "✓ 自分のみ" : "自分のみ"}
-        </Button>
+        />
         {templateFilter && (
           <Button
             size="sm"
             variant="outline"
             onClick={handleClearTemplate}
-            className="border-purple-200 text-purple-700 hover:bg-purple-50"
             title={`template "${templateFilter}" でフィルタ中 (クリックで解除)`}
+            className="gap-1"
           >
-            template: {templateFilter} ×
+            <span aria-hidden>📎</span>template: {templateFilter} ×
           </Button>
         )}
         <ConditionFilterPanel
@@ -241,10 +246,8 @@ function RecordsContent() {
           ) : (
             <>{orderedRecords.length} 件表示中</>
           )}
-          {!mineOnly && currentUserEmail && orderedRecords.length > 0 && (
-            <span className="ml-2">
-              · 自分の record を上部にソート
-            </span>
+          {boostMine && currentUserEmail && orderedRecords.length > 0 && (
+            <span className="ml-2">· 自分の record を上に表示中</span>
           )}
         </div>
       )}
@@ -278,6 +281,68 @@ function RecordsContent() {
           currentUserEmail={currentUserEmail}
         />
       )}
+    </div>
+  );
+}
+
+// D3: [全員] [自分を上に] [自分のみ] の 3 値セグメントコントロール。
+// 暗黙ソート (旧仕様) は廃止し、「自分を上に」を明示トグル化することで
+// 「なぜ俺の record が上にあるんだ」現象を解消する。
+function MineModeSegment({
+  mode,
+  onChange,
+  disabled,
+}: {
+  mode: "all" | "boost" | "mine";
+  onChange: (m: "all" | "boost" | "mine") => void;
+  disabled?: boolean;
+}) {
+  const opts: Array<{
+    value: "all" | "boost" | "mine";
+    label: string;
+    title: string;
+  }> = [
+    { value: "all", label: "全員", title: "全 record をフラットに表示" },
+    {
+      value: "boost",
+      label: "自分を上に",
+      title: "全 record を出すが、自分が作った record を先頭に並べる",
+    },
+    { value: "mine", label: "自分のみ", title: "自分が作った record だけ表示" },
+  ];
+  return (
+    <div
+      className="inline-flex items-center rounded-md border border-input p-0.5 bg-background text-xs"
+      role="radiogroup"
+      aria-label="表示モード"
+    >
+      {opts.map((o) => {
+        const active = mode === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            disabled={disabled}
+            onClick={() => onChange(o.value)}
+            title={
+              disabled
+                ? "ログイン情報を取得中"
+                : o.title
+            }
+            className={
+              "px-2.5 py-1 rounded-sm transition-colors cursor-pointer " +
+              (active
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted") +
+              (disabled ? " opacity-50 cursor-not-allowed" : "")
+            }
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

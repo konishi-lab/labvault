@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -9,7 +9,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchAggregate, type AggregateResponse } from "@/lib/api";
+import {
+  fetchAggregate,
+  fetchTemplateRequiredResultKeys,
+  type AggregateResponse,
+} from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 /**
  * 戦略案 #6 Phase A: `/records` の現フィルタ集合に対する数値統計 panel。
@@ -23,15 +28,32 @@ import { fetchAggregate, type AggregateResponse } from "@/lib/api";
  * 解析者が「全体傾向」と誤解する。Phase A の存在価値はこの誤解を
  * 構造的に防ぐこと。`truncated=true` 時は明示的にバッジで警告する。
  *
- * キー入力は手動 (textbox)。後の Phase で suggest を拡充する想定。
+ * D4 (PR #81): 初見ゼロ状態を埋める。
+ * - template 紐付き record では、その template の `required_results`
+ *   上位 3 件を初期 keys として自動投入 (ユーザーが 1 度も触っていない
+ *   `touched=false` の間のみ)。
+ * - template 紐付き無しでは、`keySuggestions` 上位 3 件を **「お試し」**
+ *   として読み取り表示する (右端にピン留めボタン)。ピン留めで keys に
+ *   昇格 + 永続化。
+ *
+ * D4 副次: localStorage の team-prefix 化。team を切り替えても他 team
+ * のキーが残らないように。
  */
 
-const KEY_STORAGE_KEY = "labvault.records.stats.keys.v1";
+const PREVIEW_COUNT = 3;
 
-function loadKeys(): string[] {
-  if (typeof window === "undefined") return [];
+// D4: team 単位で localStorage を分離する。team 不明な間は読み書きを skip。
+function _keysKey(team: string): string {
+  return `labvault.${team}.records.stats.keys.v2`;
+}
+function _touchedKey(team: string): string {
+  return `labvault.${team}.records.stats.user_touched.v2`;
+}
+
+function loadKeys(team: string): string[] {
+  if (typeof window === "undefined" || !team) return [];
   try {
-    const raw = window.localStorage.getItem(KEY_STORAGE_KEY);
+    const raw = window.localStorage.getItem(_keysKey(team));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((k) => typeof k === "string") : [];
@@ -40,12 +62,30 @@ function loadKeys(): string[] {
   }
 }
 
-function saveKeys(keys: string[]) {
-  if (typeof window === "undefined") return;
+function saveKeys(team: string, keys: string[]) {
+  if (typeof window === "undefined" || !team) return;
   try {
-    window.localStorage.setItem(KEY_STORAGE_KEY, JSON.stringify(keys));
+    window.localStorage.setItem(_keysKey(team), JSON.stringify(keys));
   } catch {
-    // localStorage 不可 (private モード等) は無視
+    /* localStorage 不可 (private モード等) は無視 */
+  }
+}
+
+function loadTouched(team: string): boolean {
+  if (typeof window === "undefined" || !team) return false;
+  try {
+    return window.localStorage.getItem(_touchedKey(team)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveTouched(team: string) {
+  if (typeof window === "undefined" || !team) return;
+  try {
+    window.localStorage.setItem(_touchedKey(team), "1");
+  } catch {
+    /* ignore */
   }
 }
 
@@ -53,12 +93,10 @@ function formatNumber(n: number): string {
   if (!Number.isFinite(n)) return "-";
   const abs = Math.abs(n);
   if (abs !== 0 && (abs < 0.001 || abs >= 100000)) return n.toExponential(3);
-  // 整数値は小数を出さない、それ以外は最大 4 桁
   return Number.isInteger(n) ? n.toString() : n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 interface StatsPanelProps {
-  // /records と同じフィルタ。空オブジェクトでも可。
   filters: {
     query?: string;
     conditions?: Record<string, unknown>;
@@ -71,24 +109,19 @@ interface StatsPanelProps {
 
 function StatsRow({
   agg,
-  onRemove,
+  rightSlot,
+  numbersClassOverride,
 }: {
   agg: AggregateResponse | { error: string; key: string };
-  onRemove: () => void;
+  rightSlot: React.ReactNode;
+  numbersClassOverride?: string;
 }) {
   if ("error" in agg) {
     return (
       <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 border-b border-border/40 last:border-b-0">
         <span className="font-mono text-sm">{agg.key}</span>
         <span className="text-xs text-destructive">エラー: {agg.error}</span>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
-          title="この行を削除"
-        >
-          ×
-        </button>
+        {rightSlot}
       </div>
     );
   }
@@ -96,11 +129,12 @@ function StatsRow({
   const { key, record_count, value_count, stats, truncated } = agg;
   const hasValues = stats.count > 0;
   // truncated = backend が 500 件で打ち切った状態。「数字だけ読まれる」
-  // 罠を避けるため、stats 自体を灰色化して「サンプル」の見た目に落とす
-  // (記号は出すが、確定値として使えないことを視覚的に表す)。
-  const numbersClass = truncated
-    ? "text-muted-foreground/70"
-    : "";
+  // 罠を避けるため、stats 自体を灰色化して「サンプル」の見た目に落とす。
+  const numbersClass = numbersClassOverride
+    ? numbersClassOverride
+    : truncated
+      ? "text-muted-foreground/70"
+      : "";
 
   return (
     <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 border-b border-border/40 last:border-b-0">
@@ -117,9 +151,7 @@ function StatsRow({
         )}
       </div>
       {hasValues ? (
-        <div
-          className={`grid grid-cols-6 gap-3 text-xs tabular-nums ${numbersClass}`}
-        >
+        <div className={`grid grid-cols-6 gap-3 text-xs tabular-nums ${numbersClass}`}>
           <span>
             <span className="text-muted-foreground">n </span>
             {stats.count}
@@ -158,52 +190,91 @@ function StatsRow({
           {record_count} 件中、数値として読める {key} はありませんでした
         </span>
       )}
-      <button
-        type="button"
-        onClick={onRemove}
-        className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
-        title="この行を削除"
-      >
-        ×
-      </button>
+      {rightSlot}
     </div>
   );
 }
 
 export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
-  // parent_id 未指定 = backend が parent_id=None で root のみ走査する。
-  // 「power の全実験統計」を期待するユーザーへ仕様を明示するため header
-  // に注釈を出す。明示的に parent_id を渡してきた呼び出し側 (将来の親
-  // record 詳細ページ等) では出さない。
+  const { currentTeam } = useAuth();
+  const team = currentTeam ?? "";
+
   const isRootOnly = !filters.parentId;
+
   const [keys, setKeys] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
+  // localStorage / template の初期投入が完了したかどうか。team / template
+  // が決まるまでは fetch を走らせない (ちらつき防止)。
+  const [initialized, setInitialized] = useState(false);
   const [results, setResults] = useState<
     Record<string, AggregateResponse | { error: string; key: string }>
   >({});
-  const [loading, setLoading] = useState<Set<string>>(new Set());
+  const [loadingKeys, setLoadingKeys] = useState<Set<string>>(new Set());
 
-  // 初回 mount で localStorage から復元 (ユーザーがよく見るキーは記憶される)。
+  // 初期化: team と templateName が揃った時点で 1 度走る。
+  // - touched=true: localStorage の保存 keys を採用
+  // - touched=false かつ template 指定あり: その template の required_results
+  //   上位 3 件を初期 keys にする (実利用例の素早い起動)
+  // - touched=false かつ template 無し: 空 (お試し preview が代わりに表示される)
   useEffect(() => {
-    setKeys(loadKeys());
-  }, []);
+    if (!team) {
+      // team 不明の間は何もしない
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const touched = loadTouched(team);
+      if (touched) {
+        if (!cancelled) {
+          setKeys(loadKeys(team));
+          setInitialized(true);
+        }
+        return;
+      }
+      if (filters.template) {
+        const reqs = await fetchTemplateRequiredResultKeys(filters.template);
+        if (cancelled) return;
+        setKeys(reqs.slice(0, PREVIEW_COUNT));
+        setInitialized(true);
+        return;
+      }
+      // template も touched も無し: 空状態 (preview モード)
+      if (!cancelled) {
+        setKeys([]);
+        setInitialized(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [team, filters.template]);
 
-  // keys が変わったら永続化。
-  useEffect(() => {
-    saveKeys(keys);
-  }, [keys]);
+  // 「お試し」preview 用のキー (template 紐付き無し + keys 空 + touched 無し)
+  const previewKeys = useMemo(() => {
+    if (keys.length > 0) return [];
+    if (filters.template) return []; // template 紐付き record 用には preview を出さない
+    if (!loadTouched(team)) return keySuggestions.slice(0, PREVIEW_COUNT);
+    return [];
+  }, [keys.length, filters.template, keySuggestions, team]);
 
-  // フィルタが変わるたび、全 keys を再計算。
+  // 表示中の全 key の aggregate を fetch。preview keys も同様に走らせる
+  // (ピン留めしなくても結果が見える = 初見の存在意義)。
+  const allKeys = useMemo(
+    () => [...keys, ...previewKeys.filter((k) => !keys.includes(k))],
+    [keys, previewKeys],
+  );
+
   useEffect(() => {
-    if (keys.length === 0) {
+    if (!initialized) return;
+    if (allKeys.length === 0) {
       setResults({});
       return;
     }
     let cancelled = false;
-    const next = new Set(keys);
-    setLoading(next);
+    setLoadingKeys(new Set(allKeys));
     Promise.all(
-      keys.map(async (key) => {
+      allKeys.map(async (key) => {
         try {
           const res = await fetchAggregate(key, filters);
           return { key, value: res };
@@ -219,33 +290,42 @@ export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
       const obj: Record<string, AggregateResponse | { error: string; key: string }> = {};
       for (const { key, value } of entries) obj[key] = value;
       setResults(obj);
-      setLoading(new Set());
+      setLoadingKeys(new Set());
     });
     return () => {
       cancelled = true;
     };
-    // filters は呼び出し側で memoize されている想定 (オブジェクト同値性に頼る)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keys, JSON.stringify(filters)]);
+  }, [initialized, allKeys.join("|"), JSON.stringify(filters)]);
+
+  const markTouchedAndSave = (nextKeys: string[]) => {
+    setKeys(nextKeys);
+    if (team) {
+      saveKeys(team, nextKeys);
+      saveTouched(team);
+    }
+  };
 
   const addKey = (k: string) => {
     const trimmed = k.trim();
     if (!trimmed || keys.includes(trimmed)) return;
-    setKeys([...keys, trimmed]);
+    markTouchedAndSave([...keys, trimmed]);
     setDraft("");
   };
 
   const removeKey = (k: string) => {
-    setKeys(keys.filter((x) => x !== k));
+    markTouchedAndSave(keys.filter((x) => x !== k));
     setResults((prev) => {
-      const { [k]: _, ...rest } = prev;
-      void _;
+      const { [k]: _drop, ...rest } = prev;
+      void _drop;
       return rest;
     });
   };
 
-  // suggest は「まだ追加されていない indexed_fields」のみ。
-  const availableSuggestions = keySuggestions.filter((s) => !keys.includes(s));
+  // suggest は「まだ追加されていない + preview に出ていない」
+  const availableSuggestions = keySuggestions.filter(
+    (s) => !keys.includes(s) && !previewKeys.includes(s),
+  );
 
   return (
     <Card className="border-slate-200">
@@ -301,16 +381,64 @@ export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
             </Badge>
           ))}
         </div>
-        {keys.length === 0 ? (
+
+        {/* 結果テーブル: keys (永続) + previewKeys (お試し) を 1 つにまとめて並べる */}
+        {!initialized ? (
+          <div className="rounded-md border border-border/40 px-3 py-2">
+            <Skeleton className="h-4 w-full" />
+          </div>
+        ) : allKeys.length === 0 ? (
           <p className="text-xs text-muted-foreground px-1 py-2">
-            キーを追加すると、現在のフィルタにマッチする全 record の統計
-            (n / mean / std / min / max / median) を表示します。
+            数値キーが見つかりませんでした。キー名を入力して追加してください。
           </p>
         ) : (
-          <div className="rounded-md border border-border/40 divide-y-0">
+          <div className="rounded-md border border-border/40">
+            {previewKeys.length > 0 && (
+              <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/30 border-b border-border/40">
+                お試し (ピン留めで保存)
+              </div>
+            )}
+            {previewKeys.map((k) => {
+              const r = results[k];
+              if (loadingKeys.has(k) && !r) {
+                return (
+                  <div
+                    key={`preview-${k}`}
+                    className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 border-b border-border/40 last:border-b-0"
+                  >
+                    <span className="font-mono text-sm">{k}</span>
+                    <Skeleton className="h-3 w-full" />
+                    <span className="text-xs text-muted-foreground">…</span>
+                  </div>
+                );
+              }
+              if (!r) return null;
+              return (
+                <StatsRow
+                  key={`preview-${k}`}
+                  agg={r}
+                  numbersClassOverride="text-muted-foreground"
+                  rightSlot={
+                    <button
+                      type="button"
+                      onClick={() => addKey(k)}
+                      className="text-[10px] text-primary hover:underline cursor-pointer"
+                      title="このキーをピン留めして常時表示する"
+                    >
+                      📌 ピン留め
+                    </button>
+                  }
+                />
+              );
+            })}
+            {keys.length > 0 && previewKeys.length > 0 && (
+              <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/30 border-b border-border/40">
+                ピン留め済
+              </div>
+            )}
             {keys.map((k) => {
               const r = results[k];
-              if (loading.has(k) && !r) {
+              if (loadingKeys.has(k) && !r) {
                 return (
                   <div
                     key={k}
@@ -323,7 +451,22 @@ export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
                 );
               }
               if (!r) return null;
-              return <StatsRow key={k} agg={r} onRemove={() => removeKey(k)} />;
+              return (
+                <StatsRow
+                  key={k}
+                  agg={r}
+                  rightSlot={
+                    <button
+                      type="button"
+                      onClick={() => removeKey(k)}
+                      className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                      title="この行を削除"
+                    >
+                      ×
+                    </button>
+                  }
+                />
+              );
             })}
           </div>
         )}

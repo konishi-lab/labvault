@@ -1,35 +1,51 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth";
 import { fetchRecords } from "@/lib/api";
 import type { RecordSummary } from "@/lib/api";
+import { computeDashboard } from "@/lib/dashboard";
+import {
+  DashboardChipRow,
+  DashboardOnboarding,
+} from "@/components/dashboard-chip-row";
 
 /**
  * トップ (ダッシュボード)。
- * - 既存ユーザー: 最近のレコード 5 件 + 主要セクションへのクイックリンク
- * - 新規ユーザー: WelcomeScreen が AuthGate 段階で出るので、ここに来た時点で
- *   「welcome 完了済み」状態
- * - レコード一覧は /records に分離
+ *
+ * D5 (戦略案 #7 を full hub 化せず最小コスト版で代替):
+ * - ChipRow 3 枚: 今週件数 + 先週比 / 直近 30 日 status / 今週 template top 3
+ * - 「最近のレコード 5 件」セクションは削除 (QuickLink「レコード一覧」と
+ *   役割重複していた)。chip クリックで `/records` に飛ばすことで動線を吸収
+ * - 0 件 team: `DashboardOnboarding` カードに差し替え (空 chip を並べると
+ *   新 team に冷たい印象を与えるため)
  */
 export default function HomePage() {
   const { user, teams, isAdmin } = useAuth();
-  const [recent, setRecent] = useState<RecordSummary[]>([]);
+  const [records, setRecords] = useState<RecordSummary[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetchRecords({ limit: 5 })
-      .then((res) => setRecent(res.items))
+    fetchRecords({ limit: 200 })
+      .then((res) => {
+        setRecords(res.items);
+        setHasMore(!!res.has_more);
+      })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
+
+  const dashboard = useMemo(
+    () => computeDashboard(records, hasMore),
+    [records, hasMore],
+  );
 
   const teamLabel =
     teams.length === 0
@@ -48,6 +64,20 @@ export default function HomePage() {
           所属: <span className="font-medium">{teamLabel}</span>
         </p>
       </div>
+
+      {/* ChipRow (or onboarding) — PI が活動量を 5 秒で把握する区画 */}
+      {error && <p className="text-sm text-destructive">エラー: {error}</p>}
+      {!error && loading && (
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-[88px]" />
+          ))}
+        </div>
+      )}
+      {!error && !loading && records.length === 0 && <DashboardOnboarding />}
+      {!error && !loading && records.length > 0 && (
+        <DashboardChipRow summary={dashboard} />
+      )}
 
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
         <QuickLink
@@ -75,61 +105,8 @@ export default function HomePage() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-3">
-          <CardTitle className="text-base font-medium">最近のレコード</CardTitle>
-          <Link href="/records">
-            <Button variant="ghost" size="sm">
-              すべて見る →
-            </Button>
-          </Link>
-        </CardHeader>
-        <CardContent>
-          {error && <p className="text-sm text-destructive">エラー: {error}</p>}
-          {loading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full" />
-              ))}
-            </div>
-          ) : recent.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              まだレコードがありません。SDK で <code>lab.new(...)</code> するか、
-              <Link
-                href="/records"
-                className="ml-1 text-primary underline-offset-2 hover:underline"
-              >
-                /records
-              </Link>{" "}
-              から一括アップロードで作成できます。
-            </p>
-          ) : (
-            <ul className="divide-y">
-              {recent.map((r) => (
-                <li key={r.id} className="py-2">
-                  <Link
-                    href={`/records/${r.id}`}
-                    className="flex items-center gap-3 text-sm hover:bg-muted/50 -mx-2 px-2 py-1 rounded"
-                  >
-                    <code className="rounded bg-muted px-1 py-0.5 text-xs">
-                      {r.id}
-                    </code>
-                    <span className="flex-1 truncate">{r.title}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {r.status}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-medium">困ったら</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1 text-sm text-muted-foreground">
+        <CardContent className="p-4 space-y-1 text-sm text-muted-foreground">
+          <p className="font-medium text-foreground text-base">困ったら</p>
           <p>所属 team / role の変更は管理者に連絡してください。</p>
           <p>
             トークンの失効は{" "}
