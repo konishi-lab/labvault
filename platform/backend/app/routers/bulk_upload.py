@@ -16,6 +16,7 @@ from labvault.core.exceptions import RecordNotFoundError
 from labvault.core.record import Record
 
 from ..auth import User, current_user, get_lab
+from ..observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -184,9 +185,22 @@ async def bulk_upload(
         file_data.append((_basename(f), data))
 
     async def event_stream() -> AsyncIterator[str]:
+        import time
+
         total = len(file_data)
+        total_bytes = sum(len(d) for _, d in file_data)
         uploaded = 0
         errors: list[str] = []
+        t0 = time.perf_counter()
+        log_event(
+            logger,
+            "bulk_upload.start",
+            parent_id=record_id,
+            total_files=total,
+            total_bytes=total_bytes,
+            grid=f"{rows}x{cols}",
+            children_count=len(children),
+        )
 
         for file_idx, (filename, data) in enumerate(file_data):
             if len(data) == 0:
@@ -281,6 +295,17 @@ async def bulk_upload(
                     },
                 )
 
+        duration_ms = round((time.perf_counter() - t0) * 1000, 1)
+        log_event(
+            logger,
+            "bulk_upload.done",
+            level=(logging.WARNING if errors else logging.INFO),
+            parent_id=record_id,
+            total_files=total,
+            uploaded=uploaded,
+            error_count=len(errors),
+            duration_ms=duration_ms,
+        )
         yield _sse(
             "done",
             {
