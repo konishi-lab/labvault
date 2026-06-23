@@ -216,6 +216,11 @@ export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
   // - touched=false かつ template 指定あり: その template の required_results
   //   上位 3 件を初期 keys にする (実利用例の素早い起動)
   // - touched=false かつ template 無し: 空 (お試し preview が代わりに表示される)
+  //
+  // N1 (PR #82) hotfix: `fetchTemplateRequiredResultKeys` の例外を握り潰す
+  // try/finally に変更。`/api/metadata/templates` が 500 / network 失敗を
+  // 返した場合に `setInitialized(true)` に到達できず、UI が **永遠に
+  // Skeleton で固まる** silent fail だった。失敗時は空 keys で fallback。
   useEffect(() => {
     if (!team) {
       // team 不明の間は何もしない
@@ -223,25 +228,30 @@ export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
     }
     let cancelled = false;
     (async () => {
-      const touched = loadTouched(team);
-      if (touched) {
-        if (!cancelled) {
-          setKeys(loadKeys(team));
-          setInitialized(true);
+      try {
+        const touched = loadTouched(team);
+        if (touched) {
+          if (!cancelled) setKeys(loadKeys(team));
+          return;
         }
-        return;
-      }
-      if (filters.template) {
-        const reqs = await fetchTemplateRequiredResultKeys(filters.template);
-        if (cancelled) return;
-        setKeys(reqs.slice(0, PREVIEW_COUNT));
-        setInitialized(true);
-        return;
-      }
-      // template も touched も無し: 空状態 (preview モード)
-      if (!cancelled) {
-        setKeys([]);
-        setInitialized(true);
+        if (filters.template) {
+          let reqs: string[] = [];
+          try {
+            reqs = await fetchTemplateRequiredResultKeys(filters.template);
+          } catch {
+            // network / 500 失敗時は空 keys で fallback (preview 表示には
+            // 落ちないが、UI が brick するよりずっとマシ)
+            reqs = [];
+          }
+          if (cancelled) return;
+          setKeys(reqs.slice(0, PREVIEW_COUNT));
+          return;
+        }
+        // template も touched も無し: 空状態 (preview モード)
+        if (!cancelled) setKeys([]);
+      } finally {
+        // 何があっても initialized=true を保証 (silent fail 防止)
+        if (!cancelled) setInitialized(true);
       }
     })();
     return () => {
@@ -251,12 +261,19 @@ export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
   }, [team, filters.template]);
 
   // 「お試し」preview 用のキー (template 紐付き無し + keys 空 + touched 無し)
+  //
+  // N2 (PR #82) hotfix: `keySuggestions.slice(...)` を依存にすると親 page
+  // の再 render ごとに新配列となり、useMemo は cache hit せず allKeys の
+  // identity が変わり、後段の fetch effect が毎 render 走る (3 API 連打)。
+  // suggestions の content (join) を依存にして安定化する。
+  const suggestionsJoined = keySuggestions.join("");
   const previewKeys = useMemo(() => {
     if (keys.length > 0) return [];
     if (filters.template) return []; // template 紐付き record 用には preview を出さない
     if (!loadTouched(team)) return keySuggestions.slice(0, PREVIEW_COUNT);
     return [];
-  }, [keys.length, filters.template, keySuggestions, team]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keys.length, filters.template, suggestionsJoined, team]);
 
   // 表示中の全 key の aggregate を fetch。preview keys も同様に走らせる
   // (ピン留めしなくても結果が見える = 初見の存在意義)。
@@ -264,6 +281,10 @@ export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
     () => [...keys, ...previewKeys.filter((k) => !keys.includes(k))],
     [keys, previewKeys],
   );
+
+  // 文字列化した dep で identity ではなく content 変化のみを検知する。
+  const allKeysJoined = allKeys.join("");
+  const filtersJson = JSON.stringify(filters);
 
   useEffect(() => {
     if (!initialized) return;
@@ -296,7 +317,7 @@ export function StatsPanel({ filters, keySuggestions = [] }: StatsPanelProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialized, allKeys.join("|"), JSON.stringify(filters)]);
+  }, [initialized, allKeysJoined, filtersJson]);
 
   const markTouchedAndSave = (nextKeys: string[]) => {
     setKeys(nextKeys);
