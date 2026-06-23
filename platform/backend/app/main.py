@@ -154,6 +154,7 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
     from .dependencies import (
         reset_firestore_db,
         reset_lab,
+        retriable_firestore_exceptions,
         transient_firestore_exceptions,
     )
     from .observability import log_event
@@ -164,6 +165,33 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
         base_headers["Access-Control-Allow-Origin"] = origin
         base_headers["Access-Control-Allow-Credentials"] = "true"
         base_headers["Vary"] = "Origin"
+
+    # N3 (PR #82): retriable (Aborted = トランザクション衝突) は client
+    # 自体は健全。reset せず 503 + Retry-After だけ返してクライアントの
+    # retry に任せる。複数ユーザー同時アクセスで cascading reset が起き
+    # るのを防ぐ。`transient` より先に判定 (どちらも catch されうるが、
+    # retriable はより穏当な処理パスなので優先)。
+    retriable = retriable_firestore_exceptions()
+    if retriable and isinstance(exc, retriable):
+        log_event(
+            logger,
+            "firestore.retriable",
+            level=logging.INFO,
+            exception_type=type(exc).__name__,
+            message=str(exc)[:500],
+            path=request.url.path,
+            method=request.method,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "Firestore retriable error, please retry",
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+                "transient": True,
+            },
+            headers={**base_headers, "Retry-After": "1"},
+        )
 
     # transient (Firestore / gRPC connection 系) → client を捨てて 503 を返す。
     # 永続 500 を防ぐのが目的なので、ここで明示的に「次回 retry すれば回復

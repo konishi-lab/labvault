@@ -24,6 +24,7 @@ from app import dependencies as deps
 from app.dependencies import (
     reset_firestore_db,
     reset_lab,
+    retriable_firestore_exceptions,
     transient_firestore_exceptions,
 )
 from app.main import app
@@ -106,6 +107,21 @@ def test_transient_includes_google_api_core_when_available() -> None:
     assert gax.DeadlineExceeded in excs
 
 
+def test_transient_excludes_aborted() -> None:
+    """N3 (PR #82): Aborted は transient から除外。cascading reset 防止。
+
+    Aborted は Firestore transaction 衝突で client は健全 (request retry
+    で済む) のに reset で全 team Lab を破棄する形になっていた。
+    `retriable_firestore_exceptions` 側に分離した。
+    """
+    try:
+        from google.api_core import exceptions as gax
+    except ImportError:
+        pytest.skip("google-api-core not installed")
+    assert gax.Aborted not in transient_firestore_exceptions()
+    assert gax.Aborted in retriable_firestore_exceptions()
+
+
 # ---- 例外ハンドラ ----------------------------------------------------------
 
 
@@ -164,6 +180,19 @@ def _raise_generic() -> None:
     raise RuntimeError("not transient, should be 500")
 
 
+@_test_router.get("/__test/raise_aborted")
+def _raise_aborted() -> None:
+    """N3: Firestore transaction 衝突 (Aborted)。reset せず 503 retry に
+    倒すべき (cascading reset 防止)。"""
+    try:
+        from google.api_core import exceptions as gax
+
+        raise gax.Aborted("simulated transaction conflict")
+    except ImportError:
+        # 環境に google-api-core が無い CI ではこのテストは skip 扱い
+        raise NotImplementedError("google-api-core not available") from None
+
+
 def test_transient_exception_returns_503_and_resets(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -215,3 +244,53 @@ def test_generic_exception_still_returns_500(client: TestClient) -> None:
     body = res.json()
     assert "transient" not in body
     assert res.headers.get("cache-control") == "no-store"
+
+
+def test_aborted_returns_503_without_reset(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    lab: Lab,
+) -> None:
+    """N3 (PR #82): Aborted は **reset しない** で 503 を返す。
+
+    cascading reset を防ぐためのキモ。Lab / Firestore singleton が破棄
+    されていない (= 次のリクエストが cold start にならない) ことを担保。
+    Cloud Logging には `firestore.retriable` event が INFO で出る。
+    """
+    try:
+        import google.api_core.exceptions  # noqa: F401
+    except ImportError:
+        pytest.skip("google-api-core not installed")
+
+    _install_test_routes(app)
+    monkeypatch.setattr(deps, "_labs", {"konishi-lab": lab})
+
+    class _FakeClient:
+        closed = False
+
+        def close(self) -> None:
+            type(self).closed = True
+
+    fc = _FakeClient()
+    monkeypatch.setattr(deps, "_firestore_db", fc)
+
+    with caplog.at_level(logging.INFO, logger="app.main"):
+        res = client.get("/__test/raise_aborted")
+
+    assert res.status_code == 503
+    body = res.json()
+    assert body["transient"] is True
+    assert res.headers.get("retry-after") == "1"
+    assert res.headers.get("cache-control") == "no-store"
+
+    # *singleton は破棄されていない* のが重要 (cascading reset 防止)
+    assert "konishi-lab" in deps._labs
+    assert deps._firestore_db is fc
+    assert _FakeClient.closed is False
+
+    # observability は client_reset でなく retriable event
+    fields_list = [getattr(r, "_lv_fields", None) for r in caplog.records]
+    events = [f["event"] for f in fields_list if isinstance(f, dict)]
+    assert "firestore.retriable" in events
+    assert "firestore.client_reset" not in events

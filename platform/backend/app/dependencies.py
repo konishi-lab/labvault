@@ -170,13 +170,21 @@ def reset_firestore_db() -> bool:
 # 個別に import すると optional 依存が壊した時に backend 全体が起動しなく
 # なるので、tuple は遅延構築する。
 def transient_firestore_exceptions() -> tuple[type[BaseException], ...]:
-    """Firestore / gRPC の transient 障害を表す例外 type の tuple。
+    """**client 再生成が必要な** Firestore / gRPC 例外の type tuple。
+
+    `_cors_safe_exception_handler` の catch トリガになり、reset_lab() +
+    reset_firestore_db() を走らせる。client 自体が壊れている (broken pipe
+    / idle timeout / DNS 失敗等) ことを示すシグナルを集める。
 
     google-cloud-firestore は内部で google-api-core を使い、idle 接続が
     切れた場合は通常 ServiceUnavailable (503) を投げる。grpc の生 RpcError
-    (例: UNAVAILABLE) もここに含める。`BrokenPipeError` / `ConnectionResetError`
-    は念のため (gRPC 層が catch する前に socket レイヤで raise される
-    edge case 用)。
+    (例: UNAVAILABLE) もここに含める。`BrokenPipeError` /
+    `ConnectionResetError` は念のため (gRPC 層が catch する前に socket
+    レイヤで raise される edge case 用)。
+
+    N3 (PR #82): `Aborted` は **トランザクション衝突** で頻発しうるが
+    client 自体は健全なので、ここから除外する。`retriable_firestore_exceptions()`
+    で受けて 503 + Retry-After を返すが reset はしない。
     """
     excs: list[type[BaseException]] = [BrokenPipeError, ConnectionResetError]
     try:
@@ -187,7 +195,6 @@ def transient_firestore_exceptions() -> tuple[type[BaseException], ...]:
                 gax.ServiceUnavailable,
                 gax.DeadlineExceeded,
                 gax.InternalServerError,
-                gax.Aborted,
                 gax.Unknown,
             ]
         )
@@ -197,6 +204,24 @@ def transient_firestore_exceptions() -> tuple[type[BaseException], ...]:
         import grpc
 
         excs.append(grpc.RpcError)
+    except ImportError:
+        pass
+    return tuple(excs)
+
+
+def retriable_firestore_exceptions() -> tuple[type[BaseException], ...]:
+    """**client は健全だが request 単位で retry すれば解消する** 例外型。
+
+    N3 (PR #82): トランザクション衝突 (`Aborted`) はここに分離。Lab /
+    Firestore singleton を破棄せず、503 + `Retry-After: 1` だけ返して
+    クライアントの retry に任せる。複数ユーザー同時アクセスで cascading
+    reset が起きるのを防ぐ。
+    """
+    excs: list[type[BaseException]] = []
+    try:
+        from google.api_core import exceptions as gax
+
+        excs.append(gax.Aborted)
     except ImportError:
         pass
     return tuple(excs)
