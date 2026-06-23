@@ -249,18 +249,17 @@ def create_record(
 
 
 def _compute_stats(vals: list[float]) -> StatsBlock:
-    """数値リスト → StatsBlock。空集合は count=0 で返す (他フィールドは 0.0)。"""
-    import statistics
+    """数値リスト → StatsBlock。空集合は count=0 で返す (他フィールドは 0.0)。
 
-    if not vals:
-        return StatsBlock(count=0)
+    `labvault.core.aggregate.compute_stats` を Pydantic schema に詰め
+    替える薄いアダプタ。3 経路 (backend / MCP / CLI) で同じ計算式を使う
+    ようにするための delegate (PR #78 で core 抽出)。
+    """
+    from labvault.core.aggregate import compute_stats
+
+    s = compute_stats(vals)
     return StatsBlock(
-        count=len(vals),
-        mean=round(statistics.mean(vals), 4),
-        std=round(statistics.stdev(vals), 4) if len(vals) > 1 else 0.0,
-        min=min(vals),
-        max=max(vals),
-        median=round(statistics.median(vals), 4),
+        count=s.count, mean=s.mean, std=s.std, min=s.min, max=s.max, median=s.median
     )
 
 
@@ -381,33 +380,22 @@ def aggregate_records(
     if truncated:
         items = items[:limit]
 
-    values: list[float] = []
-    groups: dict[str, list[float]] = {}
-    for rec in items:
-        cond = rec.get_conditions()
-        res = rec.results.to_dict()
-        # results を優先 (同名 key で衝突した場合 — まれ)。
-        merged = {**cond, **res}
-        if key not in merged:
-            continue
-        v = merged[key]
-        if not isinstance(v, (int, float)) or isinstance(v, bool):
-            continue
-        values.append(float(v))
-        if group_by:
-            gv = merged.get(group_by, None)
-            label = "unknown" if gv is None else str(gv)
-            groups.setdefault(label, []).append(float(v))
+    from labvault.core.aggregate import compute_aggregate
+
+    result = compute_aggregate(items, key, group_by=group_by)
+
+    def _to_block(s: Any) -> StatsBlock:
+        return StatsBlock(
+            count=s.count, mean=s.mean, std=s.std, min=s.min, max=s.max, median=s.median
+        )
 
     return AggregateResponse(
-        key=key,
-        record_count=len(items),
-        value_count=len(values),
-        stats=_compute_stats(values),
+        key=result.key,
+        record_count=result.record_count,
+        value_count=result.value_count,
+        stats=_to_block(result.overall),
         group_by=group_by,
-        groups={k: _compute_stats(v) for k, v in sorted(groups.items())}
-        if group_by
-        else {},
+        groups={k: _to_block(v) for k, v in result.groups.items()},
         truncated=truncated,
     )
 
