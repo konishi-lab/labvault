@@ -73,6 +73,44 @@ class RecordDetail(RecordSummary):
     events: list[dict[str, Any]] = []
 
 
+class CellLogEntry(BaseModel):
+    """1 セル分の Notebook 実行ログ。
+
+    SDK の ``CellLog`` dataclass と同じスキーマの公開版。`new_vars` /
+    `changed_vars` / `deleted_vars` は `tracking.namespace.diff_namespaces`
+    が出した「変数名 → digest (type / shape / hash)」の dict。
+    フルの値を返すと巨大化するし、機微情報も乗りやすいので、digest
+    のみが入っている。
+    """
+
+    cell_id: str
+    record_id: str
+    cell_number: int
+    execution_count: int = 0
+    source: str = ""
+    source_hash: str = ""
+    new_vars: dict[str, Any] = {}
+    changed_vars: dict[str, Any] = {}
+    deleted_vars: list[str] = []
+    duration_sec: float = 0.0
+    executed_at: datetime | None = None
+    error: dict[str, Any] | None = None
+    session_id: str = ""
+
+
+class CellLogListResponse(BaseModel):
+    """`GET /api/records/{id}/cell_logs` のレスポンス。
+
+    `cell_number` 昇順で `limit` 件まで。`limit` を超えた場合
+    `has_more=True` を返すので、frontend は「N+ 件 (もっと絞り込んで)」
+    の表記を出せる。
+    """
+
+    items: list[CellLogEntry]
+    total: int
+    has_more: bool = False
+
+
 class RecordListResponse(BaseModel):
     items: list[RecordSummary]
     # 表示中の件数 (= items の長さ)。総ヒット数ではない (Firestore に対し

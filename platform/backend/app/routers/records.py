@@ -12,6 +12,8 @@ from labvault.core.exceptions import RecordNotFoundError
 from ..auth import User, current_user, get_lab
 from ..schemas import (
     AggregateResponse,
+    CellLogEntry,
+    CellLogListResponse,
     ConditionsUpdate,
     ConditionUnitsUpdate,
     NoteCreate,
@@ -527,6 +529,44 @@ def get_children_conditions(
             }
         )
     return items
+
+
+@router.get("/{record_id}/cell_logs", response_model=CellLogListResponse)
+def get_cell_logs(
+    record_id: str,
+    limit: int = 100,
+    lab: Lab = Depends(get_lab),
+) -> CellLogListResponse:
+    """この record に紐付いた Notebook セル実行ログ (cell_number 昇順)。
+
+    `IPython hooks` で自動収集された CellLog (要件 R13) を Web UI / MCP
+    から読めるようにする公開 endpoint。SDK 同梱の ``CellLog`` dataclass
+    と同じスキーマ + Pydantic validation。
+
+    R13 は labvault の最大の差別化資産だが、これまで Web / MCP に
+    露出経路が無く実質「死蔵」状態だった (Roadmap レビューより)。
+    本 endpoint と frontend の CellLog セクション + MCP
+    `get_notebook_log` ツールを一式で出すことで「LLM が Notebook 履歴を
+    辿って解析を続ける」シナリオが初めて成立する。
+    """
+    try:
+        lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found") from None
+
+    if limit < 1 or limit > 1000:
+        raise HTTPException(
+            status_code=400, detail="limit must be between 1 and 1000"
+        )
+
+    # backend は cell_number 昇順 + limit 件まで返す。`+1` 取って has_more
+    # を見るパターン。internal の `_metadata.get_cell_logs` を使う。
+    raw = lab._metadata.get_cell_logs(lab._team, record_id, limit=limit + 1)
+    truncated = len(raw) > limit
+    if truncated:
+        raw = raw[:limit]
+    items = [CellLogEntry.model_validate(r) for r in raw]
+    return CellLogListResponse(items=items, total=len(items), has_more=truncated)
 
 
 # --- Record Operations ---
