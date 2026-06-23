@@ -63,6 +63,11 @@ from .secrets_util import get_secret
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """アプリケーションのライフサイクル管理。"""
+    # Cloud Logging 互換の JSON 構造化ログを root に attach (PR #79 / C3)。
+    # `LABVAULT_DISABLE_JSON_LOG=1` で抑止 (主にテスト環境用)。
+    from .observability import setup_json_logging
+
+    setup_json_logging()
     # dev skip モードでは firebase-admin を初期化しない
     if os.environ.get("LABVAULT_DEV_SKIP_AUTH") != "1":
         init_firebase_admin()

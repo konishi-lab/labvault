@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +11,7 @@ from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
 from ..auth import User, current_user, get_lab
+from ..observability import EventTimer, log_event
 from ..schemas import (
     AggregateResponse,
     CellLogEntry,
@@ -29,6 +31,7 @@ from ..schemas import (
 )
 
 router = APIRouter(prefix="/api/records", tags=["records"])
+logger = logging.getLogger(__name__)
 
 
 def _to_summary(rec: Any) -> RecordSummary:
@@ -169,59 +172,85 @@ def list_records(
                 push_down[f"idx_{key}"] = value
 
     fetch_limit = limit * 5 if parsed_conditions else limit
-    # Firestore に parent_id==None フィルタを直接渡す
-    if hasattr(lab._metadata, "list_records"):
-        records = lab._metadata.list_records(
-            lab._team,
-            tags=tag_list,
-            status=status,
-            record_type=type,
-            created_by=created_by,
-            parent_id=None,  # ルートレコードのみ
-            conditions=push_down or None,
-            limit=fetch_limit,
-            offset=offset,
+    # 走査全体を計測 + 構造化ログ。push-down に乗らなかった条件
+    # (= post-filter で潰す条件) が多いほど遅くなるので可視化が要。
+    with EventTimer(
+        logger,
+        "records.list",
+        limit=limit,
+        offset=offset,
+        condition_keys=sorted(parsed_conditions.keys()),
+        push_down_keys=sorted(push_down.keys()),
+        post_filter_keys=sorted(
+            k for k in parsed_conditions if f"idx_{k}" not in push_down
+        ),
+        template=template,
+        mine_only=bool(created_by),
+    ) as timer:
+        # Firestore に parent_id==None フィルタを直接渡す
+        if hasattr(lab._metadata, "list_records"):
+            records = lab._metadata.list_records(
+                lab._team,
+                tags=tag_list,
+                status=status,
+                record_type=type,
+                created_by=created_by,
+                parent_id=None,  # ルートレコードのみ
+                conditions=push_down or None,
+                limit=fetch_limit,
+                offset=offset,
+            )
+            from labvault.core.record import Record as _Record
+
+            items = [_Record._from_dict(r, lab=lab) for r in records]
+        else:
+            items = lab.list(
+                tags=tag_list,
+                status=status,
+                type=type,
+                created_by=created_by,
+                limit=fetch_limit,
+                offset=offset,
+            )
+            items = [r for r in items if r.parent_id is None]
+
+        fetched_count = len(items)
+
+        # post-filter: push down に乗らない条件 + Platform backend がサーバー未
+        # 対応の場合の正確性保証。Lab.search と同じ _match_condition を使う。
+        if parsed_conditions:
+            from labvault.core.lab import _match_condition
+
+            filtered: list[Any] = []
+            for rec in items:
+                cond = rec.get_conditions()
+                if all(
+                    _match_condition(cond.get(k), v)
+                    for k, v in parsed_conditions.items()
+                ):
+                    filtered.append(rec)
+                    if len(filtered) >= limit:
+                        break
+            items = filtered
+        elif len(items) > limit:
+            items = items[:limit]
+
+        # template フィルタ (post-filter)。indexed_fields にしないので
+        # 数の多い team では遅くなる可能性があるが、template 名でのドリル
+        # ダウンは UI のショートカット用途で、頻度は低い前提。
+        if template:
+            items = [
+                r for r in items if getattr(r, "template_name", None) == template
+            ]
+
+        # 内部 fetch_limit に達した = サーバー側で more がある可能性
+        has_more = len(items) >= limit and len(items) > 0
+        timer.add(
+            fetched=fetched_count,
+            returned=len(items),
+            post_filter_dropped=fetched_count - len(items),
+            has_more=has_more,
         )
-        from labvault.core.record import Record as _Record
-
-        items = [_Record._from_dict(r, lab=lab) for r in records]
-    else:
-        items = lab.list(
-            tags=tag_list,
-            status=status,
-            type=type,
-            created_by=created_by,
-            limit=fetch_limit,
-            offset=offset,
-        )
-        items = [r for r in items if r.parent_id is None]
-
-    # post-filter: push down に乗らない条件 + Platform backend がサーバー未
-    # 対応の場合の正確性保証。Lab.search と同じ _match_condition を使う。
-    if parsed_conditions:
-        from labvault.core.lab import _match_condition
-
-        filtered: list[Any] = []
-        for rec in items:
-            cond = rec.get_conditions()
-            if all(
-                _match_condition(cond.get(k), v) for k, v in parsed_conditions.items()
-            ):
-                filtered.append(rec)
-                if len(filtered) >= limit:
-                    break
-        items = filtered
-    elif len(items) > limit:
-        items = items[:limit]
-
-    # template フィルタ (post-filter)。indexed_fields にしないので
-    # 数の多い team では遅くなる可能性があるが、template 名でのドリル
-    # ダウンは UI のショートカット用途で、頻度は低い前提。
-    if template:
-        items = [r for r in items if getattr(r, "template_name", None) == template]
-
-    # 内部 fetch_limit に達した = サーバー側で more がある可能性
-    has_more = len(items) >= limit and len(items) > 0
 
     return RecordListResponse(
         items=[_to_summary(r) for r in items],
@@ -334,55 +363,75 @@ def aggregate_records(
     effective_parent = parent_id if parent_id is not None else None
     fetch_limit = min(limit + 1, 5001)  # +1 で truncated 判定
 
-    if hasattr(lab._metadata, "list_records"):
-        records = lab._metadata.list_records(
-            lab._team,
-            tags=tag_list,
-            status=status,
-            record_type=type,
-            created_by=created_by,
-            parent_id=effective_parent,
-            conditions=push_down or None,
-            limit=fetch_limit,
-        )
-        from labvault.core.record import Record as _Record
-
-        items = [_Record._from_dict(r, lab=lab) for r in records]
-    else:
-        items = lab.list(
-            tags=tag_list,
-            status=status,
-            type=type,
-            created_by=created_by,
-            limit=fetch_limit,
-        )
-        if parent_id is None:
-            items = [r for r in items if r.parent_id is None]
-        else:
-            items = [r for r in items if r.parent_id == parent_id]
-
-    # post-filter で push-down に乗らない条件 + template フィルタを適用。
-    if parsed_conditions:
-        from labvault.core.lab import _match_condition
-
-        items = [
-            r
-            for r in items
-            if all(
-                _match_condition(r.get_conditions().get(k), v)
-                for k, v in parsed_conditions.items()
+    with EventTimer(
+        logger,
+        "records.aggregate",
+        key=key,
+        group_by=group_by,
+        limit=limit,
+        parent_id=parent_id,
+        push_down_keys=sorted(push_down.keys()),
+        post_filter_keys=sorted(
+            k for k in parsed_conditions if f"idx_{k}" not in push_down
+        ),
+    ) as timer:
+        if hasattr(lab._metadata, "list_records"):
+            records = lab._metadata.list_records(
+                lab._team,
+                tags=tag_list,
+                status=status,
+                record_type=type,
+                created_by=created_by,
+                parent_id=effective_parent,
+                conditions=push_down or None,
+                limit=fetch_limit,
             )
-        ]
-    if template:
-        items = [r for r in items if getattr(r, "template_name", None) == template]
+            from labvault.core.record import Record as _Record
 
-    truncated = len(items) > limit
-    if truncated:
-        items = items[:limit]
+            items = [_Record._from_dict(r, lab=lab) for r in records]
+        else:
+            items = lab.list(
+                tags=tag_list,
+                status=status,
+                type=type,
+                created_by=created_by,
+                limit=fetch_limit,
+            )
+            if parent_id is None:
+                items = [r for r in items if r.parent_id is None]
+            else:
+                items = [r for r in items if r.parent_id == parent_id]
 
-    from labvault.core.aggregate import compute_aggregate
+        # post-filter で push-down に乗らない条件 + template フィルタを適用。
+        if parsed_conditions:
+            from labvault.core.lab import _match_condition
 
-    result = compute_aggregate(items, key, group_by=group_by)
+            items = [
+                r
+                for r in items
+                if all(
+                    _match_condition(r.get_conditions().get(k), v)
+                    for k, v in parsed_conditions.items()
+                )
+            ]
+        if template:
+            items = [
+                r for r in items if getattr(r, "template_name", None) == template
+            ]
+
+        truncated = len(items) > limit
+        if truncated:
+            items = items[:limit]
+
+        from labvault.core.aggregate import compute_aggregate
+
+        result = compute_aggregate(items, key, group_by=group_by)
+        timer.add(
+            record_count=result.record_count,
+            value_count=result.value_count,
+            truncated=truncated,
+            groups=len(result.groups),
+        )
 
     def _to_block(s: Any) -> StatsBlock:
         return StatsBlock(
