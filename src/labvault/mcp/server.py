@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import statistics
 from collections.abc import Callable
 from typing import Any
 
@@ -290,18 +289,6 @@ def create_server(
 
         return result
 
-    def _stats(vals: list[float]) -> dict[str, Any]:
-        if not vals:
-            return {}
-        return {
-            "count": len(vals),
-            "mean": round(statistics.mean(vals), 4),
-            "std": (round(statistics.stdev(vals), 4) if len(vals) > 1 else 0.0),
-            "min": min(vals),
-            "max": max(vals),
-            "median": round(statistics.median(vals), 4),
-        }
-
     @mcp.tool(
         description="数値キーの統計集計。"
         "results/conditions 両対応。group_by でグループ化。"
@@ -318,6 +305,8 @@ def create_server(
         record_type: str | None = None,
         team: str | None = None,
     ) -> dict[str, Any]:
+        from labvault.core.aggregate import compute_aggregate
+
         lab = _get_lab(team)
         records = lab.list(
             tags=tags,
@@ -325,41 +314,22 @@ def create_server(
             type=record_type,
             limit=5000,
         )
-
         if parent_id is not None:
             records = [r for r in records if r.parent_id == parent_id]
 
-        values: list[float] = []
-        groups: dict[str, list[float]] = {}
-
-        for rec in records:
-            cond = rec.get_conditions()
-            res = rec.results.to_dict()
-            merged = {**cond, **res}
-
-            if key not in merged:
-                continue
-            val = merged[key]
-            # bool は int の subclass なので isinstance(v, (int, float)) を
-            # すり抜けて True/False が 1.0/0.0 として mean に混入する。
-            # backend /api/records/aggregate と整合性を取るため明示的に除外。
-            if not isinstance(val, (int, float)) or isinstance(val, bool):
-                continue
-            values.append(float(val))
-
-            if group_by:
-                group_val = str(merged.get(group_by, "unknown"))
-                groups.setdefault(group_val, []).append(float(val))
-
-        result: dict[str, Any] = {
-            "key": key,
-            "record_count": len(records),
-            "overall": _stats(values),
+        result = compute_aggregate(records, key, group_by=group_by)
+        # 後方互換: 過去のレスポンス shape を維持する。core 側は AggregateResult
+        # を返すが、MCP の dict 出力形態 (overall: {} when empty, groups は
+        # group_by 指定時のみ) に合わせて整形する。
+        d: dict[str, Any] = {
+            "key": result.key,
+            "record_count": result.record_count,
+            "overall": result.overall.to_dict() if result.overall.count else {},
         }
-        if group_by and groups:
-            result["group_by"] = group_by
-            result["groups"] = {k: _stats(v) for k, v in sorted(groups.items())}
-        return result
+        if group_by and result.groups:
+            d["group_by"] = group_by
+            d["groups"] = {k: v.to_dict() for k, v in result.groups.items()}
+        return d
 
     @mcp.tool(
         description="実験シリーズの概要を1回で取得する。"
@@ -371,6 +341,12 @@ def create_server(
         record_type: str | None = None,
         team: str | None = None,
     ) -> dict[str, Any]:
+        from labvault.core.aggregate import (
+            compute_stats,
+            is_numeric,
+            numeric_values_only,
+        )
+
         lab = _get_lab(team)
         all_records = lab.list(type=record_type, limit=5000)
         children = [r for r in all_records if r.parent_id == parent_id]
@@ -382,31 +358,23 @@ def create_server(
         for rec in children:
             st = str(rec.status)
             status_counts[st] = status_counts.get(st, 0) + 1
-
-            cond = rec.get_conditions()
-            for k, v in cond.items():
+            for k, v in rec.get_conditions().items():
                 condition_keys.setdefault(k, []).append(v)
-
-            res = rec.results.to_dict()
-            for k, v in res.items():
-                # bool は int の subclass。aggregate と同じ流儀で除外。
-                if isinstance(v, (int, float)) and not isinstance(v, bool):
+            for k, v in rec.results.to_dict().items():
+                if is_numeric(v):
                     result_keys.setdefault(k, []).append(float(v))
 
         conditions_summary: dict[str, Any] = {}
         for k, vals in condition_keys.items():
-            numeric_vals = [
-                v
-                for v in vals
-                if isinstance(v, (int, float)) and not isinstance(v, bool)
-            ]
+            numeric_vals = numeric_values_only(vals)
             if numeric_vals and len(numeric_vals) == len(vals):
+                stats = compute_stats(numeric_vals)
                 conditions_summary[k] = {
                     "type": "numeric",
                     "unique_count": len(set(numeric_vals)),
-                    "min": min(numeric_vals),
-                    "max": max(numeric_vals),
-                    "mean": round(statistics.mean(numeric_vals), 4),
+                    "min": stats.min,
+                    "max": stats.max,
+                    "mean": stats.mean,
                 }
             else:
                 unique = sorted(set(str(v) for v in vals))
@@ -416,7 +384,14 @@ def create_server(
                     "unique_count": len(unique),
                 }
 
-        results_summary = {k: _stats(v) for k, v in result_keys.items()}
+        results_summary = {
+            k: compute_stats(v).to_dict() for k, v in result_keys.items()
+        }
+        # 空集合は count=0 だけが詰まった dict になる。MCP の従来仕様は
+        # 「結果無しは空 dict {}」だったので、後方互換を保つために調整。
+        results_summary = {
+            k: (v if v.get("count", 0) else {}) for k, v in results_summary.items()
+        }
 
         return {
             "parent_id": parent_id,

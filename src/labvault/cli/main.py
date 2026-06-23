@@ -623,7 +623,7 @@ def aggregate(
     record_type: str | None,
 ) -> None:
     """数値キーの統計集計 (conditions/results 両対応)."""
-    import statistics
+    from labvault.core.aggregate import StatsResult, compute_aggregate
 
     lab = _get_lab()
     records = lab.list(
@@ -632,45 +632,26 @@ def aggregate(
         type=record_type,
         limit=5000,
     )
-
     if parent_id is not None:
         records = [r for r in records if r.parent_id == parent_id]
 
-    values: list[float] = []
-    groups: dict[str, list[float]] = {}
+    result = compute_aggregate(records, key, group_by=group_by)
 
-    for rec in records:
-        merged = {**rec.get_conditions(), **rec.results.to_dict()}
-        if key not in merged:
-            continue
-        val = merged[key]
-        # bool は int の subclass なので isinstance(v, (int, float)) を
-        # すり抜けて True/False が 1.0/0.0 として mean に混入する。
-        # MCP / backend /api/records/aggregate と整合性を取るため明示的に除外。
-        if not isinstance(val, (int, float)) or isinstance(val, bool):
-            continue
-        values.append(float(val))
-        if group_by:
-            gv = str(merged.get(group_by, "unknown"))
-            groups.setdefault(gv, []).append(float(val))
-
-    def _fmt(vals: list[float]) -> str:
-        if not vals:
+    def _fmt(s: StatsResult) -> str:
+        if not s.count:
             return "no data"
-        mean = statistics.mean(vals)
-        std = statistics.stdev(vals) if len(vals) > 1 else 0.0
         return (
-            f"n={len(vals)}  mean={mean:.4f}  std={std:.4f}  "
-            f"min={min(vals)}  max={max(vals)}  median={statistics.median(vals):.4f}"
+            f"n={s.count}  mean={s.mean:.4f}  std={s.std:.4f}  "
+            f"min={s.min}  max={s.max}  median={s.median:.4f}"
         )
 
-    click.echo(f"Key: {key}  ({len(records)} records scanned)")
-    click.echo(f"Overall: {_fmt(values)}")
+    click.echo(f"Key: {key}  ({result.record_count} records scanned)")
+    click.echo(f"Overall: {_fmt(result.overall)}")
 
-    if group_by and groups:
+    if group_by and result.groups:
         click.echo(f"\nGroup by: {group_by}")
-        for gk in sorted(groups.keys()):
-            click.echo(f"  {gk}: {_fmt(groups[gk])}")
+        for gk in sorted(result.groups.keys()):
+            click.echo(f"  {gk}: {_fmt(result.groups[gk])}")
     lab.close()
 
 
@@ -678,7 +659,7 @@ def aggregate(
 @click.argument("parent_id")
 def overview(parent_id: str) -> None:
     """実験シリーズの概要を表示する。"""
-    import statistics
+    from labvault.core.aggregate import compute_stats, is_numeric, numeric_values_only
 
     lab = _get_lab()
     all_records = lab.list(limit=5000)
@@ -689,7 +670,6 @@ def overview(parent_id: str) -> None:
         lab.close()
         return
 
-    # ステータス集計
     status_counts: dict[str, int] = {}
     condition_keys: dict[str, list[Any]] = {}
     result_keys: dict[str, list[float]] = {}
@@ -700,8 +680,7 @@ def overview(parent_id: str) -> None:
         for k, v in rec.get_conditions().items():
             condition_keys.setdefault(k, []).append(v)
         for k, v in rec.results.to_dict().items():
-            # bool は int の subclass。aggregate と同じ流儀で除外。
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if is_numeric(v):
                 result_keys.setdefault(k, []).append(float(v))
 
     click.echo(f"Parent: {parent_id}  Children: {len(children)}")
@@ -711,15 +690,12 @@ def overview(parent_id: str) -> None:
     if condition_keys:
         click.echo("\nConditions:")
         for k, vals in sorted(condition_keys.items()):
-            nums = [
-                v
-                for v in vals
-                if isinstance(v, (int, float)) and not isinstance(v, bool)
-            ]
+            nums = numeric_values_only(vals)
             if nums and len(nums) == len(vals):
+                stats = compute_stats(nums)
                 click.echo(
-                    f"  {k}: min={min(nums)}  max={max(nums)}  "
-                    f"mean={statistics.mean(nums):.4f}  unique={len(set(nums))}"
+                    f"  {k}: min={stats.min}  max={stats.max}  "
+                    f"mean={stats.mean:.4f}  unique={len(set(nums))}"
                 )
             else:
                 unique = sorted(set(str(v) for v in vals))
@@ -731,10 +707,10 @@ def overview(parent_id: str) -> None:
     if result_keys:
         click.echo("\nResults:")
         for k, vals in sorted(result_keys.items()):
-            mean = statistics.mean(vals)
+            stats = compute_stats(vals)
             click.echo(
-                f"  {k}: n={len(vals)}  mean={mean:.4f}  "
-                f"min={min(vals)}  max={max(vals)}"
+                f"  {k}: n={stats.count}  mean={stats.mean:.4f}  "
+                f"min={stats.min}  max={stats.max}"
             )
     lab.close()
 
