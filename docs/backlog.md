@@ -7,6 +7,21 @@
 
 ---
 
+## 📌 次着手予定 (2026-06-25 朝)
+
+**S1 Phase 1B** (1〜2 日) — UI 公開:
+- `GET /api/records/shared-with-me` 一覧 endpoint
+- Firestore index: `(deleted_at, shared_with_emails array-contains, updated_at DESC)`
+  → `firestore.indexes.json` 更新 + `firebase deploy --only firestore:labvault`
+- Frontend api.ts: `RecordDetail.shares?` 型 + `fetchShares` / `grantShare` /
+  `revokeShare` / `fetchSharedWithMe` helper
+- Frontend: record 詳細「共有」モーダル (email + role + active shares + 失効)
+- `/records?shared=1` filter で「他チームから共有された record」表示
+
+その後の予定: Phase 1C (analyst write path、1 日) → Phase 2 (外部 token、3 日)
+
+---
+
 ## 🚨 緊急 ✅ **済 (PR #82)** + ⚠ 高優先 ✅ **済 (PR #83)**
 
 3 観点クリティカルレビューで発覚した本番実害 8 件をすべて潰した:
@@ -31,7 +46,8 @@
 - **N8**: 例外 handler 全体を broad try/except で囲み、二次例外でも必ず
   500 + no-store + CORS 整合の JSONResponse を返す fallback
 
-tests +10 (backend 133→143)。本番 deploy 後の確認項目:
+tests +10 通算 (backend 133→135 で N1-N3、135→143 で N4-N8)。本番 deploy
+後の確認項目:
 - Cloud Logging で `firestore.client_reset` が deploy 直後にゼロのまま
 - `/records?template=XRD` を直開きで UI ロックしない
 - `bulk_upload.done` event が常時 emit される (start と件数一致)
