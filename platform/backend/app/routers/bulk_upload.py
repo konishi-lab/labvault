@@ -191,6 +191,12 @@ async def bulk_upload(
         total_bytes = sum(len(d) for _, d in file_data)
         uploaded = 0
         errors: list[str] = []
+        # N4 (PR #83): クライアントが SSE を mid-stream で abort すると
+        # GeneratorExit が flush され、`bulk_upload.done` event が永久に
+        # 出ない問題があった (start のみ累積、observability ダッシュボードが
+        # 「成功」と誤判定)。aborted フラグ + try/finally で必ず done event を
+        # 出す。GeneratorExit 自身は再 raise (SSE プロトコル遵守)。
+        aborted = False
         t0 = time.perf_counter()
         log_event(
             logger,
@@ -201,119 +207,133 @@ async def bulk_upload(
             grid=f"{rows}x{cols}",
             children_count=len(children),
         )
-
-        for file_idx, (filename, data) in enumerate(file_data):
-            if len(data) == 0:
-                errors.append(f"{filename}: empty file")
-                yield _sse(
-                    "progress",
-                    {
-                        "current": file_idx + 1,
-                        "total": total,
-                        "filename": filename,
-                        "status": "skipped",
-                        "uploaded": uploaded,
-                    },
-                )
-                continue
-
-            if file_idx >= len(positions):
-                errors.append(f"{filename}: exceeds grid size")
-                yield _sse(
-                    "progress",
-                    {
-                        "current": file_idx + 1,
-                        "total": total,
-                        "filename": filename,
-                        "status": "skipped",
-                        "uploaded": uploaded,
-                    },
-                )
-                continue
-
-            row, col = positions[file_idx]
-            record_idx = row * cols + col
-
-            if record_idx >= len(children):
-                errors.append(f"{filename}: no sub-record at [{row},{col}]")
-                yield _sse(
-                    "progress",
-                    {
-                        "current": file_idx + 1,
-                        "total": total,
-                        "filename": filename,
-                        "status": "error",
-                        "uploaded": uploaded,
-                    },
-                )
-                continue
-
-            target = children[record_idx]
-
-            try:
-                nc_path = _build_nc_path(target, filename, lab)
-                nc = lab._storage._get_client()
-                parent_dir = "/".join(nc_path.split("/")[:-1])
-                nc.files.makedirs(parent_dir, exist_ok=True)
-                nc.files.upload(nc_path, data)
-
-                from labvault.core.types import DataRef
-
-                target._data_refs = [r for r in target._data_refs if r.name != filename]
-                target._data_refs.append(
-                    DataRef(
-                        name=filename,
-                        nextcloud_path=nc_path,
-                        size_bytes=len(data),
+        try:
+            for file_idx, (filename, data) in enumerate(file_data):
+                if len(data) == 0:
+                    errors.append(f"{filename}: empty file")
+                    yield _sse(
+                        "progress",
+                        {
+                            "current": file_idx + 1,
+                            "total": total,
+                            "filename": filename,
+                            "status": "skipped",
+                            "uploaded": uploaded,
+                        },
                     )
-                )
-                target.updated_by = user.email
-                target._persist()
-                uploaded += 1
+                    continue
 
-                yield _sse(
-                    "progress",
-                    {
-                        "current": file_idx + 1,
-                        "total": total,
-                        "filename": filename,
-                        "status": "ok",
-                        "record_id": target.id,
-                        "uploaded": uploaded,
-                    },
-                )
-            except Exception as e:
-                errors.append(f"{filename}: {e}")
-                yield _sse(
-                    "progress",
-                    {
-                        "current": file_idx + 1,
-                        "total": total,
-                        "filename": filename,
-                        "status": "error",
-                        "uploaded": uploaded,
-                    },
-                )
+                if file_idx >= len(positions):
+                    errors.append(f"{filename}: exceeds grid size")
+                    yield _sse(
+                        "progress",
+                        {
+                            "current": file_idx + 1,
+                            "total": total,
+                            "filename": filename,
+                            "status": "skipped",
+                            "uploaded": uploaded,
+                        },
+                    )
+                    continue
 
-        duration_ms = round((time.perf_counter() - t0) * 1000, 1)
-        log_event(
-            logger,
-            "bulk_upload.done",
-            level=(logging.WARNING if errors else logging.INFO),
-            parent_id=record_id,
-            total_files=total,
-            uploaded=uploaded,
-            error_count=len(errors),
-            duration_ms=duration_ms,
-        )
-        yield _sse(
-            "done",
-            {
-                "total": total,
-                "uploaded": uploaded,
-                "errors": errors,
-            },
-        )
+                row, col = positions[file_idx]
+                record_idx = row * cols + col
+
+                if record_idx >= len(children):
+                    errors.append(f"{filename}: no sub-record at [{row},{col}]")
+                    yield _sse(
+                        "progress",
+                        {
+                            "current": file_idx + 1,
+                            "total": total,
+                            "filename": filename,
+                            "status": "error",
+                            "uploaded": uploaded,
+                        },
+                    )
+                    continue
+
+                target = children[record_idx]
+
+                try:
+                    nc_path = _build_nc_path(target, filename, lab)
+                    nc = lab._storage._get_client()
+                    parent_dir = "/".join(nc_path.split("/")[:-1])
+                    nc.files.makedirs(parent_dir, exist_ok=True)
+                    nc.files.upload(nc_path, data)
+
+                    from labvault.core.types import DataRef
+
+                    target._data_refs = [
+                        r for r in target._data_refs if r.name != filename
+                    ]
+                    target._data_refs.append(
+                        DataRef(
+                            name=filename,
+                            nextcloud_path=nc_path,
+                            size_bytes=len(data),
+                        )
+                    )
+                    target.updated_by = user.email
+                    target._persist()
+                    uploaded += 1
+
+                    yield _sse(
+                        "progress",
+                        {
+                            "current": file_idx + 1,
+                            "total": total,
+                            "filename": filename,
+                            "status": "ok",
+                            "record_id": target.id,
+                            "uploaded": uploaded,
+                        },
+                    )
+                except Exception as e:
+                    errors.append(f"{filename}: {e}")
+                    yield _sse(
+                        "progress",
+                        {
+                            "current": file_idx + 1,
+                            "total": total,
+                            "filename": filename,
+                            "status": "error",
+                            "uploaded": uploaded,
+                        },
+                    )
+
+            # 正常終了パス: done event を yield してから finally で log
+            yield _sse(
+                "done",
+                {
+                    "total": total,
+                    "uploaded": uploaded,
+                    "errors": errors,
+                },
+            )
+        except GeneratorExit:
+            # クライアントが mid-stream で接続切断 (browser タブ閉じ等)
+            aborted = True
+            raise
+        finally:
+            # abort / 正常完了 / 例外 のいずれでも必ず done event を log。
+            # observability ダッシュボードが「start のみ累積で done 無し」と
+            # いう状態にならないようにする (N4)。
+            duration_ms = round((time.perf_counter() - t0) * 1000, 1)
+            log_event(
+                logger,
+                "bulk_upload.done",
+                level=(
+                    logging.WARNING if (errors or aborted) else logging.INFO
+                ),
+                parent_id=record_id,
+                total_files=total,
+                uploaded=uploaded,
+                error_count=len(errors),
+                duration_ms=duration_ms,
+                aborted=aborted,
+            )
 
     return StreamingResponse(
         event_stream(),

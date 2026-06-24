@@ -11,7 +11,7 @@ from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
 from ..auth import User, current_user, get_lab
-from ..observability import EventTimer, log_event
+from ..observability import EventTimer, log_event, safe_keys
 from ..schemas import (
     AggregateResponse,
     CellLogEntry,
@@ -179,10 +179,13 @@ def list_records(
         "records.list",
         limit=limit,
         offset=offset,
-        condition_keys=sorted(parsed_conditions.keys()),
-        push_down_keys=sorted(push_down.keys()),
-        post_filter_keys=sorted(
-            k for k in parsed_conditions if f"idx_{k}" not in push_down
+        # N6 (PR #83): ユーザー入力由来の condition key を生で log に乗せると
+        # フリーフォーム key (`patient_name` 等) が漏洩する。`safe_keys` で
+        # identifier 形式 + 短い key のみ pass、他は `<redacted>` に置換。
+        condition_keys=safe_keys(sorted(parsed_conditions.keys())),
+        push_down_keys=safe_keys(sorted(push_down.keys())),
+        post_filter_keys=safe_keys(
+            sorted(k for k in parsed_conditions if f"idx_{k}" not in push_down)
         ),
         template=template,
         mine_only=bool(created_by),
@@ -366,13 +369,15 @@ def aggregate_records(
     with EventTimer(
         logger,
         "records.aggregate",
-        key=key,
-        group_by=group_by,
+        # `key` / `group_by` はユーザー入力なので同様に safe_keys でガード。
+        # 単一値だが list 化して通す ([0] で 1 要素を取り出す)。
+        key=safe_keys([key])[0] if key else key,
+        group_by=safe_keys([group_by])[0] if group_by else None,
         limit=limit,
         parent_id=parent_id,
-        push_down_keys=sorted(push_down.keys()),
-        post_filter_keys=sorted(
-            k for k in parsed_conditions if f"idx_{k}" not in push_down
+        push_down_keys=safe_keys(sorted(push_down.keys())),
+        post_filter_keys=safe_keys(
+            sorted(k for k in parsed_conditions if f"idx_{k}" not in push_down)
         ),
     ) as timer:
         if hasattr(lab._metadata, "list_records"):

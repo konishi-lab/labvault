@@ -75,8 +75,16 @@ export function DashboardChipRow({
         </div>
       </ChipShell>
 
-      {/* C2: 直近 30 日 status 内訳 */}
-      <ChipShell href="/records" title="直近 30 日の status">
+      {/* C2: 直近 30 日 status 内訳
+          N7 (PR #83): C1 だけ truncated 警告が出て C2/C3 は嘘の数字を
+          堂々と表示する状態だった。同じ 200 件集合を集計しているので
+          truncated は 3 chip 全部に効く。amber 注釈で標本値を明示。 */}
+      <ChipShell
+        href="/records"
+        title="直近 30 日の status"
+        truncated={truncated}
+        truncatedHint="200 件で打ち切り (実際の status 件数はもっと多い)"
+      >
         <div className="text-2xl font-semibold tabular-nums flex items-baseline gap-3">
           <span title={`success: ${status30d.done}`}>
             <span className="text-emerald-700">✓</span> {status30d.done}
@@ -95,7 +103,12 @@ export function DashboardChipRow({
       </ChipShell>
 
       {/* C3: 今週の template 上位 3 */}
-      <ChipShell href="/records" title="今週の測定内訳 (template)">
+      <ChipShell
+        href="/records"
+        title="今週の測定内訳 (template)"
+        truncated={truncated}
+        truncatedHint="200 件で打ち切り (本来の比率はもっと変わる可能性あり)"
+      >
         {templatesThisWeek.length === 0 ? (
           <div className="text-sm text-muted-foreground">今週はまだなし</div>
         ) : (
