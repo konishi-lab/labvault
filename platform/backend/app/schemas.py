@@ -56,6 +56,10 @@ class RecordDetail(RecordSummary):
     results: dict[str, Any] = {}
     result_units: dict[str, str] = {}
     result_descriptions: dict[str, str] = {}
+    # S1 (PR #84): 共有設定 (email → role)。Web UI の record 詳細で
+    # 「共有」モーダルが現状を表示するのに使う。閲覧者本人がこの
+    # record に共有されている場合も `shares[email]` で role が分かる。
+    shares: dict[str, str] = {}
     # template.result_fields に登録された unit / description (auto-fill 元)。
     # Web UI が「この値は template 由来か手動入力か」を判別するために使う:
     # result_units[key] と template_result_units[key] が等しい → template 由来。
@@ -205,6 +209,31 @@ class ResultUnitsUpdate(BaseModel):
 class ResultUpdate(BaseModel):
     key: str
     value: Any
+
+
+# --- 共有 (S1 / PR #84) ---
+
+
+class ShareGrantRequest(BaseModel):
+    """`POST /api/records/{id}/shares` の body。
+
+    `email` は招待先 (lowercase 化して保存)、`role` は ``"viewer"`` か
+    ``"analyst"`` のいずれか。
+    """
+
+    email: str
+    role: str  # "viewer" | "analyst"
+
+
+class ShareEntry(BaseModel):
+    """`GET /api/records/{id}/shares` の各要素。"""
+
+    email: str
+    role: str
+
+
+class ShareListResponse(BaseModel):
+    items: list[ShareEntry]
 
 
 # --- Auth / signup ---

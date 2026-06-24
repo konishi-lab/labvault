@@ -10,8 +10,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
-from ..auth import User, current_user, get_lab
+from ..auth import User, current_user, get_lab, get_lab_relaxed
 from ..observability import EventTimer, log_event, safe_keys
+from ..permissions import (
+    VALID_SHARE_ROLES,
+    require_analyze,
+    require_grant,
+    require_read,
+)
 from ..schemas import (
     AggregateResponse,
     CellLogEntry,
@@ -25,6 +31,9 @@ from ..schemas import (
     RecordSummary,
     ResultUnitsUpdate,
     ResultUpdate,
+    ShareEntry,
+    ShareGrantRequest,
+    ShareListResponse,
     StatsBlock,
     StatusUpdate,
     TagsUpdate,
@@ -93,6 +102,10 @@ def _to_detail(rec: Any) -> RecordDetail:
         template_result_descriptions=template_result_descriptions,
         template_required_conditions=template_required_conditions,
         template_required_results=template_required_results,
+        # S1: 共有設定 (email → role)。Web UI の record 詳細「共有」モーダル
+        # が現状を表示するのに使う。閲覧者が grant 主体でない場合でも、
+        # 自分が share されている事実を確認するため返す (UI 側でフィルタ)。
+        shares=getattr(rec, "shares", None) or {},
         notes=[
             {"text": n.text, "created_at": n.created_at, "author": n.author}
             for n in rec.notes
@@ -457,13 +470,22 @@ def aggregate_records(
 @router.get("/{record_id}", response_model=RecordDetail)
 def get_record(
     record_id: str,
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
 ) -> RecordDetail:
-    """レコード詳細を取得する。"""
+    """レコード詳細を取得する。
+
+    S1 (PR #84): team membership だけでなく `shares` で share された
+    ユーザーも閲覧できるよう、`require_read` で認可判定する。team
+    membership が無い user は X-Labvault-Team header を record owner team
+    に向けて投げる必要がある (Frontend が「他チームから共有」表示の際に
+    付与する)。
+    """
     try:
         rec = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
+    require_read(user, rec)
     return _to_detail(rec)
 
 
@@ -497,15 +519,18 @@ def get_children(
     record_id: str,
     limit: int = 100,
     offset: int = 0,
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
 ) -> RecordListResponse:
     """子レコード一覧を取得する（ページネーション対応）。"""
     from labvault.core.record import Record
 
     try:
-        lab.get(record_id)  # 存在確認
+        parent = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
+    # S1: 親 record の認可を子の閲覧にも適用する (親が見える人は子も見える)。
+    require_read(user, parent)
 
     if hasattr(lab._metadata, "list_records"):
         # total カウント用に大きめに取得
@@ -533,15 +558,18 @@ def get_children(
 def get_children_conditions(
     record_id: str,
     limit: int = 5000,
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
 ) -> list[dict[str, Any]]:
     """子レコードの ID + conditions + results を一括取得する。"""
     from labvault.core.record import Record
 
     try:
-        lab.get(record_id)
+        parent = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
+    # S1: 親 record の認可を子の閲覧にも適用する。
+    require_read(user, parent)
 
     if hasattr(lab._metadata, "list_records"):
         rows = lab._metadata.list_records(lab._team, parent_id=record_id, limit=limit)
@@ -577,7 +605,8 @@ def get_children_conditions(
 def get_cell_logs(
     record_id: str,
     limit: int = 100,
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
 ) -> CellLogListResponse:
     """この record に紐付いた Notebook セル実行ログ (cell_number 昇順)。
 
@@ -592,9 +621,10 @@ def get_cell_logs(
     辿って解析を続ける」シナリオが初めて成立する。
     """
     try:
-        lab.get(record_id)
+        rec = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found") from None
+    require_read(user, rec)
 
     if limit < 1 or limit > 1000:
         raise HTTPException(
@@ -609,6 +639,119 @@ def get_cell_logs(
         raw = raw[:limit]
     items = [CellLogEntry.model_validate(r) for r in raw]
     return CellLogListResponse(items=items, total=len(items), has_more=truncated)
+
+
+# --- 共有 (S1 / PR #84) ---
+
+
+@router.get("/{record_id}/shares", response_model=ShareListResponse)
+def list_record_shares(
+    record_id: str,
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
+) -> ShareListResponse:
+    """この record の共有設定一覧。
+
+    閲覧条件: `can_read` (team membership OR share)。share された側も自分の
+    role を確認するため共有設定を見られる。
+    """
+    try:
+        rec = lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found") from None
+    require_read(user, rec)
+    shares = getattr(rec, "shares", None) or {}
+    return ShareListResponse(
+        items=[ShareEntry(email=e, role=r) for e, r in sorted(shares.items())]
+    )
+
+
+@router.post(
+    "/{record_id}/shares",
+    response_model=RecordDetail,
+    status_code=201,
+)
+def grant_record_share(
+    record_id: str,
+    body: ShareGrantRequest,
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
+) -> RecordDetail:
+    """指定 email にこの record を共有する。
+
+    grant 主体: record の `created_by` 本人 + record team の admin
+    (`permissions.can_grant` 参照)。同じ email を再 grant すると role が
+    上書きされる (role 変更にも使える)。
+    """
+    try:
+        rec = lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found") from None
+    require_grant(user, rec)
+
+    email = (body.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="valid email is required")
+    if body.role not in VALID_SHARE_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"role must be one of {list(VALID_SHARE_ROLES)}",
+        )
+    # 自分自身に share しない (no-op だが UX 上は警告する)
+    if email == (user.email or "").strip().lower():
+        raise HTTPException(
+            status_code=400,
+            detail="cannot share a record with yourself",
+        )
+
+    rec.updated_by = user.email
+    rec.grant_share(email, body.role)
+    log_event(
+        logger,
+        "record.share_granted",
+        record_id=record_id,
+        team=lab._team,
+        granted_to=email,
+        role=body.role,
+        granted_by=user.email,
+    )
+    return _to_detail(rec)
+
+
+@router.delete("/{record_id}/shares/{email}", response_model=RecordDetail)
+def revoke_record_share(
+    record_id: str,
+    email: str,
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
+) -> RecordDetail:
+    """指定 email の share を取り消す。
+
+    revoke 主体: grant と同じ (`can_grant`)。存在しない email を渡しても
+    エラーにせず 200 を返す (idempotent revoke、UI 上の race 対策)。
+    """
+    try:
+        rec = lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found") from None
+    require_grant(user, rec)
+
+    target = (email or "").strip().lower()
+    if not target:
+        raise HTTPException(status_code=400, detail="email is required")
+    existed = target in (getattr(rec, "shares", None) or {})
+    rec.updated_by = user.email
+    rec.revoke_share(target)
+    if existed:
+        log_event(
+            logger,
+            "record.share_revoked",
+            record_id=record_id,
+            team=lab._team,
+            revoked_from=target,
+            revoked_by=user.email,
+        )
+    return _to_detail(rec)
 
 
 # --- Record Operations ---

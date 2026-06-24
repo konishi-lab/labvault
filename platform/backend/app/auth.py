@@ -404,6 +404,39 @@ def get_lab(team: str = Depends(current_team)) -> Any:
     return get_lab_for_team(team)
 
 
+def current_team_for_shared_access(
+    user: User = Depends(current_user),
+    x_labvault_team: str | None = Header(default=None, alias="X-Labvault-Team"),
+) -> str:
+    """S1 (PR #84) 共有 record アクセス用の team dep。
+
+    `current_team` は user.has_team(requested) を強制するが、share された
+    record の閲覧/解析では **user は team のメンバーではない** ケースが
+    発生する。本 dep は team membership を強制せず、handler 側で
+    `require_read` / `require_analyze` (`permissions.py`) によって record
+    単位で認可を判定させる。
+
+    team が無指定 (header も default_team も無い) のときは 400 を返す
+    のは同じ。team の存在自体は handler 側で record 取得時に判明する。
+    """
+    requested = (x_labvault_team or user.default_team or "").strip()
+    if not requested:
+        raise HTTPException(status_code=400, detail="team is required")
+    return requested
+
+
+def get_lab_relaxed(team: str = Depends(current_team_for_shared_access)) -> Any:
+    """S1 用: team membership 不問で Lab を取得する。
+
+    handler 側で `require_read` / `require_analyze` を使って record 単位の
+    認可を行う必要がある。**直接 `lab.list(...)` / `lab.delete(...)` 等を
+    呼ぶ前に必ず record 単位の認可チェックを通すこと**。
+    """
+    from .dependencies import get_lab_for_team
+
+    return get_lab_for_team(team)
+
+
 def require_role(*allowed_roles: str) -> Any:
     """role ベースのアクセス制御デコレータ。
 
