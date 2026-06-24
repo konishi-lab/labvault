@@ -243,6 +243,7 @@ class Record:
         deleted_at: datetime | None = None,
         parent_id: str | None = None,
         template_name: str | None = None,
+        shares: dict[str, str] | None = None,
         lab: Lab | None = None,
     ) -> None:
         self._id = id
@@ -255,6 +256,11 @@ class Record:
         now = datetime.now(_dt.UTC)
         self._created_at = created_at or now
         self._updated_at = updated_at or now
+        # S1 (PR #84) cross-team 共有:
+        # `_shares` は email → role ("viewer" / "analyst") の dict。
+        # `_shared_with_emails` は前者から derived な list (Firestore の
+        # array-contains 検索用 index)。grant / revoke 時に同期する。
+        self._shares: dict[str, str] = dict(shares) if shares else {}
         self._tags: list[str] = list(tags) if tags else []
         self._notes: list[Note] = list(notes) if notes else []
         self._links: list[Link] = list(links) if links else []
@@ -665,6 +671,55 @@ class Record:
             return []
         all_records = self._lab.list(limit=1000)
         return [r for r in all_records if r.parent_id == self._id]
+
+    # --- 共有 (S1 / PR #84) ---
+
+    # 別チーム / 外部協力者に record を共有する API。`shares` は record
+    # document 内の `email → role` dict。`role` は ``"viewer"`` (詳細閲覧 +
+    # ファイル DL) / ``"analyst"`` (viewer + 子 record 作成 + 結果 upload)。
+    # backend の認可 dep (`can_user_read` / `can_user_analyze`) は team
+    # membership OR `shares.get(user_email)` で判定する。
+
+    SHARE_ROLES = ("viewer", "analyst")
+
+    @property
+    def shares(self) -> dict[str, str]:
+        """この record の共有設定 (email → role) のコピーを返す。
+
+        直接書き換えても永続化されないので、`grant_share()` / `revoke_share()`
+        を使うこと。
+        """
+        return dict(self._shares)
+
+    def grant_share(self, email: str, role: str) -> None:
+        """指定 email にこの record を共有する。
+
+        既存の share は上書き (role 変更にも使える)。`role` は
+        ``"viewer"`` / ``"analyst"`` のいずれか。
+
+        backend 側で「grant 主体は record の created_by または team admin
+        のみ」をチェックするので、SDK 直叩きで他人の record の share を
+        改ざんしてしまうのを防ぐのは backend の責務。
+        """
+        email = (email or "").strip().lower()
+        if not email:
+            raise ValueError("email is required")
+        if role not in self.SHARE_ROLES:
+            raise ValueError(f"role must be one of {self.SHARE_ROLES}, got {role!r}")
+        self._shares[email] = role
+        self._persist()
+
+    def revoke_share(self, email: str) -> None:
+        """指定 email の share を取り消す。存在しない場合は no-op。"""
+        email = (email or "").strip().lower()
+        if email in self._shares:
+            del self._shares[email]
+            self._persist()
+
+    def shared_with_emails(self) -> builtins.list[str]:
+        """共有先 email のリスト (Firestore array-contains 検索の derived
+        index と同じ内容を SDK 経由で取りたい時に使う)。"""
+        return sorted(self._shares.keys())
 
     def cell_logs(self, *, limit: int = 100) -> builtins.list[dict[str, Any]]:
         """この record に紐付いた Notebook セル実行ログを返す。
@@ -1190,6 +1245,12 @@ class Record:
             "deleted_at": (self._deleted_at.isoformat() if self._deleted_at else None),
             "parent_id": self._parent_id,
             "template": self._template_name,
+            # S1: 共有設定。`shares` が primary、`shared_with_emails` は
+            # Firestore の array-contains 検索用に派生させた index。書き込み
+            # 時に必ず同期する (`grant_share` / `revoke_share` が
+            # `_persist` を呼ぶ流れで自動的に正しい状態になる)。
+            "shares": dict(self._shares),
+            "shared_with_emails": sorted(self._shares.keys()),
         }
         # template.indexed_fields の値を idx_<name> として top-level に昇格
         # (Firestore 検索用)。template 未指定 or 値未入力なら何も追加されない。
@@ -1283,6 +1344,7 @@ class Record:
             deleted_at=(_parse_dt(deleted_at_raw) if deleted_at_raw else None),
             parent_id=data.get("parent_id"),
             template_name=data.get("template"),
+            shares=_load_shares_dict(data.get("shares")),
             lab=lab,
         )
         rec._condition_units = dict(data.get("condition_units") or {})
@@ -1305,6 +1367,25 @@ def _parse_dt(raw: str | datetime) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=_dt.UTC)
     return dt
+
+
+def _load_shares_dict(raw: Any) -> dict[str, str] | None:
+    """`Record._from_dict` 用: backend から読んだ shares を sanitize する。
+
+    旧 record (shares 無し) では None / 未存在のケースがあり得るので、
+    その場合は None (= 空 dict として扱う) を返す。dict 以外の壊れた値が
+    入っている場合も None を返して safe-fail。
+    """
+    if not raw or not isinstance(raw, dict):
+        return None
+    out: dict[str, str] = {}
+    for email, role in raw.items():
+        if not isinstance(email, str) or not isinstance(role, str):
+            continue
+        # role は知らない値でも保存しておく (将来 SDK 古い + backend 新しい
+        # ような状況で role を取りこぼさない)
+        out[email.strip().lower()] = role
+    return out
 
 
 def _try_save_special(
