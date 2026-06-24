@@ -150,15 +150,16 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
     等) を検出した場合は、Lab + Firestore client のシングルトンを破棄して
     503 を返す。次のリクエストで client が作り直されるので、Cloud Run の
     24h 連続稼働で broken pipe / idle timeout が起きても永続 500 にならない。
-    """
-    from .dependencies import (
-        reset_firestore_db,
-        reset_lab,
-        retriable_firestore_exceptions,
-        transient_firestore_exceptions,
-    )
-    from .observability import log_event
 
+    **N8 (PR #83)**: handler 内で reset_lab() → lab.close() を呼ぶ際、
+    close() 内部で再度 transient_firestore_exceptions が raise されると
+    handler の二次例外として ASGI に戻り、`Cache-Control: no-store` 無し
+    の素 500 になりブラウザにキャッシュされる可能性があった。handler 全体
+    を broad try/except で囲み、二次例外でも必ず no-store + CORS ヘッダ
+    付き JSONResponse を返す fallback を保証する。
+    """
+    # まず最低限の安全な fallback header を組む (CORS / no-store)。
+    # 以降のロジック内で例外が起きてもこの header だけは保証する。
     origin = request.headers.get("origin") or ""
     base_headers: dict[str, str] = {"Cache-Control": "no-store"}
     if origin in _default_origins:
@@ -166,81 +167,104 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
         base_headers["Access-Control-Allow-Credentials"] = "true"
         base_headers["Vary"] = "Origin"
 
-    # N3 (PR #82): retriable (Aborted = トランザクション衝突) は client
-    # 自体は健全。reset せず 503 + Retry-After だけ返してクライアントの
-    # retry に任せる。複数ユーザー同時アクセスで cascading reset が起き
-    # るのを防ぐ。`transient` より先に判定 (どちらも catch されうるが、
-    # retriable はより穏当な処理パスなので優先)。
-    retriable = retriable_firestore_exceptions()
-    if retriable and isinstance(exc, retriable):
-        log_event(
-            logger,
-            "firestore.retriable",
-            level=logging.INFO,
-            exception_type=type(exc).__name__,
-            message=str(exc)[:500],
-            path=request.url.path,
-            method=request.method,
+    try:
+        from .dependencies import (
+            reset_firestore_db,
+            reset_lab,
+            retriable_firestore_exceptions,
+            transient_firestore_exceptions,
+        )
+        from .observability import log_event
+
+        # N3 (PR #82): retriable (Aborted = トランザクション衝突) は client
+        # 自体は健全。reset せず 503 + Retry-After だけ返してクライアントの
+        # retry に任せる。複数ユーザー同時アクセスで cascading reset が
+        # 起きるのを防ぐ。`transient` より先に判定。
+        retriable = retriable_firestore_exceptions()
+        if retriable and isinstance(exc, retriable):
+            log_event(
+                logger,
+                "firestore.retriable",
+                level=logging.INFO,
+                exception_type=type(exc).__name__,
+                message=str(exc)[:500],
+                path=request.url.path,
+                method=request.method,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "Firestore retriable error, please retry",
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                    "transient": True,
+                },
+                headers={**base_headers, "Retry-After": "1"},
+            )
+
+        # transient (Firestore / gRPC connection 系) → client を捨てて 503。
+        if isinstance(exc, transient_firestore_exceptions()):
+            dropped_labs = reset_lab()
+            reset_fs = reset_firestore_db()
+            log_event(
+                logger,
+                "firestore.client_reset",
+                level=logging.WARNING,
+                exception_type=type(exc).__name__,
+                message=str(exc)[:500],
+                path=request.url.path,
+                method=request.method,
+                dropped_labs=dropped_labs,
+                reset_firestore_db=reset_fs,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "Firestore client transient error, please retry",
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                    "transient": True,
+                },
+                headers={**base_headers, "Retry-After": "1"},
+            )
+
+        logger.exception(
+            "unhandled exception in %s %s",
+            request.method,
+            request.url.path,
         )
         return JSONResponse(
-            status_code=503,
+            status_code=500,
             content={
-                "detail": "Firestore retriable error, please retry",
+                "detail": "internal server error",
                 "exception_type": type(exc).__name__,
+                # str(exc) は ハンドラ chain で出るほとんどの例外で安全。
+                # endpoint は auth 必須なので外部に漏れる先は labvault 認可済
+                # ユーザのみ。診断のメリットが上回る。
                 "message": str(exc),
-                "transient": True,
             },
-            headers={**base_headers, "Retry-After": "1"},
+            headers=base_headers,
         )
-
-    # transient (Firestore / gRPC connection 系) → client を捨てて 503 を返す。
-    # 永続 500 を防ぐのが目的なので、ここで明示的に「次回 retry すれば回復
-    # する可能性」をクライアントに伝える。
-    if isinstance(exc, transient_firestore_exceptions()):
-        dropped_labs = reset_lab()
-        reset_fs = reset_firestore_db()
-        log_event(
-            logger,
-            "firestore.client_reset",
-            level=logging.WARNING,
-            exception_type=type(exc).__name__,
-            message=str(exc)[:500],
-            path=request.url.path,
-            method=request.method,
-            dropped_labs=dropped_labs,
-            reset_firestore_db=reset_fs,
-        )
+    except Exception:  # noqa: BLE001
+        # 二次例外。logger.exception 自体も壊れている可能性 (stdout
+        # closed / formatter bug 等) があるので bare try で守る。
+        try:
+            logger.exception(
+                "exception handler itself failed for %s %s",
+                request.method,
+                request.url.path,
+            )
+        except Exception:  # noqa: BLE001
+            pass
         return JSONResponse(
-            status_code=503,
+            status_code=500,
             content={
-                "detail": "Firestore client transient error, please retry",
+                "detail": "internal server error (handler failure)",
                 "exception_type": type(exc).__name__,
-                "message": str(exc),
-                # frontend が「retry してもいい」と判定するためのヒント。
-                # PR #74 の `Cache-Control: no-store` と組み合わせて、
-                # ブラウザが 503 を disk cache から返すのを防ぐ。
-                "transient": True,
+                "message": "see server logs",
             },
-            headers={**base_headers, "Retry-After": "1"},
+            headers=base_headers,
         )
-
-    logger.exception(
-        "unhandled exception in %s %s",
-        request.method,
-        request.url.path,
-    )
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": "internal server error",
-            "exception_type": type(exc).__name__,
-            # str(exc) は ハンドラ chain で出るほとんどの例外で安全。
-            # endpoint は auth 必須なので外部に漏れる先は labvault 認可済
-            # ユーザのみ。診断のメリットが上回る。
-            "message": str(exc),
-        },
-        headers=base_headers,
-    )
 
 # 認証必須ルータ: 全ハンドラで Firebase ID token + allowed_users を検証
 _auth_deps = [Depends(current_user)]

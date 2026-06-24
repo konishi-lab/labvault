@@ -74,9 +74,18 @@ _JSON_LOGGING_INSTALLED = False
 def setup_json_logging() -> None:
     """root logger に JSON formatter 付き StreamHandler を 1 度だけ attach する。
 
-    既に StreamHandler が登録されていてもそのまま残し、追加で JSON 用の
-    handler を入れる。test 環境では `LABVAULT_DISABLE_JSON_LOG=1` で抑止
-    可能 (caplog の plain text 出力と衝突するため)。
+    N5 (PR #83): Cloud Run + uvicorn 環境では起動時点で root に既存の
+    StreamHandler (uvicorn 既定のプレーンテキスト出力) が居る。これを
+    残したまま JSON handler を追加すると、**1 ログ行が 2 行 (plain + JSON)
+    で重複出力** され、Cloud Logging のコスト/ノイズが 2 倍。
+
+    対策: 既存の StreamHandler は **置換せず取り外す** (= root から detach)。
+    JSON formatter 付きの 1 個だけが残るようにする。uvicorn のロガー自体
+    (`uvicorn.error` 等の子ロガー) は別途自分の handler を持つことがあるが、
+    そちらは触らず root だけ整える (子ロガーの伝播は別 effect)。
+
+    test 環境では `LABVAULT_DISABLE_JSON_LOG=1` で抑止可能 (caplog の
+    plain text 出力と衝突するため)。
     """
     global _JSON_LOGGING_INSTALLED
     if _JSON_LOGGING_INSTALLED:
@@ -84,11 +93,17 @@ def setup_json_logging() -> None:
     if os.environ.get("LABVAULT_DISABLE_JSON_LOG") == "1":
         _JSON_LOGGING_INSTALLED = True
         return
+    root = logging.getLogger()
+    # 既に root に居る StreamHandler を全部外す (重複出力の元)。
+    # ファイル handler / SysLog handler 等 stream 系以外は残す。
+    for h in list(root.handlers):
+        if isinstance(h, logging.StreamHandler) and not isinstance(
+            h, logging.FileHandler
+        ):
+            root.removeHandler(h)
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(_JsonFormatter())
     handler.set_name("labvault-json")
-    root = logging.getLogger()
-    # 既存の handler を消さない (uvicorn 自前 handler 等と共存させる)
     root.addHandler(handler)
     # default は INFO (DEBUG にすると Firestore SDK が冗長すぎる)
     if root.level == logging.WARNING:
@@ -119,6 +134,46 @@ def log_event(
     summary_parts = [f"{k}={fields[k]!r}" for k in list(fields.keys())[:3]]
     summary = f"{event} ({', '.join(summary_parts)})" if summary_parts else event
     logger.log(level, summary, extra=extra)
+
+
+# 「ログに乗せて安全」と見なす key 名の最大長。短い identifier 想定。
+_SAFE_KEY_MAX_LEN = 40
+_REDACTED = "<redacted>"
+
+
+def safe_keys(keys: Any) -> list[str]:
+    """log_event に渡す前に condition_keys 等の入力を sanitize する。
+
+    N6 (PR #83): `records.list` / `records.aggregate` 等の event field に
+    ユーザー入力由来の dict key (`condition_keys`) を乗せていた。template で
+    宣言された key (`power` / `target` 等) は安全だが、**ユーザーがフリー
+    フォームで入れた key** (`patient_name`、メアド、長文等) は PII リスク。
+
+    ルール:
+    - str でないか、空文字なら除外
+    - `str.isidentifier()` (英数 + underscore + 先頭非数字) を満たし、
+      長さ <= `_SAFE_KEY_MAX_LEN` のものはそのまま通す
+    - それ以外は ``<redacted>`` に置換 (count を保ったまま、値は隠す)
+    - 結果は **入力順を保つ** (元のソート順の意味を残す)
+    """
+    if not isinstance(keys, (list, tuple, set)):
+        return []
+    out: list[str] = []
+    for k in keys:
+        if not isinstance(k, str) or not k:
+            continue
+        # `str.isidentifier()` は Python の文法上の identifier 判定で、
+        # 日本語などの Unicode identifier も True を返す。PII リスクを下げ
+        # たいので、追加で **ASCII 限定** チェックを入れる。
+        if (
+            k.isidentifier()
+            and k.isascii()
+            and len(k) <= _SAFE_KEY_MAX_LEN
+        ):
+            out.append(k)
+        else:
+            out.append(_REDACTED)
+    return out
 
 
 class EventTimer(AbstractContextManager["EventTimer"]):
