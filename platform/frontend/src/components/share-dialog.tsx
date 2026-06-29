@@ -460,10 +460,45 @@ function ShareLinksPanel({
       setError("有効な pseudo email を入力してください (audit 用 identity)");
       return;
     }
-    const days = Number(expiresDays);
+    // S1-UX10 hot-fix (2026-06-29): 空欄を弾く。空文字 → Number('')==0 →
+    // 無期限 token と扱われてしまい、365 日上限の意図に反する。
+    const expiresRaw = expiresDays.trim();
+    if (!expiresRaw) {
+      setError("有効期限を入力してください (無期限なら 0 を明示的に)");
+      return;
+    }
+    const days = Number(expiresRaw);
     if (!Number.isInteger(days) || days < 0 || days > 365) {
       setError("有効期限は 0〜365 日で指定してください (0 = 無期限)");
       return;
+    }
+    // S1-UX4 hot-fix (2026-06-29): 同じ pseudo_email で active token が
+    // 既に存在する → 確認ダイアログ。何度も発行すると相手側に複数 token
+    // (古い方も active のまま) が残り、片方 revoke しても別経路が残る
+    // 運用事故を防ぐ。
+    const existing = links.find(
+      (l) => l.is_active && l.pseudo_email.toLowerCase() === email,
+    );
+    if (existing) {
+      const ok = confirm(
+        `${email} には既に active な token が存在します ` +
+          `(発行日: ${new Date(existing.created_at).toLocaleDateString("ja-JP")})。\n\n` +
+          "OK = 古い方を revoke してから新しい token を発行する\n" +
+          "キャンセル = 何もしない (相手側に古い token が残る運用上推奨)",
+      );
+      if (!ok) {
+        return;
+      }
+      // 旧 token を revoke してから新 token 発行
+      setSubmitting(true);
+      setError(null);
+      try {
+        await revokeShareLink(recordId, existing.token_hash_prefix);
+      } catch (err) {
+        setError(`旧 token の revoke に失敗: ${(err as Error).message}`);
+        setSubmitting(false);
+        return;
+      }
     }
     setSubmitting(true);
     setError(null);

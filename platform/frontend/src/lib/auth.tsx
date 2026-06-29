@@ -58,7 +58,12 @@ interface AuthContextValue {
   // multi-team
   teams: TeamMembership[];
   currentTeam: string | null;
-  setCurrentTeam: (team: string) => void;
+  // S1-UX3 (2026-06-29): ``persist`` を渡すと localStorage 書込を抑制し
+  // session スコープのみで切替える。``/records?shared=1`` 経由で他チームの
+  // record を覗くケースは「次回ログイン時には自分の default team に
+  // 戻したい」のがほぼ全てなので persist=false で渡す。default は true で
+  // 既存の team selector の挙動を保つ。
+  setCurrentTeam: (team: string, opts?: { persist?: boolean }) => void;
   // signup state
   authStatus: AuthStatus;
   pendingInfo: PendingInfo | null;
@@ -210,12 +215,19 @@ function FirebaseAuthProvider({ children }: { children: ReactNode }) {
     return u.getIdToken();
   }, []);
 
-  const setCurrentTeam = useCallback((team: string) => {
-    setCurrentTeamState(team);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(TEAM_STORAGE_KEY, team);
-    }
-  }, []);
+  const setCurrentTeam = useCallback(
+    (team: string, opts?: { persist?: boolean }) => {
+      setCurrentTeamState(team);
+      // S1-UX3 (2026-06-29): persist=false なら localStorage に書かない。
+      // shared 経由の team 切替で「次回ログイン時に自分の default に戻る」
+      // 挙動を保つ。default true は既存の team selector の挙動と一致。
+      const persist = opts?.persist !== false;
+      if (persist && typeof window !== "undefined") {
+        window.localStorage.setItem(TEAM_STORAGE_KEY, team);
+      }
+    },
+    [],
+  );
 
   const fetchAuthStatus = useCallback(async () => {
     const token = await getIdToken();

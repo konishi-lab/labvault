@@ -121,6 +121,16 @@ class ShareLinkStore(Protocol):
         share-link 認証経路はそのまま通すこと (auth は別問題)。"""
         ...
 
+    def revoke_for_record(
+        self, record_id: str, team: str, *, at: dt.datetime
+    ) -> int:
+        """S1-DATA5: 指定 record の全 active token を一括 revoke する。
+
+        record 削除時に呼ぶ。返り値は revoke した link 数 (observability
+        用)。既に revoke 済の link は無視 (再 revoke しない、idempotent)。
+        """
+        ...
+
 
 @dataclass
 class InMemoryShareLinkStore:
@@ -155,6 +165,20 @@ class InMemoryShareLinkStore:
             return False
         d["last_used_at"] = at
         return True
+
+    def revoke_for_record(
+        self, record_id: str, team: str, *, at: dt.datetime
+    ) -> int:
+        count = 0
+        for d in self._docs.values():
+            if (
+                d.get("record_id") == record_id
+                and d.get("team") == team
+                and d.get("revoked_at") is None
+            ):
+                d["revoked_at"] = at
+                count += 1
+        return count
 
 
 class FirestoreShareLinkStore:
@@ -233,6 +257,36 @@ class FirestoreShareLinkStore:
             return True
         except Exception:
             return False
+
+    def revoke_for_record(
+        self, record_id: str, team: str, *, at: dt.datetime
+    ) -> int:
+        # S1-DATA5: record 削除時 cascade。Firestore は batch を使うと N
+        # writes を 1 RPC にまとめられるが、share-link 数は record あたり
+        # ~数件なので素直に loop で update する (簡潔さ優先)。
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        try:
+            snaps = list(
+                self._ref()
+                .where(filter=FieldFilter("record_id", "==", record_id))
+                .where(filter=FieldFilter("team", "==", team))
+                .stream()
+            )
+        except Exception:
+            return 0
+        count = 0
+        for snap in snaps:
+            data = snap.to_dict() or {}
+            if data.get("revoked_at") is not None:
+                continue
+            try:
+                snap.reference.update({"revoked_at": at})
+                count += 1
+            except Exception:
+                # 個別 update 失敗は集計から外して continue (best-effort)
+                continue
+        return count
 
 
 # --- token 発行ヘルパ ---------------------------------------------------
