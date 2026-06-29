@@ -826,3 +826,115 @@ def test_share_link_me_rejects_no_auth(client: TestClient) -> None:
     app.dependency_overrides.clear()
     res = client.get("/api/share-links/me")
     assert res.status_code == 403
+
+
+# --- S1-TEST5 hot-fix (2026-06-29): edit / team-list endpoint の 403 ---
+#
+# share-link user は team membership を持たない (User.teams=())。よって
+# ``get_lab`` (= ``current_team`` 経由) を使う 9 endpoint は **dep 評価
+# 時点で 403** を返すはず。本テストは「将来 endpoint を ``get_lab_relaxed``
+# に切替えて share-link 経路で漏らさないか」の構造的回帰検出。
+
+
+EDIT_ENDPOINT_CASES = [
+    # (method, path_template, json_body, content_type, expect_status)
+    # team-scoped list / aggregate (read だが get_lab 経由)
+    ("GET", "/api/records", None, None, 403),
+    ("GET", "/api/records/aggregate?key=power", None, None, 403),
+    # record 自身の mutation
+    ("DELETE", "/api/records/{id}", None, None, 403),
+    ("POST", "/api/records/{id}/restore", None, None, 403),
+    ("PATCH", "/api/records/{id}/conditions", {"conditions": {"x": 1}}, "json", 403),
+    ("POST", "/api/records/{id}/tags", {"tags": ["foo"]}, "json", 403),
+    ("POST", "/api/records/{id}/notes", {"text": "test"}, "json", 403),
+    ("PATCH", "/api/records/{id}/status", {"status": "success"}, "json", 403),
+    ("PATCH", "/api/records/{id}/units", {"units": {"x": "W"}}, "json", 403),
+    ("PATCH", "/api/records/{id}/result_units", {"units": {"y": "Hz"}}, "json", 403),
+    ("POST", "/api/records/{id}/results", {"key": "z", "value": 1.0}, "json", 403),
+]
+
+
+@pytest.mark.parametrize(
+    "method,path,body,content_type,expect_status",
+    EDIT_ENDPOINT_CASES,
+)
+def test_share_link_viewer_cannot_use_edit_endpoints(
+    client: TestClient,
+    record_id: str,
+    method: str,
+    path: str,
+    body: Any,
+    content_type: str | None,
+    expect_status: int,
+) -> None:
+    """S1-TEST5: share-link viewer token はあらゆる team-scoped / edit
+    endpoint を叩けない (current_team が team membership を要求して 403)。
+
+    記述ミスで将来誰かが get_lab → get_lab_relaxed に切替え、share-link
+    user に意図せず権限を渡してしまっても、この test が落ちて発覚する。
+    """
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "viewer", "pseudo_email": "ext+v@y.com"},
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    headers = {
+        "Authorization": f"Bearer {raw_token}",
+        "X-Labvault-Team": "teamA",
+    }
+    url = path.format(id=record_id)
+    kwargs: dict[str, Any] = {"headers": headers}
+    if body is not None and content_type == "json":
+        kwargs["json"] = body
+    res = client.request(method, url, **kwargs)
+    assert res.status_code == expect_status, (
+        f"{method} {url} expected {expect_status}, got {res.status_code}: "
+        f"{res.text[:200]}"
+    )
+
+
+@pytest.mark.parametrize(
+    "method,path,body,content_type,expect_status",
+    EDIT_ENDPOINT_CASES,
+)
+def test_share_link_analyst_cannot_use_edit_endpoints(
+    client: TestClient,
+    record_id: str,
+    method: str,
+    path: str,
+    body: Any,
+    content_type: str | None,
+    expect_status: int,
+) -> None:
+    """S1-TEST5: analyst scope でも team-scoped / edit endpoint は使えない。
+
+    analyst が許されるのは ``get_lab_relaxed`` 系の write (子 record 作成 +
+    file upload + bulk-upload) のみで、record 自身の edit (status / tags
+    等) や team 一覧は不可。
+    """
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "analyst", "pseudo_email": "ext+a@y.com"},
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    headers = {
+        "Authorization": f"Bearer {raw_token}",
+        "X-Labvault-Team": "teamA",
+    }
+    url = path.format(id=record_id)
+    kwargs: dict[str, Any] = {"headers": headers}
+    if body is not None and content_type == "json":
+        kwargs["json"] = body
+    res = client.request(method, url, **kwargs)
+    assert res.status_code == expect_status, (
+        f"{method} {url} expected {expect_status}, got {res.status_code}: "
+        f"{res.text[:200]}"
+    )
