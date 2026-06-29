@@ -302,7 +302,15 @@ def test_shared_user_cannot_revoke(client: TestClient, record_id: str) -> None:
 # --- list 認可 ----------------------------------------------------------------
 
 
-def test_list_shares_visible_to_shared_user(client: TestClient, record_id: str) -> None:
+def test_list_shares_blocked_for_shared_user(
+    client: TestClient, record_id: str
+) -> None:
+    """S1-CQ1 hot-fix (2026-06-29): 共有された user は他の共有相手の email
+    を見られない (情報漏洩防止)。`list_record_shares` は ``require_grant``
+    に格上げされたため、shared user は 403。
+    自分の role は ``GET /api/records/{id}`` レスポンスの ``shares`` field
+    (自分のエントリ 1 件のみ返る) で確認する。
+    """
     c1 = _as(client, _owner)
     c1.post(
         f"/api/records/{record_id}/shares",
@@ -310,12 +318,16 @@ def test_list_shares_visible_to_shared_user(client: TestClient, record_id: str) 
         json={"email": "bob@b.com", "role": "analyst"},
     )
 
-    # bob 自身が list 可能 (= 自分の role 確認)
+    # bob は他の共有相手を listしようとして 403
     c2 = _as(client, _team_b_member)
     res = c2.get(f"/api/records/{record_id}/shares", headers=_hdrs())
-    assert res.status_code == 200
-    items = res.json()["items"]
-    assert {"email": "bob@b.com", "role": "analyst"} in items
+    assert res.status_code == 403
+
+    # ただし record 詳細で自分の role は確認できる
+    detail = c2.get(f"/api/records/{record_id}", headers=_hdrs())
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["shares"] == {"bob@b.com": "analyst"}
 
 
 def test_list_shares_blocked_for_non_shared_outsider(
@@ -324,6 +336,37 @@ def test_list_shares_blocked_for_non_shared_outsider(
     c = _as(client, _team_c_member)
     res = c.get(f"/api/records/{record_id}/shares", headers=_hdrs())
     assert res.status_code == 403
+
+
+def test_list_shares_visible_to_owner_and_admin(
+    client: TestClient, record_id: str
+) -> None:
+    """grant 主体 (owner / team admin) は全件見える。"""
+    c1 = _as(client, _owner)
+    c1.post(
+        f"/api/records/{record_id}/shares",
+        headers=_hdrs(),
+        json={"email": "bob@b.com", "role": "analyst"},
+    )
+    c1.post(
+        f"/api/records/{record_id}/shares",
+        headers=_hdrs(),
+        json={"email": "charlie@c.com", "role": "viewer"},
+    )
+
+    # owner は全件見える
+    res = c1.get(f"/api/records/{record_id}/shares", headers=_hdrs())
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert {"email": "bob@b.com", "role": "analyst"} in items
+    assert {"email": "charlie@c.com", "role": "viewer"} in items
+
+    # team admin も同様
+    c2 = _as(client, _team_a_admin)
+    res2 = c2.get(f"/api/records/{record_id}/shares", headers=_hdrs())
+    assert res2.status_code == 200
+    items2 = res2.json()["items"]
+    assert len(items2) == 2
 
 
 # --- super-admin はいつでも全権限 ---------------------------------------------

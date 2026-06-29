@@ -14,6 +14,8 @@ from ..auth import User, current_user, get_lab, get_lab_relaxed
 from ..observability import EventTimer, log_event, safe_keys
 from ..permissions import (
     VALID_SHARE_ROLES,
+    can_grant,
+    can_read,
     require_analyze,
     require_grant,
     require_read,
@@ -67,7 +69,7 @@ def _to_summary(rec: Any) -> RecordSummary:
     )
 
 
-def _to_detail(rec: Any) -> RecordDetail:
+def _to_detail(rec: Any, viewer: User | None = None) -> RecordDetail:
     # template の result_fields から unit / description の auto-fill 元を抽出。
     # Web UI が「これは template 由来」「これは手動入力」を視覚的に区別するのに使う。
     template_result_units: dict[str, str] = {}
@@ -87,6 +89,23 @@ def _to_detail(rec: Any) -> RecordDetail:
         template_required_conditions = list(
             getattr(tpl, "required_conditions", []) or []
         )
+
+    # S1-CQ1 (2026-06-29 hot-fix): `shares` (email → role) は **grant 主体**
+    # にだけ全件返す。viewer/analyst として共有された Firebase user / 外部
+    # share-link user は他の共有相手の email を見られない (情報漏洩防止)。
+    # backward-compat の `viewer=None` 経路は内部 helper (sub() の親 stamp
+    # 等) 用で、外部 API では必ず viewer を渡すこと。
+    all_shares = getattr(rec, "shares", None) or {}
+    if viewer is None or can_grant(viewer, rec):
+        # grant 主体は全件見える
+        visible_shares = dict(all_shares)
+    elif viewer.email and viewer.email.strip().lower() in all_shares:
+        # 共有された側 (Firebase user): 自分の role 1 件だけ返す
+        # (UI が「あなたは viewer/analyst として共有されています」表示用)
+        my_email = viewer.email.strip().lower()
+        visible_shares = {my_email: all_shares[my_email]}
+    else:
+        visible_shares = {}
 
     return RecordDetail(
         id=rec.id,
@@ -110,10 +129,7 @@ def _to_detail(rec: Any) -> RecordDetail:
         template_result_descriptions=template_result_descriptions,
         template_required_conditions=template_required_conditions,
         template_required_results=template_required_results,
-        # S1: 共有設定 (email → role)。Web UI の record 詳細「共有」モーダル
-        # が現状を表示するのに使う。閲覧者が grant 主体でない場合でも、
-        # 自分が share されている事実を確認するため返す (UI 側でフィルタ)。
-        shares=getattr(rec, "shares", None) or {},
+        shares=visible_shares,
         notes=[
             {"text": n.text, "created_at": n.created_at, "author": n.author}
             for n in rec.notes
@@ -334,7 +350,7 @@ def create_record(
             created_by=user.email,
             **body.conditions,
         )
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 def _compute_stats(vals: list[float]) -> StatsBlock:
@@ -528,7 +544,22 @@ def list_shared_with_me(
     Frontend は items 各要素の `team` を使って `X-Labvault-Team` を組み
     立て、record 詳細 endpoint を叩く流れ。`role` は viewer / analyst の
     どちらが付与されているか (UI が「解析」アクションを出すか判定)。
+
+    S1-SEC1 (2026-06-29 hot-fix): share-link token (`ls_*`) で叩くと、
+    token の ``pseudo_email`` が偶然他 record の ``shared_with_emails``
+    に含まれた場合 (例: 内部関係者が ``ceo@company.com`` のような被害者
+    email を指定して token 発行 → /shared-with-me で全 team 横断 enumerate)
+    cross-tenant disclosure が起きる。share-link は「record 1 本 + role」
+    が scope 契約 (Phase 2 設計) なので、この endpoint は **Firebase 認証
+    の user 限定** とする。
     """
+    if user.share_link_scope is not None:
+        # share-link token は 1 record scope。複数 record にまたがる
+        # /shared-with-me は scope 外。
+        raise HTTPException(
+            status_code=403,
+            detail="share-link tokens cannot list shared records (1-record scope)",
+        )
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
     if offset < 0:
@@ -604,7 +635,7 @@ def get_record(
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
     require_read(user, rec)
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 @router.delete("/{record_id}", status_code=204)
@@ -623,13 +654,14 @@ def delete_record(
 def restore_record(
     record_id: str,
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> RecordDetail:
     """削除を取り消す。"""
     try:
         rec = lab.restore(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 @router.get("/{record_id}/children", response_model=RecordListResponse)
@@ -640,31 +672,39 @@ def get_children(
     lab: Lab = Depends(get_lab_relaxed),
     user: User = Depends(current_user),
 ) -> RecordListResponse:
-    """子レコード一覧を取得する（ページネーション対応）。"""
+    """子レコード一覧を取得する（ページネーション対応）。
+
+    認可 (S1-SEC3 hot-fix 2026-06-29): 親 ``require_read`` に加え、
+    **per-child の ``can_read`` で filter する**。share-link user は
+    scope = record 1 本に固定 (Phase 2 設計) なので、parent 経由で他
+    子の summary が漏れないようにする。Firebase の team member /
+    super_admin は can_read が全 child で True になるので影響なし。
+    """
     from labvault.core.record import Record
 
     try:
         parent = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
-    # S1: 親 record の認可を子の閲覧にも適用する (親が見える人は子も見える)。
     require_read(user, parent)
 
     if hasattr(lab._metadata, "list_records"):
-        # total カウント用に大きめに取得
         all_rows = lab._metadata.list_records(
             lab._team,
             parent_id=record_id,
             limit=10000,
         )
-        total = len(all_rows)
-        rows = all_rows[offset : offset + limit]
-        children = [Record._from_dict(r, lab=lab) for r in rows]
+        all_children_raw = [Record._from_dict(r, lab=lab) for r in all_rows]
     else:
         all_records = lab.list(limit=10000)
-        all_children = [r for r in all_records if r.parent_id == record_id]
-        total = len(all_children)
-        children = all_children[offset : offset + limit]
+        all_children_raw = [r for r in all_records if r.parent_id == record_id]
+
+    # S1-SEC3: 子ごとの認可。share-link scope user は scope record のみ
+    # 通過 (parent 自身は children に出ない構造なので、share-link で
+    # parent を持つ user は children を 0 件として見ることになる)。
+    visible_children = [c for c in all_children_raw if can_read(user, c)]
+    total = len(visible_children)
+    children = visible_children[offset : offset + limit]
 
     return RecordListResponse(
         items=[_to_summary(c) for c in children],
@@ -679,22 +719,30 @@ def get_children_conditions(
     lab: Lab = Depends(get_lab_relaxed),
     user: User = Depends(current_user),
 ) -> list[dict[str, Any]]:
-    """子レコードの ID + conditions + results を一括取得する。"""
+    """子レコードの ID + conditions + results を一括取得する。
+
+    S1-SEC3 hot-fix (2026-06-29): get_children と同様に **per-child の
+    ``can_read`` で filter** する。share-link viewer/analyst は scope
+    record の child は本来読めない契約なので、conditions / results 全件
+    が parent 経由で漏れないようにする。
+    """
     from labvault.core.record import Record
 
     try:
         parent = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
-    # S1: 親 record の認可を子の閲覧にも適用する。
     require_read(user, parent)
 
     if hasattr(lab._metadata, "list_records"):
         rows = lab._metadata.list_records(lab._team, parent_id=record_id, limit=limit)
-        children = [Record._from_dict(r, lab=lab) for r in rows]
+        all_children = [Record._from_dict(r, lab=lab) for r in rows]
     else:
         all_records = lab.list(limit=10000)
-        children = [r for r in all_records if r.parent_id == record_id]
+        all_children = [r for r in all_records if r.parent_id == record_id]
+
+    # S1-SEC3: per-child 認可
+    children = [c for c in all_children if can_read(user, c)]
 
     items = []
     for c in children:
@@ -770,14 +818,18 @@ def list_record_shares(
 ) -> ShareListResponse:
     """この record の共有設定一覧。
 
-    閲覧条件: `can_read` (team membership OR share)。share された側も自分の
-    role を確認するため共有設定を見られる。
+    閲覧条件 (S1-CQ1 hot-fix 2026-06-29): ``require_grant`` で gating する。
+    旧仕様では ``require_read`` で通していたため、share された外部 user /
+    share-link user が他の共有相手の email を全件 enumerate できる情報
+    漏洩があった。share された側が「自分の role」を確認するには
+    ``GET /api/records/{id}`` レスポンスの ``shares`` field (こちらも
+    S1-CQ1 で自分のエントリ 1 件だけ返るように制限) を使うこと。
     """
     try:
         rec = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found") from None
-    require_read(user, rec)
+    require_grant(user, rec)
     shares = getattr(rec, "shares", None) or {}
     return ShareListResponse(
         items=[ShareEntry(email=e, role=r) for e, r in sorted(shares.items())]
@@ -833,7 +885,7 @@ def grant_record_share(
         role=body.role,
         granted_by=user.email,
     )
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 # --- 外部 token sharing (S1 Phase 2) ---
@@ -1079,7 +1131,7 @@ def revoke_record_share(
             revoked_from=target,
             revoked_by=user.email,
         )
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 # --- Record Operations ---
@@ -1105,7 +1157,7 @@ def update_conditions(
     """実験条件を更新する。"""
     rec = _get_and_stamp(lab, record_id, user)
     rec.conditions(**body.conditions)
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 @router.post("/{record_id}/tags", response_model=RecordDetail)
@@ -1118,7 +1170,7 @@ def add_tags(
     """タグを追加する。"""
     rec = _get_and_stamp(lab, record_id, user)
     rec.tag(*body.tags)
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 @router.post("/{record_id}/notes", response_model=RecordDetail)
@@ -1131,7 +1183,7 @@ def add_note(
     """メモを追加する。author も認証済 email を刻印。"""
     rec = _get_and_stamp(lab, record_id, user)
     rec.note(body.text, author=user.email)
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 @router.patch("/{record_id}/status", response_model=RecordDetail)
@@ -1144,7 +1196,7 @@ def update_status(
     """ステータスを更新する。"""
     rec = _get_and_stamp(lab, record_id, user)
     rec.status = body.status
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 @router.patch("/{record_id}/units", response_model=RecordDetail)
@@ -1160,7 +1212,7 @@ def update_units(
     if body.descriptions:
         rec._condition_descriptions.update(body.descriptions)
     rec._persist()
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 @router.patch("/{record_id}/result_units", response_model=RecordDetail)
@@ -1176,7 +1228,7 @@ def update_result_units(
     if body.descriptions:
         rec._result_descriptions.update(body.descriptions)
     rec._persist()
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 @router.post("/{record_id}/results", response_model=RecordDetail)
@@ -1189,4 +1241,4 @@ def add_result(
     """結果を追加する。"""
     rec = _get_and_stamp(lab, record_id, user)
     rec.results[body.key] = body.value
-    return _to_detail(rec)
+    return _to_detail(rec, user)
