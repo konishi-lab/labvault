@@ -184,6 +184,65 @@ def require_edit(user: User, record: Any) -> None:
         raise HTTPException(status_code=403, detail="team membership required")
 
 
+def fetch_readable_or_404(lab: Any, record_id: str, user: User) -> Any:
+    """S1-SEC6 hot-fix (2026-06-29): record fetch + read 認可を uniform 404 で扱う。
+
+    旧 ``require_read`` は **record 存在 (lab.get で 404) と 認可失敗 (403)**
+    を分けて返していたため、攻撃者が任意の 6 桁 Base32 ID と任意の
+    X-Labvault-Team header の組合せで「ID が存在するか」を確認できる
+    存在オラクル (404 vs 403) になっていた。
+
+    本 helper は **どちらの失敗も 404 で返す** ことで存在オラクルを構造
+    的に消す。GitHub の private repo と同じ defense-in-depth pattern。
+
+    Read endpoint (``get_record`` / ``get_children`` / ``files`` /
+    ``preview`` / ``cell_logs`` 等) で使う。Write endpoint は
+    ``fetch_analyzable_or_403`` 経由で「read までは通る user は 403、
+    read も通らない user は 404」と分岐させる (既知 record への write 拒否は
+    存在を漏らさないので 403 で OK)。
+    """
+    from labvault.core.exceptions import RecordNotFoundError
+
+    try:
+        rec = lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found") from None
+    if not can_read(user, rec):
+        # 404 で uniform。403 にすると存在を漏らす。
+        raise HTTPException(status_code=404, detail="Record not found")
+    return rec
+
+
+def fetch_analyzable_or_403(lab: Any, record_id: str, user: User) -> Any:
+    """S1-SEC6: write endpoint 用。read は通るが analyze 不可なら 403。
+
+    - record 不在 / read 不可 → 404 (uniform、存在オラクル無し)
+    - read 通るが analyze 不可 (viewer 共有等) → 403 (存在は既知なので
+      隠す意味なし、書込権限不足を明示)
+    """
+    rec = fetch_readable_or_404(lab, record_id, user)
+    if not can_analyze(user, rec):
+        raise HTTPException(
+            status_code=403, detail="analyst access required"
+        )
+    return rec
+
+
+def fetch_grantable_or_403(lab: Any, record_id: str, user: User) -> Any:
+    """S1-SEC6: share grant/revoke / share-link issue 用。read 通るが
+    grant 不可 → 403。
+
+    pattern は analyzable と同じ (read 通った user に対する write 拒否)。
+    """
+    rec = fetch_readable_or_404(lab, record_id, user)
+    if not can_grant(user, rec):
+        raise HTTPException(
+            status_code=403,
+            detail="only record creator or team admin can grant shares",
+        )
+    return rec
+
+
 def require_team_member(user: User, team: str) -> None:
     """指定 team の membership を強制する (record を介さない write 用)。
 

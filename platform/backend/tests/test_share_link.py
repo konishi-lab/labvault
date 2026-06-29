@@ -180,13 +180,14 @@ def test_super_admin_can_issue_share_link(client: TestClient, record_id: str) ->
 
 
 def test_outsider_cannot_issue_share_link(client: TestClient, record_id: str) -> None:
+    """S1-SEC6 (PR γ-2): outsider は read 不可 → uniform 404 (旧 403)。"""
     c = _as(client, _outsider)
     res = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
         json={"role": "viewer", "pseudo_email": "external+e@klab.share"},
     )
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_invalid_role_rejected(client: TestClient, record_id: str) -> None:
@@ -266,6 +267,7 @@ def test_owner_can_revoke_share_link(client: TestClient, record_id: str) -> None
 
 
 def test_outsider_cannot_revoke(client: TestClient, record_id: str) -> None:
+    """S1-SEC6 (PR γ-2): outsider は read 不可 → uniform 404 (旧 403)。"""
     c1 = _as(client, _owner)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
@@ -278,13 +280,14 @@ def test_outsider_cannot_revoke(client: TestClient, record_id: str) -> None:
     res = c2.delete(
         f"/api/records/{record_id}/share-links/{prefix}", headers=_hdrs()
     )
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_outsider_cannot_list(client: TestClient, record_id: str) -> None:
+    """S1-SEC6 (PR γ-2): outsider は read 不可 → uniform 404 (旧 403)。"""
     c = _as(client, _outsider)
     res = c.get(f"/api/records/{record_id}/share-links", headers=_hdrs())
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_revoke_unknown_prefix_returns_404(
@@ -500,7 +503,10 @@ def test_token_cannot_access_other_record(
     ).json()
     raw_token = issued["token"]
 
-    # token で rec2 を覗こうとする → 403 (record_id mismatch)
+    # token で rec2 を覗こうとする → S1-SEC6: scope mismatch も
+    # uniform 404 で扱う (旧 403)。これで token を持つ攻撃者が
+    # 「自分の token は別 record では使えない」以上の情報 (= 別 record の
+    # 存在確認) を得られない。
     app.dependency_overrides.clear()
     res = client.get(
         f"/api/records/{other.id}",
@@ -509,7 +515,7 @@ def test_token_cannot_access_other_record(
             "X-Labvault-Team": "teamA",
         },
     )
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 # --- token 検証 (期限切れ / revoke / invalid) ----------------------------
@@ -1370,3 +1376,62 @@ def test_obs3_bulk_upload_events_include_firebase_actor(
     for f in bulk_events:
         assert f.get("actor") == "owner@a.com"
         assert f.get("actor_audit_source") == "firebase"
+
+
+# --- S1-SEC6 hot-fix (2026-06-29): 404 vs 403 oracle 防止 ---
+
+
+def test_sec6_unknown_record_id_and_unauthorized_both_return_404(
+    client: TestClient, record_id: str
+) -> None:
+    """S1-SEC6: 存在しない record_id と「存在するが認可されない」record_id
+    が **同じ 404** を返す (oracle 防止)。
+
+    旧仕様では:
+    - 存在しない id → 404 (lab.get で RecordNotFoundError)
+    - 存在するが非認可 → 403 (require_read で fail)
+
+    新仕様: 両方 404 で uniform。攻撃者が任意の 6 桁 Base32 id を
+    試して、404 / 403 の差から id 存在を確認することができない。
+    """
+    # outsider (teamD member) で攻撃シナリオ
+    c = _as(client, _outsider)
+
+    # case 1: 存在しない record
+    res1 = c.get("/api/records/NOTEXIST", headers=_hdrs())
+
+    # case 2: 存在するが outsider に閲覧権限が無い record
+    res2 = c.get(f"/api/records/{record_id}", headers=_hdrs())
+
+    # 両方 404 (= oracle 無し)
+    assert res1.status_code == 404
+    assert res2.status_code == 404
+
+
+def test_sec6_viewer_can_read_but_not_write_returns_403_not_404(
+    client: TestClient, record_id: str
+) -> None:
+    """S1-SEC6: 「read 通るが write 不可」のケースは 403 を保つ
+    (404 にすると逆に user が混乱する。存在は既知なので隠す意味なし)。
+    """
+    # owner が viewer share を grant
+    c1 = _as(client, _owner)
+    c1.post(
+        f"/api/records/{record_id}/shares",
+        headers=_hdrs(),
+        json={"email": "outside-viewer@y.com", "role": "viewer"},
+    )
+
+    # viewer がアップロードを試みる → 403 (存在は知っているので 404 ではない)
+    def _viewer() -> User:
+        return _user(email="outside-viewer@y.com", teams=[("teamB", "member")])
+
+    c2 = _as(client, _viewer)
+    import io
+
+    res = c2.post(
+        f"/api/records/{record_id}/files",
+        headers=_hdrs(),
+        files={"file": ("v.txt", io.BytesIO(b"x"), "text/plain")},
+    )
+    assert res.status_code == 403

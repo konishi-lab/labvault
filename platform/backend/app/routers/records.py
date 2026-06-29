@@ -16,6 +16,9 @@ from ..permissions import (
     VALID_SHARE_ROLES,
     can_grant,
     can_read,
+    fetch_analyzable_or_403,
+    fetch_grantable_or_403,
+    fetch_readable_or_404,
     require_analyze,
     require_grant,
     require_read,
@@ -330,14 +333,9 @@ def create_record(
     """
     source = _audit_source_for(user)
     if body.parent_id:
-        # 子 record 作成 — 親への analyst 権限が要る
-        try:
-            parent = lab.get(body.parent_id)
-        except RecordNotFoundError:
-            raise HTTPException(
-                status_code=404, detail="parent record not found"
-            ) from None
-        require_analyze(user, parent)
+        # 子 record 作成 — 親への analyst 権限が要る (S1-SEC6: read 不可
+        # は 404、read 通って analyze 不可は 403)
+        parent = fetch_analyzable_or_403(lab, body.parent_id, user)
         # S1-CQ3 (2026-06-29): Record.sub() に created_by 引数が入ったので、
         # 旧 inline (lab.new + _parent_id + _persist + bidirectional link)
         # の自前実装を廃止し sub() に委譲。drift リスクが構造的に消える。
@@ -657,17 +655,15 @@ def get_record(
 ) -> RecordDetail:
     """レコード詳細を取得する。
 
-    S1 (PR #84): team membership だけでなく `shares` で share された
-    ユーザーも閲覧できるよう、`require_read` で認可判定する。team
-    membership が無い user は X-Labvault-Team header を record owner team
-    に向けて投げる必要がある (Frontend が「他チームから共有」表示の際に
-    付与する)。
+    S1 (PR #84): team membership だけでなく ``shares`` で share された
+    ユーザーも閲覧できるよう認可判定する。team membership が無い user
+    は X-Labvault-Team header を record owner team に向けて投げる必要が
+    ある (Frontend が「他チームから共有」表示の際に付与する)。
+
+    S1-SEC6 (PR γ-2): ``fetch_readable_or_404`` で **存在 / 認可いずれの
+    失敗も 404 で uniform** にして 404 vs 403 oracle を消す。
     """
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
-    require_read(user, rec)
+    rec = fetch_readable_or_404(lab, record_id, user)
     return _to_detail(rec, user)
 
 
@@ -748,11 +744,8 @@ def get_children(
     """
     from labvault.core.record import Record
 
-    try:
-        parent = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
-    require_read(user, parent)
+    # S1-SEC6 (PR γ-2): 親 record の存在 + read 認可は uniform 404 で判定
+    fetch_readable_or_404(lab, record_id, user)
 
     if hasattr(lab._metadata, "list_records"):
         all_rows = lab._metadata.list_records(
@@ -794,11 +787,8 @@ def get_children_conditions(
     """
     from labvault.core.record import Record
 
-    try:
-        parent = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
-    require_read(user, parent)
+    # S1-SEC6 (PR γ-2): 親 record の存在 + read 認可は uniform 404 で判定
+    fetch_readable_or_404(lab, record_id, user)
 
     if hasattr(lab._metadata, "list_records"):
         rows = lab._metadata.list_records(lab._team, parent_id=record_id, limit=limit)
@@ -852,11 +842,8 @@ def get_cell_logs(
     `get_notebook_log` ツールを一式で出すことで「LLM が Notebook 履歴を
     辿って解析を続ける」シナリオが初めて成立する。
     """
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found") from None
-    require_read(user, rec)
+    # S1-SEC6 (PR γ-2): record 存在 + read 認可は uniform 404
+    fetch_readable_or_404(lab, record_id, user)
 
     if limit < 1 or limit > 1000:
         raise HTTPException(
@@ -890,12 +877,10 @@ def list_record_shares(
     漏洩があった。share された側が「自分の role」を確認するには
     ``GET /api/records/{id}`` レスポンスの ``shares`` field (こちらも
     S1-CQ1 で自分のエントリ 1 件だけ返るように制限) を使うこと。
+
+    S1-SEC6 (PR γ-2): read 不可 → 404、read 通るが grant 不可 → 403。
     """
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found") from None
-    require_grant(user, rec)
+    rec = fetch_grantable_or_403(lab, record_id, user)
     shares = getattr(rec, "shares", None) or {}
     return ShareListResponse(
         items=[ShareEntry(email=e, role=r) for e, r in sorted(shares.items())]
@@ -919,11 +904,8 @@ def grant_record_share(
     (`permissions.can_grant` 参照)。同じ email を再 grant すると role が
     上書きされる (role 変更にも使える)。
     """
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found") from None
-    require_grant(user, rec)
+    # S1-SEC6 (PR γ-2): read 不可 → 404、read 通るが grant 不可 → 403
+    rec = fetch_grantable_or_403(lab, record_id, user)
 
     email = (body.email or "").strip().lower()
     if not email or "@" not in email:
@@ -989,11 +971,8 @@ def list_record_share_links(
     ので、漏洩リスクは無いが「誰宛てに何個 link 出ているか」は機微情報
     なので閲覧主体を絞っている。
     """
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found") from None
-    require_grant(user, rec)
+    # S1-SEC6 (PR γ-2): read 不可 → 404、read 通るが grant 不可 → 403
+    rec = fetch_grantable_or_403(lab, record_id, user)
 
     from ..dependencies import get_share_link_store
 
@@ -1027,11 +1006,8 @@ def issue_record_share_link(
     """
     import datetime as _dt
 
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found") from None
-    require_grant(user, rec)
+    # S1-SEC6 (PR γ-2): read 不可 → 404、read 通るが grant 不可 → 403
+    rec = fetch_grantable_or_403(lab, record_id, user)
 
     if body.role not in VALID_SHARE_ROLES:
         raise HTTPException(
@@ -1155,11 +1131,8 @@ def revoke_record_share_link(
     """
     import datetime as _dt
 
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found") from None
-    require_grant(user, rec)
+    # S1-SEC6 (PR γ-2): read 不可 → 404、read 通るが grant 不可 → 403
+    rec = fetch_grantable_or_403(lab, record_id, user)
 
     prefix = (token_hash_prefix or "").strip().lower()
     if not prefix or len(prefix) < 8:
@@ -1208,11 +1181,8 @@ def revoke_record_share(
     revoke 主体: grant と同じ (`can_grant`)。存在しない email を渡しても
     エラーにせず 200 を返す (idempotent revoke、UI 上の race 対策)。
     """
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found") from None
-    require_grant(user, rec)
+    # S1-SEC6 (PR γ-2): read 不可 → 404、read 通るが grant 不可 → 403
+    rec = fetch_grantable_or_403(lab, record_id, user)
 
     target = (email or "").strip().lower()
     if not target:
