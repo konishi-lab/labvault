@@ -10,7 +10,8 @@ from fastapi.responses import Response
 from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
-from ..auth import get_lab
+from ..auth import User, current_user, get_lab_relaxed
+from ..permissions import require_read
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +56,21 @@ def _nc_exists(lab: Lab, nc_path: str) -> bool:
 def preview_file(
     record_id: str,
     filename: str,
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
 ) -> Response:
     """ファイルのプレビュー画像を返す。
 
     VK4: 光学画像をPNGに変換。キャッシュとして同フォルダに保存。
+
+    S1 Phase 1B/1C 補完: ``require_read`` で認可、viewer 共有 user も
+    preview を見られる。
     """
     try:
         rec = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
+    require_read(user, rec)
 
     if not filename.lower().endswith(".vk4"):
         raise HTTPException(

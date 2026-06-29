@@ -201,6 +201,12 @@ class RecordCreate(BaseModel):
     type: str = "experiment"
     tags: list[str] = []
     conditions: dict[str, Any] = {}
+    # S1 Phase 1C: 子 record として作る場合は親の ID を指定する。指定時は
+    # 認可が「親 record に対する ``require_analyze``」に切り替わるため、
+    # 他チームから analyst 共有された user も子 record (= 解析結果) を
+    # 作成できる。未指定なら root record として現 team に作成、こちらは
+    # team member だけが作れる (``require_team_member``)。
+    parent_id: str | None = None
 
 
 class NoteCreate(BaseModel):

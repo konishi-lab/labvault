@@ -15,8 +15,9 @@ from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 from labvault.core.record import Record
 
-from ..auth import User, current_user, get_lab
+from ..auth import User, current_user, get_lab_relaxed
 from ..observability import log_event
+from ..permissions import require_analyze
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +94,19 @@ async def preview_matching(
     record_id: str,
     grid: GridConfig,
     filenames: list[str],
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
 ) -> MatchPreviewResult:
+    """子レコードとファイルのマッチング preview を返す (実 upload 前段)。
+
+    S1 Phase 1C: 本 endpoint は後段の upload (POST /api/.../bulk-upload) と
+    同じ書き込み権限が前提なので ``require_analyze`` で揃える。
+    """
     try:
-        lab.get(record_id)
+        parent = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
+    require_analyze(user, parent)
 
     children = _get_children_sorted(lab, record_id)
     basenames = [fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] for fn in filenames]
@@ -157,14 +165,20 @@ async def bulk_upload(
     cols: int = 0,
     start_position: str = "top-left",
     direction: str = "row-first",
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
     user: User = Depends(current_user),
 ) -> StreamingResponse:
-    """SSE で進捗を返しながらアップロードする。"""
+    """SSE で進捗を返しながらアップロードする。
+
+    S1 Phase 1C: 親 record に対する ``require_analyze`` で認可。analyst 共有
+    された外部 user も他チームの実験に解析結果ファイルを bulk upload
+    できる。viewer / 関係ない user は 403。
+    """
     try:
-        lab.get(record_id)
+        parent = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found") from None
+    require_analyze(user, parent)
 
     if rows == 0 or cols == 0:
         raise HTTPException(status_code=400, detail="rows and cols required")

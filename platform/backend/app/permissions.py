@@ -157,6 +157,23 @@ def require_edit(user: User, record: Any) -> None:
         raise HTTPException(status_code=403, detail="team membership required")
 
 
+def require_team_member(user: User, team: str) -> None:
+    """指定 team の membership を強制する (record を介さない write 用)。
+
+    主に **root record の作成** で使う。share 経由のユーザーが root
+    record を自由に作れると team の空間を勝手に汚せてしまうので、root
+    record は team member だけが作る。子 record (parent_id 指定) は親に
+    対する ``require_analyze`` で判定する別経路。super_admin はバイパス。
+    """
+    if is_super_admin(user):
+        return
+    if not user.has_team(team):
+        raise HTTPException(
+            status_code=403,
+            detail=f"team {team!r} の member ではありません",
+        )
+
+
 # --- 内部ヘルパ ---
 
 
