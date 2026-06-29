@@ -50,6 +50,11 @@ class ShareLink:
     expires_at: dt.datetime | None
     revoked_at: dt.datetime | None
     label: str
+    # S1-OBS9/UX5 hot-fix (2026-06-29): token が最後に使われた時刻。
+    # ``_verify_share_link`` 成功時に best-effort で update する (PAT の
+    # 同 field と同じ運用)。一覧 UI に「最終使用: ...」を表示して dormant /
+    # 漏洩疑い token の特定を容易にする。None = まだ未使用 (発行直後)。
+    last_used_at: dt.datetime | None = None
 
     def is_active(self, *, now: dt.datetime | None = None) -> bool:
         """有効期限 + revoke の両方を見て、現在使えるか判定する。"""
@@ -73,6 +78,7 @@ class ShareLink:
             "expires_at": self.expires_at,
             "revoked_at": self.revoked_at,
             "label": self.label,
+            "last_used_at": self.last_used_at,
         }
 
     @classmethod
@@ -90,6 +96,7 @@ class ShareLink:
             expires_at=d.get("expires_at"),
             revoked_at=d.get("revoked_at"),
             label=d.get("label", ""),
+            last_used_at=d.get("last_used_at"),
         )
 
 
@@ -107,6 +114,11 @@ class ShareLinkStore(Protocol):
 
     def revoke(self, token_hash: str, *, at: dt.datetime) -> bool:
         """revoked_at を立てる。存在しなければ False。"""
+        ...
+
+    def touch_last_used(self, token_hash: str, *, at: dt.datetime) -> bool:
+        """S1-OBS9: ``last_used_at`` を更新する (best-effort)。失敗しても
+        share-link 認証経路はそのまま通すこと (auth は別問題)。"""
         ...
 
 
@@ -135,6 +147,13 @@ class InMemoryShareLinkStore:
         if d is None:
             return False
         d["revoked_at"] = at
+        return True
+
+    def touch_last_used(self, token_hash: str, *, at: dt.datetime) -> bool:
+        d = self._docs.get(token_hash)
+        if d is None:
+            return False
+        d["last_used_at"] = at
         return True
 
 
@@ -195,6 +214,25 @@ class FirestoreShareLinkStore:
             return False
         snaps[0].reference.update({"revoked_at": at})
         return True
+
+    def touch_last_used(self, token_hash: str, *, at: dt.datetime) -> bool:
+        # S1-OBS9: best-effort 更新。失敗時 (Firestore 障害等) は False を
+        # 返すだけで例外は外に投げない (呼び元の auth path を切らない)。
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        try:
+            snaps = list(
+                self._ref()
+                .where(filter=FieldFilter("token_hash", "==", token_hash))
+                .limit(1)
+                .stream()
+            )
+            if not snaps:
+                return False
+            snaps[0].reference.update({"last_used_at": at})
+            return True
+        except Exception:
+            return False
 
 
 # --- token 発行ヘルパ ---------------------------------------------------

@@ -304,6 +304,9 @@ class ShareLinkInfo(BaseModel):
     created_at: datetime
     expires_at: datetime | None = None
     revoked_at: datetime | None = None
+    # S1-OBS9/UX5: 最後に使われた時刻 (auth.py `_verify_share_link` で更新)。
+    # ShareLinksPanel が「最終使用: ...」を表示して dormant token の特定に使う。
+    last_used_at: datetime | None = None
     label: str = ""
     is_active: bool
 

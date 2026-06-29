@@ -1083,3 +1083,91 @@ def test_audit_source_roundtrip_via_get(
     body = res.json()
     assert body["created_audit_source"] == "share-link"
     assert body["updated_audit_source"] == "share-link"
+
+
+# --- S1 Phase A hot-fix (2026-06-29): D2 + OBS2/3/9 + UX5 ---
+
+
+def test_obs9_last_used_at_updates_on_verify(
+    client: TestClient, record_id: str, store: InMemoryShareLinkStore
+) -> None:
+    """S1-OBS9/UX5: share-link token を使った時に last_used_at が更新される。"""
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "viewer", "pseudo_email": "ext@y.com"},
+    ).json()
+    raw_token = issued["token"]
+    prefix = issued["token_hash_prefix"]
+    # 発行直後は未使用
+    assert issued["last_used_at"] is None
+
+    # token を使って record fetch
+    app.dependency_overrides.clear()
+    res = client.get(
+        f"/api/records/{record_id}",
+        headers={"Authorization": f"Bearer {raw_token}", "X-Labvault-Team": "teamA"},
+    )
+    assert res.status_code == 200
+
+    # owner 視点で list すると last_used_at が入っている
+    _as(client, _owner)
+    list_res = client.get(
+        f"/api/records/{record_id}/share-links", headers=_hdrs()
+    )
+    items = list_res.json()["items"]
+    target = next(i for i in items if i["token_hash_prefix"] == prefix)
+    assert target["last_used_at"] is not None
+
+
+def test_obs2_invalid_share_link_emits_warning_log(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """S1-OBS2: 不正な ls_* token は WARNING で log_event される。"""
+    import logging as _logging
+
+    caplog.set_level(_logging.WARNING)
+    app.dependency_overrides.clear()
+    res = client.get(
+        "/api/records/AB3F7K",
+        headers={
+            "Authorization": "Bearer ls_abcdef1234567890abcdef1234567890",
+            "X-Labvault-Team": "teamA",
+        },
+    )
+    assert res.status_code == 401
+    # `share_link.auth_failed` event が log に出ているはず
+    warning_events = [
+        r for r in caplog.records if "share_link.auth_failed" in r.getMessage()
+    ]
+    assert warning_events, "expected share_link.auth_failed WARNING event"
+
+
+def test_d2_share_link_token_redacted_in_logs(
+    client: TestClient, record_id: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """S1-D2: log message に ``ls_<hex>`` が乗っていれば redact される。
+
+    application log (logger.info / log_event etc) で path に token が
+    含まれても ``ls_<redacted>`` に置換されることを確認。
+    """
+    import logging as _logging
+
+    from app.observability import _ShareLinkTokenRedactor
+
+    # 直接 filter を適用して動作確認 (root logger の handler 経由は test
+    # 環境で confgで抑制されているため)
+    rec = _logging.LogRecord(
+        name="test",
+        level=_logging.INFO,
+        pathname="x.py",
+        lineno=1,
+        msg="GET /share/ls_0123456789abcdef0123456789abcdef HTTP 200",
+        args=(),
+        exc_info=None,
+    )
+    f = _ShareLinkTokenRedactor()
+    assert f.filter(rec) is True
+    assert "ls_0123456789abcdef0123456789abcdef" not in rec.getMessage()
+    assert "ls_<redacted>" in rec.getMessage()

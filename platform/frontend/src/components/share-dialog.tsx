@@ -773,6 +773,12 @@ function ShareLinksPanel({
                   ? `· 失効: ${new Date(link.expires_at).toLocaleDateString("ja-JP")}`
                   : "· 無期限"}
                 {" · "}発行: {new Date(link.created_at).toLocaleDateString("ja-JP")}
+                {/* S1-OBS9/UX5 (2026-06-29): 最終使用時刻を表示。dormant /
+                    漏洩疑い token の特定に使う。null = 未使用 */}
+                {" · "}
+                {link.last_used_at
+                  ? `最終使用: ${new Date(link.last_used_at).toLocaleDateString("ja-JP")}`
+                  : "未使用"}
               </div>
             </li>
           ))}
