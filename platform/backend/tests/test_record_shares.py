@@ -189,13 +189,18 @@ def test_self_share_rejected(client: TestClient, record_id: str) -> None:
 
 
 def test_invalid_role_rejected(client: TestClient, record_id: str) -> None:
+    """role が Literal["viewer","analyst"] 以外なら schema レベルで 422。
+
+    S1-CQ11/13 hot-fix (PR γ-1): Pydantic Literal で schema validation
+    時に 422 を返す (handler 内 400 より構造的に早い段階で弾く)。
+    """
     c = _as(client, _owner)
     res = c.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
         json={"email": "bob@b.com", "role": "destroyer"},
     )
-    assert res.status_code == 400
+    assert res.status_code == 422
 
 
 def test_invalid_email_rejected(client: TestClient, record_id: str) -> None:

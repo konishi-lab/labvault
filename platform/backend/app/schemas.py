@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
+
+# S1-CQ4/11/13 (2026-06-29): 共有 role を Literal で型化することで、
+# OpenAPI 生成時に enum として frontend / 外部 client に伝わるようにする
+# (旧 plain ``str`` は enum 情報を持たず drift の温床)。
+ShareRole = Literal["viewer", "analyst"]
 
 # --- Response Models ---
 
@@ -258,13 +263,16 @@ class ShareGrantRequest(BaseModel):
     """
 
     email: str
-    role: str  # "viewer" | "analyst"
+    role: ShareRole
 
 
 class ShareEntry(BaseModel):
     """`GET /api/records/{id}/shares` の各要素。"""
 
     email: str
+    # response 側は ``ShareRole`` で型化したいが、forward-compat (DB に
+    # 未知 role が入っていた場合) で 500 にしないため ``str`` のまま。
+    # 出力側 handler で normalize する責務。
     role: str
 
 
@@ -283,7 +291,7 @@ class ShareLinkCreate(BaseModel):
     監査可能性のため required。expires_days 省略時は 30 日。
     """
 
-    role: str  # "viewer" | "analyst"
+    role: ShareRole
     pseudo_email: str
     pseudo_display_name: str = ""
     label: str = ""

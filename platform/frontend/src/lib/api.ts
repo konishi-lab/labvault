@@ -386,6 +386,9 @@ export async function deleteRecord(id: string): Promise<void> {
 
 // --- 共有 (S1 Phase 1 / PR #84 + PR #85) ---
 
+// S1-CQ4/11/13 (2026-06-29): 共有 role の type は SDK / backend と揃えて
+// 1 つだけ定義する。``ShareLinkRole`` は ``ShareRole`` の alias として
+// 残してあるが、新規 code では ``ShareRole`` を使うこと。
 export type ShareRole = "viewer" | "analyst";
 
 export interface ShareEntry {
@@ -464,7 +467,10 @@ export interface SharedRecordListResponse {
 
 // --- S1 Phase 2: 外部 token sharing (ls_*) ---
 
-export type ShareLinkRole = "viewer" | "analyst";
+// S1-CQ11/13 (2026-06-29): 旧 ``ShareLinkRole`` は ``ShareRole`` と完全
+// 同義だったので alias に降格。新規 code は ``ShareRole`` を使うこと。
+// 既存 import の互換性のためここで export 維持。
+export type ShareLinkRole = ShareRole;
 
 export interface ShareLinkInfo {
   // 一覧 / revoke ハンドルは hash の先頭 16 chars。raw token は含まれない。

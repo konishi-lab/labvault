@@ -73,6 +73,11 @@ class ShareLinkScope:
     record_id: str
     role: str  # "viewer" | "analyst"
     team: str  # record owner team (header 検証用 / observability 用)
+    # S1-CQ8 (2026-06-29): 完全 token_hash (SHA-256 hex 64 chars)。
+    # /api/share-links/me が ``get_by_hash(token_hash)`` を直叩きで
+    # 1 read に圧縮するために保持する (旧実装は uid prefix から
+    # ``list_for_record + startswith`` で N read していた)。
+    token_hash: str = ""
 
 
 @dataclass(frozen=True)
@@ -172,6 +177,7 @@ def _verify_share_link(token: str) -> User | None:
         record_id=link.record_id,
         role=link.role,
         team=link.team,
+        token_hash=token_hash,
     )
     # share-link user は allowed_users 照合を経由しない (外部協力者で
     # team membership が無いのが前提)。teams=() / role="" / default_team=team
