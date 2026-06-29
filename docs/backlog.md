@@ -3,22 +3,163 @@
 「次に着手する候補」を優先度別に並べたキュー。完了したら `multitenant_next_steps.md` /
 `design/v10/05_milestones.md` の該当エントリにも反映する。
 
-最終更新: 2026-06-24 (PR #84 反映 — S1 Phase 1A foundation 完了)
+最終更新: 2026-06-29 (S1 Phase 1+2 全 6 PR 着地 + agent teams レビューで 44 confirmed findings 抽出)
 
 ---
 
-## 📌 次着手予定 (2026-06-25 朝)
+## 📌 次着手予定 (2026-06-29 即対応)
 
-**S1 Phase 1B** (1〜2 日) — UI 公開:
-- `GET /api/records/shared-with-me` 一覧 endpoint
-- Firestore index: `(deleted_at, shared_with_emails array-contains, updated_at DESC)`
-  → `firestore.indexes.json` 更新 + `firebase deploy --only firestore:labvault`
-- Frontend api.ts: `RecordDetail.shares?` 型 + `fetchShares` / `grantShare` /
-  `revokeShare` / `fetchSharedWithMe` helper
-- Frontend: record 詳細「共有」モーダル (email + role + active shares + 失効)
-- `/records?shared=1` filter で「他チームから共有された record」表示
+**S1 hot-fix Phase A** (1 日) — 致命的データ整合性 + 漏洩 2 件:
+- **S1-DATA1** (Firestore deep-merge で revoke が永続化されない authorization leak) を最優先で潰す
+- **S1-CQ1/API2** (`/api/records/{id}` が share-link / 外部 user にも shares dict 全件を返す情報漏洩) を併せて 1 PR で
+- Firestore integration test を追加 (revoke ラウンドトリップ + shares dict 非露出)
 
-その後の予定: Phase 1C (analyst write path、1 日) → Phase 2 (外部 token、3 日)
+その後の Phase B (UX 詰まり) と Phase C (URL token 設計見直し) は下記 🚨 セクション参照。
+
+---
+
+## 🚨 S1 共有機能レビュー (2026-06-29) — 致命的・高優先 findings
+
+agent teams (7 次元 × adversarial verify) で 89 件挙がって 44 件 confirmed
+(18 件は反証で誤検出と判定、27 件は session limit で verify 未実行)。
+重要度順に整理:
+
+### 🔴 critical (即対応必須)
+
+**S1-DATA1**: Firestore `update_record` が `set(data, merge=True)` のため
+nested map `shares` は field-path level で deep-merge される。`revoke_share` で
+in-memory dict から削除しても **Firestore 側に email subfield が残留**。
+`shared_with_emails` 配列は全置換されるので `/shared-with-me` には出ないが、
+URL 直アクセス `GET /api/records/{id}` は `_get_share_role` 経由で **200 で
+読めてしまう (privacy / authorization leak)**。InMemory backend は
+`existing.update(data)` で top-level 置換するため tests/CI は全 green、
+本番 Firestore 経路でだけ発生。
+- 場所: `src/labvault/backends/firestore.py:65` + `record.py:712-722`
+- 修正: `update_record` に `delete_fields: list[str]` 引数追加、または
+  `Record._persist()` で `update({'shares.email': DELETE_FIELD})` を別途、
+  または `Record._to_dict()` 全体を Firestore に `update()` する。
+  `tests/integration/test_firestore_live.py` に revoke ラウンドトリップ追加。
+
+**S1-OBS1 / S1-API1** (未検証、確度 high): raw `ls_*` token を URL path
+segment に置く設計 (`/share/<raw_token>`) のため、
+- Cloud Run / ALB access log に必ず full token が残る (Authorization
+  header と違って redaction されない)
+- 外部リンク経由で Referer header に流出
+- ブラウザ履歴 + 共有リンク貼り間違いで二次漏洩
+- DataDog 等のログ収集 SaaS にも流れる
+
+SHA-256 hash 保存の意味が path 露出で半分相殺されている。revoke でしか
+対応できない。
+- 場所: `platform/frontend/src/app/share/[token]/page.tsx:53-110` +
+  `next.config.ts`
+- 修正: token を URL fragment (`#token=...`、サーバに送信されない) または
+  sessionStorage 経路に変更、または middleware でアクセスログから
+  `/share/*` の path を redaction。
+
+### 🟠 high (1〜2 PR で纏めて対応)
+
+**情報漏洩 / 設計契約違反 (4 件):**
+
+- **S1-CQ1 / S1-API2**: `_to_detail()` が share-link / 外部 user にも
+  `shares` dict 全件を返す。他の Firebase user の email + role が curl で
+  見える。`/api/records/{id}/shares` も `require_read` だけで通る。
+  - 場所: `routers/records.py:108-117, 765-784`
+  - 修正: `_to_detail()` に viewer 引数を渡し、`can_grant` でない user に
+    は `shares={}`。`list_record_shares` を `require_grant` に格上げ。
+
+- **S1-SEC1**: `list_shared_with_me` が `user.share_link_scope` を check
+  しない。token の `pseudo_email` が偶然他 record の `shared_with_emails`
+  に含まれると cross-team 列挙される (1-record scope 契約破壊)。
+  - 場所: `routers/records.py:515-585`
+  - 修正: handler 冒頭で `if user.share_link_scope is not None: 403`。
+
+- **S1-SEC2**: `pseudo_email` の検証が `"@" in s` だけで、`allowed_users`
+  衝突や予約 domain 強制が無い。owner が `pseudo_email="ceo@..."` で
+  token 発行 → 子 record の `created_by` が本物 user 同名で記録されて
+  audit 偽造可能。
+  - 場所: `routers/records.py:920-928`
+  - 修正: `allowed_users` 衝突を reject + 予約 domain
+    (`@share.labvault.local` 等) 強制 + `audit_source="share-link"` field
+    を record に併記。
+
+- **S1-SEC3**: `get_children` / `get_children_conditions` が
+  `require_read(parent)` だけで個別の `can_read(child)` をしない。
+  viewer share-link で parent rec1 を持つと、全子の summary + conditions
+  + results が見える (1-record scope 破壊)。
+  - 場所: `records.py:635-719`
+  - 修正: children を `[c for c in children if can_read(user, c)]` で filter。
+
+- **S1-SEC4**: `bulk_upload` が `require_analyze(parent)` を 1 回呼ぶだけ
+  で per-child チェック無し → analyst share-link が parent から全 child
+  にファイル投入できる (scope 破壊)。
+  - 場所: `bulk_upload.py:178, 225-294`
+  - 修正: loop 内で `require_analyze(user, target)` を呼ぶ。
+
+**UX 即詰み (2 件):**
+
+- **S1-UX1**: `SharedRecordsList` の切替条件が
+  `!myTeamIds.has(item.team)` のため、teams=[A,B]・currentTeam=A の状態
+  で team B の共有 record をクリックすると team header が切り替わらず 404。
+  - 場所: `shared-records-list.tsx:62`
+  - 修正: `if (item.team && item.team !== currentTeam) setCurrentTeam(item.team)`。
+
+- **S1-UX2**: 発行直後の raw token amber banner が ESC / 外側クリック /
+  X ボタンで modal が閉じると unmount され、token が永久喪失 (SHA-256
+  hash しか保存していない)。
+  - 場所: `share-dialog.tsx:371, 215`
+  - 修正: `onOpenChange={(next) => { if (!next && justIssued) return; setOpen(next); }}`。
+
+**share-link 認可テスト不備 (未検証だが確度 high):**
+
+- **S1-TEST5**: `delete_record / restore / status / tags / notes /
+  conditions / results / units` 等 8 edit endpoint で share-link user が
+  叩いた時の 403 を assert する test が完全に欠落。実装は team header
+  validation で弾けるはずだが回帰検出網無し。
+  - 場所: `routers/records.py:610-1192` vs `test_share_link.py`
+  - 修正: 8 endpoint × `_share_link_user()` fixture で 403 を assert。
+
+### 🟡 medium (Phase B 前に消化)
+
+| ID | 内容 | ファイル |
+|---|---|---|
+| S1-SEC6 | `current_team_for_shared_access` 任意 team header 許可 → 404 vs 403 で record 存在 oracle | `auth.py:513-543` |
+| S1-DATA5 | `shared_links` が record/team delete と cascade せず orphan token 永続 | `share_links.py:18`, `lab.py:486` |
+| S1-DATA7 | 未知 role を `/shared-with-me` は viewer 降格、`/{id}` 詳細は 403 で**矛盾 UX** | `records.py:557` vs `permissions.py:53` |
+| S1-OBS2 (未) | 無効/期限切れ 401 が完全 silent → brute-force 検出不能 | `auth.py:139-181` |
+| S1-OBS3 (未) | `bulk_upload` events に actor 無く share-link audit 断絶 | `bulk_upload.py:215-223` |
+| S1-OBS5 (未) | share 系 log_event が email を生で Cloud Logging に流す (PII 残存ポリシー未定義) | `records.py:827, 962, 1036, 1074` |
+| S1-OBS8 (未) | `shared_links` Firestore query が `test_firestore_indexes` で検証されない (PR #74 と同じ罠) | `tests/unit/test_firestore_indexes.py` |
+| S1-OBS9 (未) | share-link `last_used_at` が無く dormant / 漏洩疑い token を特定できない | `auth.py:139-181`, `share_links.py:38-93` |
+| S1-UX3 | shared 経由で currentTeam が localStorage に永続書込 → 戻り方の UI 提示無し | `shared-records-list.tsx:62-69` |
+| S1-UX4 | 同じ pseudo_email で active token を何個でも発行可能 (UI 警告無し) | `share-dialog.tsx:420-464` |
+| S1-UX5 | `last_used_at` が無く token 使用状況を発行者が確認できない | `share-dialog.tsx`, `share_links.py` |
+| S1-UX10 | expires_days 空欄 submit で無期限 token (365 日上限の意図に反する) | `share-dialog.tsx:394, 427` |
+| S1-CQ3 | `create_record` が `Record.sub()` を回避して `_parent_id` / `_persist()` を inline 操作 (drift リスク) | `records.py:312-325` |
+| S1-CQ4 | 共有 role 定義が 5 箇所に散在 (SDK / backend const / 2 つの ts type / 直書きリテラル) | `record.py:683`, `permissions.py:30`, `api.ts:383,461`, `share-dialog.tsx:322,620` |
+| S1-CQ8 | `/me` が token_hash を捨てて list 全件 + prefix match で再 lookup (Firestore 余分往復) | `share_links.py:42-58` |
+| S1-CQ11/13 | `ShareRole` と `ShareLinkRole` 完全同義 + Pydantic schemas が plain `str` で `Literal` 未使用 | `api.ts`, `schemas.py` |
+| S1-TEST3 | `shared_with_me` cross-team test が 1 lab fixture のみで複数 team merge 未検証 | `test_shared_with_me.py:37-74` |
+| S1-TEST4 | `reset_share_link_store` / `reset_shared_metadata_backend` が 503 test で assert 漏れ | `test_firestore_lifecycle.py:196-237` |
+| S1-TEST6 | share-link analyst の bulk_upload SSE 本体経路がテスト 0 | `test_share_link.py` |
+
+### 🟢 low (将来 cleanup) — 21 件、別途リスト化
+
+主なもの: PAT/share-link prefix 衝突 test 無し (S1-TEST13)、expires_days
+境界 test 無し (S1-TEST14)、frontend integration test 完全欠落 (S1-TEST15)、
+share-dialog.tsx 748 行を 2 file に分割 (S1-CQ7)、`ROLE_LABEL` /
+`formatDate` / `formatBytes` が 4 file に重複 (S1-CQ14)、その他 design
+consistency / a11y / observability 微調整 ~14 件。詳細はレビュー output:
+`/private/tmp/.../wf9xj8afd.output`
+
+### ✋ 反証された (false positive) 18 件 — 主なもの
+
+- `expires_days=0`=無期限 (SEC5) — 仕様として明示 + test 済み
+  (`test_expires_zero_means_no_expiry`)
+- `window.confirm` 使用 (UX6) — プロジェクト全体 4 箇所同パターンで整合
+- `/records/[id]` と `/share/[token]` の duplicate (CQ5) — 実際は share
+  側が意図的に簡略化された別実装
+- Firestore doc_id collision テスト無し (TEST11) — 2^-64 確率で artificial
+- `lab._team` 直アクセス 26+ 箇所 (CQ10) — **C2 構造的負債**として既知登録済み
 
 ---
 

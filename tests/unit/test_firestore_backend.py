@@ -63,14 +63,61 @@ class TestRecordCRUD:
         result = backend.get_record("team-a", "AB3F")
         assert result is None
 
-    def test_update_record(self, backend):
+    def test_update_record_uses_update_not_set_merge(self, backend):
+        """S1-DATA1 regression: ``update()`` を使う (top-level 全置換)。
+
+        旧実装 ``set(data, merge=True)`` は nested map (``shares`` 等) を
+        deep-merge するため revoke した email subfield が残留し
+        authorization leak になる。``update()`` は top-level field 単位の
+        置換でこれを防ぐ。
+        """
         data = {"id": "AB3F", "title": "updated"}
         backend.update_record("team-a", "AB3F", data)
 
-        # set with merge=True
-        (
-            backend._db.collection.return_value.document.return_value.collection.return_value.document.return_value.set
-        ).assert_called_once_with(data, merge=True)
+        ref = backend._db.collection.return_value.document.return_value.collection.return_value.document.return_value
+        ref.update.assert_called_once_with(data)
+        # 旧実装 (set merge=True) は呼ばれない
+        ref.set.assert_not_called()
+
+    def test_update_record_falls_back_to_set_on_not_found(self, backend):
+        """``update()`` は doc 不在で NotFound を投げる → ``set()`` で
+        fallback (buffer 復元 / legacy 経路保護)。"""
+        from google.api_core.exceptions import NotFound
+
+        ref = backend._db.collection.return_value.document.return_value.collection.return_value.document.return_value
+        ref.update.side_effect = NotFound("missing")
+
+        data = {"id": "AB3F", "title": "fresh"}
+        backend.update_record("team-a", "AB3F", data)
+
+        ref.update.assert_called_once_with(data)
+        ref.set.assert_called_once_with(data)
+
+    def test_update_record_replaces_shares_map_fully(self, backend):
+        """S1-DATA1: revoke で消えた email が Firestore 側にも残らないこと。
+
+        ``_to_dict()`` の結果として ``shares`` field を含む dict を渡せば、
+        ``update()`` は top-level shares を完全に置換する (deep-merge せず)。
+        本テストは「呼び出された引数に消えたはずの email が含まれていな
+        いこと」を、Firestore mock 経由で確認する (再現テストの SDK 部分)。
+        """
+        # 初期 grant: 2 件
+        initial = {
+            "id": "AB3F",
+            "shares": {"alice@x.com": "viewer", "bob@y.com": "viewer"},
+        }
+        backend.update_record("team-a", "AB3F", initial)
+
+        # bob を revoke 後 (SDK が _to_dict で送る形)
+        after_revoke = {"id": "AB3F", "shares": {"alice@x.com": "viewer"}}
+        backend.update_record("team-a", "AB3F", after_revoke)
+
+        ref = backend._db.collection.return_value.document.return_value.collection.return_value.document.return_value
+        # 2 回 update() が呼ばれ、2 回目の引数は alice だけ含む shares
+        assert ref.update.call_count == 2
+        second_call_args = ref.update.call_args_list[1][0][0]
+        assert second_call_args["shares"] == {"alice@x.com": "viewer"}
+        assert "bob@y.com" not in second_call_args["shares"]
 
     def test_delete_record(self, backend):
         backend.delete_record("team-a", "AB3F")

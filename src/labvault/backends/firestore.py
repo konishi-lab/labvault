@@ -61,8 +61,36 @@ class FirestoreMetadataBackend:
         return result
 
     def update_record(self, team: str, record_id: str, data: dict[str, Any]) -> None:
-        """レコードを更新する。"""
-        self._records_ref(team).document(record_id).set(data, merge=True)
+        """レコードを更新する。
+
+        Firestore の ``update()`` を使うことで、top-level field ごとに
+        値を置換する (nested map は **deep-merge せず全置換**)。これは
+        `Record._to_dict()` が常に完全な state を返す前提と整合する。
+
+        **S1-DATA1 (2026-06-29 hot-fix)**: 以前は ``set(data, merge=True)``
+        を使っていたが、Firestore SDK の merge=True は nested map (例:
+        ``shares``) を **field-path レベルで deep-merge** し、新 dict に
+        含まれない subfield (revoke した email 等) を温存する仕様だった。
+        結果として ``revoke_share`` が永続化されず、URL 直アクセスで
+        revoke 済 user が record を読めてしまう authorization leak が発生
+        していた。``update()`` は top-level field 単位の置換になるので
+        この問題を構造的に解決する。
+
+        ``firestore_search.py`` が別経路で書き込む ``embedding`` /
+        ``embedding_text`` field は data dict に含まれないため、
+        ``update()`` 経由でも触られず温存される (regression なし)。
+
+        ``NotFound`` (= doc が無い) は通常 ``create_record`` 経由で
+        先に作成しているので起きないが、buffer 復元 / legacy 経路の
+        ために ``set()`` で fallback する。
+        """
+        from google.api_core.exceptions import NotFound
+
+        ref = self._records_ref(team).document(record_id)
+        try:
+            ref.update(data)
+        except NotFound:
+            ref.set(data)
 
     def delete_record(self, team: str, record_id: str) -> None:
         """レコードを物理削除する。"""
