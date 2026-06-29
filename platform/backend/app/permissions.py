@@ -26,10 +26,15 @@ from fastapi import HTTPException
 
 from .auth import User, is_super_admin
 
-# 共有 role の定義。SDK 側 (`Record.SHARE_ROLES`) と一致させる。
+# S1-CQ4 (2026-06-29): 共有 role の定義は SDK 側 (``Record.SHARE_ROLES``)
+# を single source of truth として import する。旧実装では backend に
+# `VALID_SHARE_ROLES` を別途定義していて、SDK と手動同期になっていた。
+from labvault.core.record import Record as _SDKRecord
+
 ROLE_VIEWER = "viewer"
 ROLE_ANALYST = "analyst"
-VALID_SHARE_ROLES = (ROLE_VIEWER, ROLE_ANALYST)
+# 後方互換のため定数も export 維持 (handler が import している)
+VALID_SHARE_ROLES = _SDKRecord.SHARE_ROLES
 
 
 def _get_share_role(record: Any, user_email: str) -> str | None:

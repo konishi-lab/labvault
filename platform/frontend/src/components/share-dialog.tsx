@@ -41,7 +41,6 @@ import {
   type CreatedShareLink,
   type ShareEntry,
   type ShareLinkInfo,
-  type ShareLinkRole,
   type ShareRole,
 } from "@/lib/api";
 
@@ -425,7 +424,7 @@ function ShareLinksPanel({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [role, setRole] = useState<ShareLinkRole>("viewer");
+  const [role, setRole] = useState<ShareRole>("viewer");
   const [pseudoEmail, setPseudoEmail] = useState("");
   const [pseudoName, setPseudoName] = useState("");
   const [label, setLabel] = useState("");
@@ -693,7 +692,7 @@ function ShareLinksPanel({
               role="radiogroup"
               aria-label="権限"
             >
-              {(["viewer", "analyst"] as ShareLinkRole[]).map((r) => {
+              {(["viewer", "analyst"] as ShareRole[]).map((r) => {
                 const active = role === r;
                 return (
                   <button

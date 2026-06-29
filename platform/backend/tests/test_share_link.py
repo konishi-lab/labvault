@@ -190,13 +190,14 @@ def test_outsider_cannot_issue_share_link(client: TestClient, record_id: str) ->
 
 
 def test_invalid_role_rejected(client: TestClient, record_id: str) -> None:
+    """S1-CQ11/13 (PR γ-1): Pydantic Literal で schema レベル 422。"""
     c = _as(client, _owner)
     res = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
         json={"role": "godmode", "pseudo_email": "e@x.com"},
     )
-    assert res.status_code == 400
+    assert res.status_code == 422
 
 
 def test_invalid_pseudo_email_rejected(client: TestClient, record_id: str) -> None:

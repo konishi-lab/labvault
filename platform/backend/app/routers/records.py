@@ -338,26 +338,22 @@ def create_record(
                 status_code=404, detail="parent record not found"
             ) from None
         require_analyze(user, parent)
-        # `Record.sub()` は親 Lab の default user を created_by に使う
-        # ため、ここでは lab.new() + parent_id 直結 + bidirectional link
-        # を inline で書いて created_by に呼び出し user の email を刻む。
-        rec = lab.new(
+        # S1-CQ3 (2026-06-29): Record.sub() に created_by 引数が入ったので、
+        # 旧 inline (lab.new + _parent_id + _persist + bidirectional link)
+        # の自前実装を廃止し sub() に委譲。drift リスクが構造的に消える。
+        rec = parent.sub(
             body.title,
             type=body.type,
-            tags=body.tags if body.tags else None,
-            auto_log=False,
             created_by=user.email,
             **body.conditions,
         )
-        rec._parent_id = parent.id
+        if body.tags:
+            rec.tag(*body.tags)
         # S1-SEC2: audit source は作成時に決定 (created/updated 両方)
         rec._created_audit_source = source
-        rec._updated_audit_source = source
+        rec.updated_audit_source = source
         rec.updated_by = user.email
         rec._persist()
-        # `Record.sub()` と揃える: 親⇄子の双方向 link を張る
-        parent.link(rec.id, "has_child")
-        rec.link(parent.id, "child_of")
     else:
         # root record 作成 — team membership を要求
         require_team_member(user, lab._team)
@@ -606,13 +602,21 @@ def list_shared_with_me(
             raw = raw[:limit]
 
         items: list[SharedRecordSummary] = []
+        skipped_unknown_role = 0
         for d in raw:
             shares = d.get("shares") or {}
-            role = shares.get(email, "viewer") if isinstance(shares, dict) else "viewer"
-            if role not in VALID_SHARE_ROLES:
-                # 旧 / 想定外の role が保存されていても無視せず viewer 扱いで
-                # 表示する (UI 側で「未知の role」を出すより安全側)。
-                role = "viewer"
+            role = shares.get(email) if isinstance(shares, dict) else None
+            # S1-DATA7 hot-fix (2026-06-29): 未知 role の record は
+            # **skip して一覧に出さない** ことで permissions.py
+            # (`_get_share_role` が valid role 以外 None を返す) と挙動を
+            # 揃える。旧実装は silent viewer 降格していたため、
+            # /shared-with-me には「viewer として共有」と出る一方で
+            # 詳細 fetch は 403 になる UX 矛盾を生んでいた。
+            # skip 件数は observability event に乗せて「DB の role 汚染を
+            # 後から検知」できるようにする。
+            if role is None or role not in VALID_SHARE_ROLES:
+                skipped_unknown_role += 1
+                continue
             items.append(
                 SharedRecordSummary(
                     id=d.get("id", ""),
@@ -632,7 +636,11 @@ def list_shared_with_me(
                     role=role,
                 )
             )
-        timer.add(returned=len(items), has_more=truncated)
+        timer.add(
+            returned=len(items),
+            has_more=truncated,
+            skipped_unknown_role=skipped_unknown_role,
+        )
 
     return SharedRecordListResponse(
         items=items,

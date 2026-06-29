@@ -671,6 +671,7 @@ class Record:
         *,
         type: str | None = None,
         template: str | None = None,
+        created_by: str | None = None,
         **conditions: Any,
     ) -> Record:
         """子レコードを作成する。
@@ -684,6 +685,11 @@ class Record:
 
         孫世代以上も同様: ``parent.sub(...).sub(template=..., ...)`` で
         N 世代まで自然にネストできる。各世代の template は独立。
+
+        S1-CQ3 (2026-06-29): ``created_by`` 引数を追加。Web API handler が
+        「親 lab の default user ではなく、API call の認証 user (Firebase /
+        share-link pseudo) を created_by に刻みたい」ユースケース用。
+        未指定なら従来通り ``Lab._user`` (env / config の user) が使われる。
         """
         from labvault.core.types import RecordType
 
@@ -692,7 +698,13 @@ class Record:
             raise RuntimeError(msg)
 
         rec_type = type or RecordType.MEASUREMENT
-        child = self._lab.new(title, type=rec_type, template=template, **conditions)
+        child = self._lab.new(
+            title,
+            type=rec_type,
+            template=template,
+            created_by=created_by,
+            **conditions,
+        )
         child._parent_id = self._id
         child._persist()
 

@@ -293,3 +293,30 @@ def test_shared_with_me_does_not_collide_with_record_id_path(
     # 200 で SharedRecordListResponse が返れば順序は正しい (404 や 422 ではない)
     assert res.status_code == 200
     assert "items" in res.json()
+
+
+# --- S1 Phase γ-1 hot-fix (2026-06-29): DATA7 unknown-role skip ---
+
+
+def test_data7_unknown_role_is_skipped(
+    client: TestClient, lab: Lab
+) -> None:
+    """S1-DATA7: shares dict に未知 role がある record は /shared-with-me
+    に出ない (旧実装は silent viewer 降格 → 詳細 403 で矛盾していた)。"""
+    # 正規 role の record
+    rec_ok = lab.new("ok-rec", auto_log=False, created_by="owner@a.com")
+    rec_ok.grant_share("bob@b.com", "viewer")
+
+    # 直接 shares を未知 role に汚染した record (Firestore console 編集 / 手動
+    # migration を想定)
+    rec_bad = lab.new("bad-rec", auto_log=False, created_by="owner@a.com")
+    rec_bad._shares["bob@b.com"] = "super_viewer"  # 未知 role
+    rec_bad._persist()
+
+    c = _as(client, _bob)
+    res = c.get("/api/records/shared-with-me")
+    assert res.status_code == 200
+    ids = {item["id"] for item in res.json()["items"]}
+    # rec_ok だけ出る、rec_bad は skip
+    assert rec_ok.id in ids
+    assert rec_bad.id not in ids
