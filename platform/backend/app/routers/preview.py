@@ -11,7 +11,7 @@ from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
 from ..auth import User, current_user, get_lab_relaxed
-from ..permissions import require_read
+from ..permissions import fetch_readable_or_404
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +66,8 @@ def preview_file(
     S1 Phase 1B/1C 補完: ``require_read`` で認可、viewer 共有 user も
     preview を見られる。
     """
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
-    require_read(user, rec)
+    # S1-SEC6 (PR γ-2): read 不可は 404 で uniform
+    rec = fetch_readable_or_404(lab, record_id, user)
 
     if not filename.lower().endswith(".vk4"):
         raise HTTPException(

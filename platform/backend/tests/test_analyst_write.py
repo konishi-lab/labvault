@@ -198,7 +198,11 @@ def test_viewer_cannot_create_child_record(
 def test_outsider_cannot_create_child_record(
     client: TestClient, parent_id: str
 ) -> None:
-    """共有されていない user は子 record を作れない。"""
+    """共有されていない user は子 record を作れない。
+
+    S1-SEC6 (PR γ-2): 外部 user は parent を read もできないので、
+    存在オラクル防止のため **404** で uniform (旧仕様の 403 から変更)。
+    """
     c = _as(client, _dave_outsider)
     res = c.post(
         "/api/records",
@@ -208,7 +212,7 @@ def test_outsider_cannot_create_child_record(
             "parent_id": parent_id,
         },
     )
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_team_member_can_create_child_record(
@@ -314,6 +318,7 @@ def test_viewer_cannot_upload_file(
 def test_outsider_cannot_upload_file(
     client: TestClient, parent_id: str
 ) -> None:
+    """S1-SEC6: outsider は read 不可 → uniform 404 (旧 403)。"""
     c = _as(client, _dave_outsider)
     file_data = ("evil.txt", io.BytesIO(b"x"), "text/plain")
     res = c.post(
@@ -321,7 +326,7 @@ def test_outsider_cannot_upload_file(
         headers=_hdrs(),
         files={"file": file_data},
     )
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_team_member_can_upload_file(
@@ -355,10 +360,10 @@ def test_viewer_can_list_files(client: TestClient, parent_id: str, lab: Lab) -> 
 
 
 def test_outsider_cannot_list_files(client: TestClient, parent_id: str) -> None:
-    """関係ない user は file 一覧も引けない。"""
+    """S1-SEC6: outsider は read 不可 → uniform 404 (旧 403)。"""
     c = _as(client, _dave_outsider)
     res = c.get(f"/api/records/{parent_id}/files", headers=_hdrs())
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 # --- bulk-upload preview ---------------------------------------------------
@@ -420,6 +425,7 @@ def test_viewer_cannot_bulk_upload_preview(
 def test_outsider_cannot_bulk_upload_preview(
     client: TestClient, parent_id: str
 ) -> None:
+    """S1-SEC6: outsider は read 不可 → uniform 404 (旧 403)。"""
     c = _as(client, _dave_outsider)
     res = c.post(
         f"/api/records/{parent_id}/bulk-upload/preview",
@@ -434,4 +440,4 @@ def test_outsider_cannot_bulk_upload_preview(
             "filenames": ["x.txt"],
         },
     )
-    assert res.status_code == 403
+    assert res.status_code == 404

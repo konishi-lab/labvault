@@ -17,7 +17,7 @@ from labvault.core.record import Record
 
 from ..auth import User, current_user, get_lab_relaxed
 from ..observability import log_event
-from ..permissions import can_analyze, require_analyze
+from ..permissions import can_analyze, fetch_analyzable_or_403
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +102,8 @@ async def preview_matching(
     S1 Phase 1C: 本 endpoint は後段の upload (POST /api/.../bulk-upload) と
     同じ書き込み権限が前提なので ``require_analyze`` で揃える。
     """
-    try:
-        parent = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
-    require_analyze(user, parent)
+    # S1-SEC6 (PR γ-2): read 不可 → 404、read 通って analyze 不可 → 403
+    fetch_analyzable_or_403(lab, record_id, user)
 
     children = _get_children_sorted(lab, record_id)
     basenames = [fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] for fn in filenames]
@@ -174,11 +171,8 @@ async def bulk_upload(
     された外部 user も他チームの実験に解析結果ファイルを bulk upload
     できる。viewer / 関係ない user は 403。
     """
-    try:
-        parent = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found") from None
-    require_analyze(user, parent)
+    # S1-SEC6 (PR γ-2): read 不可 → 404、read 通って analyze 不可 → 403
+    fetch_analyzable_or_403(lab, record_id, user)
 
     if rows == 0 or cols == 0:
         raise HTTPException(status_code=400, detail="rows and cols required")

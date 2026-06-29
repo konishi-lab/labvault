@@ -9,7 +9,7 @@ from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
 from ..auth import User, current_user, get_lab_relaxed
-from ..permissions import require_analyze, require_read
+from ..permissions import fetch_analyzable_or_403, fetch_readable_or_404
 from ..schemas import FileInfo, RecordDetail
 
 router = APIRouter(prefix="/api/records/{record_id}/files", tags=["files"])
@@ -28,11 +28,8 @@ def list_files(
     ``X-Labvault-Team`` header を record の所有 team に向けて投げる
     必要がある (frontend が自動でセット)。
     """
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
-    require_read(user, rec)
+    # S1-SEC6 (PR γ-2): read 不可は 404 で uniform
+    rec = fetch_readable_or_404(lab, record_id, user)
     return [
         FileInfo(
             name=ref.name,
@@ -58,11 +55,8 @@ async def upload_file(
     """
     from ..routers.records import _to_detail
 
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found") from None
-    require_analyze(user, rec)
+    # S1-SEC6 (PR γ-2): read 不可 → 404、read 通って analyze 不可 → 403
+    rec = fetch_analyzable_or_403(lab, record_id, user)
 
     rec.updated_by = user.email
     # S1-SEC2: share-link 経路の audit marker
@@ -86,11 +80,8 @@ def download_file(
 
     S1 Phase 1B/1C 補完: ``require_read`` で認可、viewer 共有 user も DL 可能。
     """
-    try:
-        rec = lab.get(record_id)
-    except RecordNotFoundError:
-        raise HTTPException(status_code=404, detail="Record not found")
-    require_read(user, rec)
+    # S1-SEC6 (PR γ-2): read 不可は 404 で uniform
+    rec = fetch_readable_or_404(lab, record_id, user)
 
     try:
         data = rec.get_data(filename)

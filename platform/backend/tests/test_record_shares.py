@@ -165,16 +165,18 @@ def test_member_who_is_not_creator_cannot_grant(
 
 
 def test_outside_team_cannot_grant(client: TestClient, record_id: str) -> None:
-    """関係ない team の人は (share されていても) 再共有不可。"""
+    """関係ない team の人は (share されていても) 再共有不可。
+
+    S1-SEC6 (PR γ-2): outsider は read 不可 → uniform 404 で
+    存在オラクル隠蔽 (旧 403)。
+    """
     c = _as(client, _team_b_member)
     res = c.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),  # teamA を狙うが本人は teamB
         json={"email": "evil@evil.com", "role": "viewer"},
     )
-    # team_for_shared_access は header の team を 200 で通すが、
-    # require_grant で 403 になる
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_self_share_rejected(client: TestClient, record_id: str) -> None:
@@ -219,10 +221,14 @@ def test_invalid_email_rejected(client: TestClient, record_id: str) -> None:
 def test_outside_team_cannot_read_without_share(
     client: TestClient, record_id: str
 ) -> None:
-    """share されていない team の人は閲覧 403。"""
+    """share されていない team の人は閲覧不可。
+
+    S1-SEC6 (PR γ-2): uniform 404 で存在を漏らさない (旧 403)。
+    GitHub の private repo と同じ pattern。
+    """
     c = _as(client, _team_b_member)
     res = c.get(f"/api/records/{record_id}", headers=_hdrs())
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_outside_team_can_read_after_viewer_grant(
@@ -250,7 +256,10 @@ def test_outside_team_can_read_after_viewer_grant(
 def test_third_party_still_blocked_after_grant_to_someone_else(
     client: TestClient, record_id: str
 ) -> None:
-    """bob に共有されても charlie は閲覧不可。"""
+    """bob に共有されても charlie は閲覧不可。
+
+    S1-SEC6 (PR γ-2): uniform 404 で存在を漏らさない (旧 403)。
+    """
     c1 = _as(client, _owner)
     c1.post(
         f"/api/records/{record_id}/shares",
@@ -260,7 +269,7 @@ def test_third_party_still_blocked_after_grant_to_someone_else(
 
     c2 = _as(client, _team_c_member)
     res = c2.get(f"/api/records/{record_id}", headers=_hdrs())
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 # --- revoke 認可 / 挙動 -------------------------------------------------------
@@ -338,9 +347,10 @@ def test_list_shares_blocked_for_shared_user(
 def test_list_shares_blocked_for_non_shared_outsider(
     client: TestClient, record_id: str
 ) -> None:
+    """S1-SEC6 (PR γ-2): outsider は read 不可 → uniform 404 (旧 403)。"""
     c = _as(client, _team_c_member)
     res = c.get(f"/api/records/{record_id}/shares", headers=_hdrs())
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_list_shares_visible_to_owner_and_admin(
