@@ -78,6 +78,11 @@ export interface RecordDetail extends RecordSummary {
   // 充足率 `結果 3/9 必須` を出すのに使う)。template 未紐付けは空。
   template_required_conditions?: string[];
   template_required_results?: string[];
+  // S1 Phase 1A: email → role ("viewer" | "analyst") の共有設定。
+  // 共有モーダルが現状を表示するのに使う。viewer/analyst として share
+  // されている本人にも、自分の role 確認のため返ってくる。共有が無い
+  // 場合は空 dict、旧 record では undefined (Phase 1A 以降は常に dict)。
+  shares?: Record<string, string>;
   notes: NoteResponse[];
   files: FileInfo[];
   links: LinkResponse[];
@@ -371,6 +376,100 @@ export async function deleteRecord(id: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`Failed to delete record: ${res.status}`);
+}
+
+// --- 共有 (S1 Phase 1 / PR #84 + PR #85) ---
+
+export type ShareRole = "viewer" | "analyst";
+
+export interface ShareEntry {
+  email: string;
+  role: string;  // "viewer" | "analyst" (ShareRole)
+}
+
+export interface ShareListResponse {
+  items: ShareEntry[];
+}
+
+// `GET /api/records/{id}/shares` — read 権限があれば誰でも (= team
+// membership または shares 経由) 引ける。grant 主体でないユーザーが
+// 自分の role を確認するのにも使う。
+export async function fetchShares(id: string): Promise<ShareEntry[]> {
+  const res = await authFetch(`${API_BASE}/api/records/${id}/shares`);
+  if (!res.ok) throw new Error(`Failed to fetch shares: ${res.status}`);
+  const data = (await res.json()) as ShareListResponse;
+  return data.items;
+}
+
+// `POST /api/records/{id}/shares` — grant 主体は record.created_by 本人 +
+// team admin + super-admin。同じ email を再 grant すると role が上書き
+// (role 変更にも使える)。
+export async function grantShare(
+  id: string,
+  email: string,
+  role: ShareRole,
+): Promise<RecordDetail> {
+  const res = await authFetch(`${API_BASE}/api/records/${id}/shares`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, role }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Grant share failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+// `DELETE /api/records/{id}/shares/{email}` — 存在しない email を渡しても
+// 200 が返る idempotent 仕様 (UI 上の race 対策)。
+export async function revokeShare(
+  id: string,
+  email: string,
+): Promise<RecordDetail> {
+  const res = await authFetch(
+    `${API_BASE}/api/records/${id}/shares/${encodeURIComponent(email)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Revoke share failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+// S1 Phase 1B: 自分宛てに共有された record を **全 team 横断** で返す。
+// X-Labvault-Team header は無視されるため、ここだけは authFetch を経由
+// せずに済むが、Authorization header は要るので便宜上 authFetch を使う
+// (backend 側で team header があっても無視する)。
+//
+// 各 item の `team` を使って、frontend は detail 遷移時に currentTeam を
+// 一時的に切り替える (record owner team で X-Labvault-Team を送るため)。
+export interface SharedRecordSummary extends RecordSummary {
+  team: string;
+  role: string;  // "viewer" | "analyst" (ShareRole)
+}
+
+export interface SharedRecordListResponse {
+  items: SharedRecordSummary[];
+  total: number;
+  has_more?: boolean;
+}
+
+export async function fetchSharedWithMe(params?: {
+  limit?: number;
+  offset?: number;
+}): Promise<SharedRecordListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.offset) searchParams.set("offset", String(params.offset));
+  const qs = searchParams.toString();
+  const url = qs
+    ? `${API_BASE}/api/records/shared-with-me?${qs}`
+    : `${API_BASE}/api/records/shared-with-me`;
+  const res = await authFetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch shared records: ${res.status}`);
+  return res.json();
 }
 
 // --- signup / admin ---
