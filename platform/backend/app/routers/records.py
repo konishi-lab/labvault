@@ -667,12 +667,41 @@ def get_record(
 def delete_record(
     record_id: str,
     lab: Lab = Depends(get_lab),
+    user: User = Depends(current_user),
 ) -> None:
     """レコードを削除する (ソフトデリート)."""
     try:
         lab.delete(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
+
+    # S1-DATA5 hot-fix (2026-06-29): record 削除時に該当 record 宛の
+    # share-link token を一括 revoke する。 record が無くなったら token は
+    # どこにも辿り着けないので、UI 上「無効」明示 + 漏洩した raw token が
+    # restore 後に蘇る経路を防ぐ。best-effort (失敗しても record 削除は成立)。
+    import datetime as _dt
+
+    from ..dependencies import get_share_link_store
+
+    try:
+        revoked = get_share_link_store().revoke_for_record(
+            record_id, lab._team, at=_dt.datetime.now(_dt.UTC)
+        )
+        if revoked:
+            log_event(
+                logger,
+                "record.share_links_cascade_revoked",
+                record_id=record_id,
+                team=lab._team,
+                revoked_count=revoked,
+                trigger="record_delete",
+                actor=user.email,
+            )
+    except Exception:
+        logger.warning(
+            "share-link cascade revoke failed (record delete continued)",
+            exc_info=True,
+        )
 
 
 @router.post("/{record_id}/restore", response_model=RecordDetail)

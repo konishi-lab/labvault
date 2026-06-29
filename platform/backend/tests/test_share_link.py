@@ -1171,3 +1171,113 @@ def test_d2_share_link_token_redacted_in_logs(
     assert f.filter(rec) is True
     assert "ls_0123456789abcdef0123456789abcdef" not in rec.getMessage()
     assert "ls_<redacted>" in rec.getMessage()
+
+
+# --- S1 Phase β hot-fix (2026-06-29): DATA5 cascade ---
+
+
+def test_data5_record_delete_cascades_share_link_revoke(
+    client: TestClient, record_id: str, store: InMemoryShareLinkStore
+) -> None:
+    """S1-DATA5: record 削除時に該当 record の share-link が一括 revoke される。"""
+    # 2 件発行
+    c = _as(client, _owner)
+    issued1 = c.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "viewer", "pseudo_email": "ext+a@y.com"},
+    ).json()
+    issued2 = c.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "analyst", "pseudo_email": "ext+b@y.com"},
+    ).json()
+    assert issued1["is_active"] is True
+    assert issued2["is_active"] is True
+
+    # record 削除
+    res = c.delete(f"/api/records/{record_id}", headers=_hdrs())
+    assert res.status_code == 204
+
+    # token 経由でアクセスを試みると 401 (revoke 済)
+    app.dependency_overrides.clear()
+    for raw_token in (issued1["token"], issued2["token"]):
+        r = client.get(
+            f"/api/records/{record_id}",
+            headers={
+                "Authorization": f"Bearer {raw_token}",
+                "X-Labvault-Team": "teamA",
+            },
+        )
+        assert r.status_code == 401
+
+
+def test_data5_record_delete_idempotent_for_already_revoked(
+    client: TestClient, record_id: str
+) -> None:
+    """既に revoke 済 link は再 revoke しない (idempotent)。"""
+    c = _as(client, _owner)
+    issued = c.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "viewer", "pseudo_email": "ext@y.com"},
+    ).json()
+    prefix = issued["token_hash_prefix"]
+    # 手動 revoke
+    c.delete(f"/api/records/{record_id}/share-links/{prefix}", headers=_hdrs())
+
+    # record 削除 (cascade 試行)
+    res = c.delete(f"/api/records/{record_id}", headers=_hdrs())
+    assert res.status_code == 204
+    # 例外無く完了すれば OK (count=0 でも error 無し)
+
+
+# --- S1 Phase β hot-fix (2026-06-29): InMemory store のヘルパ単体テスト ---
+
+
+def test_inmemory_share_link_store_revoke_for_record() -> None:
+    """InMemoryShareLinkStore.revoke_for_record の挙動を直接 unit テスト。"""
+    import datetime as _dt
+
+    from app.share_links import ShareLink
+
+    store = InMemoryShareLinkStore()
+    now = _dt.datetime.now(_dt.UTC)
+    # team A の record rec1 に 2 件、record rec2 に 1 件、team B に 1 件
+    for i, (team, rec, tok) in enumerate(
+        [
+            ("teamA", "rec1", "a" * 64),
+            ("teamA", "rec1", "b" * 64),
+            ("teamA", "rec2", "c" * 64),
+            ("teamB", "rec1", "d" * 64),
+        ]
+    ):
+        store.create(
+            ShareLink(
+                token_hash=tok,
+                record_id=rec,
+                team=team,
+                role="viewer",
+                pseudo_email=f"ext{i}@y.com",
+                pseudo_display_name="",
+                created_by="owner@x.com",
+                created_at=now,
+                expires_at=None,
+                revoked_at=None,
+                label="",
+            )
+        )
+    # team A の rec1 だけ revoke
+    revoked = store.revoke_for_record("rec1", "teamA", at=now)
+    assert revoked == 2
+
+    # 確認: rec1/teamA の 2 件は revoked_at が入っている
+    assert store.get_by_hash("a" * 64).revoked_at == now
+    assert store.get_by_hash("b" * 64).revoked_at == now
+    # 他は影響なし
+    assert store.get_by_hash("c" * 64).revoked_at is None
+    assert store.get_by_hash("d" * 64).revoked_at is None
+
+    # 再度 revoke しても 0 (idempotent)
+    revoked2 = store.revoke_for_record("rec1", "teamA", at=now)
+    assert revoked2 == 0

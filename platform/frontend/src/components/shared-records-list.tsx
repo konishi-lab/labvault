@@ -55,22 +55,18 @@ export function SharedRecordsList({
   const myTeamIds = new Set(teams.map((t) => t.team_id));
 
   const handleClick = (item: SharedRecordSummary) => {
-    // S1-UX1 hot-fix (2026-06-29): 切替判定は **currentTeam との差分** で行う。
+    // S1-UX1 (PR #92): 切替判定は currentTeam との差分。teams=[A,B]/
+    // currentTeam=A で team B の共有 record をクリックしても 404 にしない。
     //
-    // 旧実装は `if (!myTeamIds.has(item.team))` で『自 team の所属判定』を
-    // 使っていた。これだと teams=[A,B] / currentTeam=A の user が team B の
-    // 共有 record をクリックしても切り替わらず (B も myTeamIds に含まれるため)、
-    // 詳細ページで X-Labvault-Team: A のまま record(team=B) を lookup して
-    // 404 になっていた。
-    //
-    // 正しくは『現 header と違う team の record なら切り替える』。これで
-    // 自 team / 他 team いずれも構造的に同じ挙動になる。
-    // 自分の所属していない team へ切替える場合は useAuth の setCurrentTeam が
-    // localStorage にも保存するため、戻った後も同じ team で表示が続く点に
-    // 注意 (team selector で手動で戻す)。Phase 2 で `?team=X` override 方式
-    // を検討予定。
+    // S1-UX3 (2026-06-29、本 PR): localStorage への永続書込を抑制し session
+    // のみで切替える。「shared 経由で他チームの record を覗いたら、次回
+    // ログイン / 再読み込み時には自分の default team に自然に戻る」が
+    // 期待動作。auth.tsx:250-258 の guard で teams に含まれない team は
+    // 次回 fetchAuthStatus で default_team に auto-recover するので、
+    // 自 team に切り替えた場合は永続化したい (= persist=true) との
+    // 細かい挙動差はあるが、シンプルに常に persist=false で十分。
     if (item.team && item.team !== currentTeam) {
-      setCurrentTeam(item.team);
+      setCurrentTeam(item.team, { persist: false });
     }
     router.push(`/records/${item.id}`);
   };
