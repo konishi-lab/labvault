@@ -32,10 +32,16 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  fetchShareLinks,
   fetchShares,
   grantShare,
+  issueShareLink,
   revokeShare,
+  revokeShareLink,
+  type CreatedShareLink,
   type ShareEntry,
+  type ShareLinkInfo,
+  type ShareLinkRole,
   type ShareRole,
 } from "@/lib/api";
 
@@ -359,7 +365,384 @@ export function ShareDialog({
             {error}
           </p>
         )}
+
+        {/* S1 Phase 2: 外部 token 共有 (ls_*) — Firebase アカウントを持たない
+            協力者向け。grant 主体だけが見える */}
+        {canGrant && open && <ShareLinksPanel recordId={recordId} />}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// --- S1 Phase 2: 外部 token (ls_*) panel -----------------------------------
+
+const TOKEN_ROLE_LABEL: Record<string, string> = {
+  viewer: "閲覧のみ",
+  analyst: "閲覧 + 解析投稿",
+};
+
+function ShareLinksPanel({ recordId }: { recordId: string }) {
+  const [links, setLinks] = useState<ShareLinkInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [role, setRole] = useState<ShareLinkRole>("viewer");
+  const [pseudoEmail, setPseudoEmail] = useState("");
+  const [pseudoName, setPseudoName] = useState("");
+  const [label, setLabel] = useState("");
+  const [expiresDays, setExpiresDays] = useState<string>("30");
+  // 発行直後の raw token (1 回限り表示)
+  const [justIssued, setJustIssued] = useState<CreatedShareLink | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // 一覧 fetch
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchShareLinks(recordId)
+      .then((items) => {
+        if (cancelled) return;
+        setLinks(items);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [recordId]);
+
+  const handleIssue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const email = pseudoEmail.trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      setError("有効な pseudo email を入力してください (audit 用 identity)");
+      return;
+    }
+    const days = Number(expiresDays);
+    if (!Number.isInteger(days) || days < 0 || days > 365) {
+      setError("有効期限は 0〜365 日で指定してください (0 = 無期限)");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const issued = await issueShareLink(recordId, {
+        role,
+        pseudo_email: email,
+        pseudo_display_name: pseudoName.trim() || undefined,
+        label: label.trim() || undefined,
+        expires_days: days,
+      });
+      setJustIssued(issued);
+      setCopied(false);
+      // 一覧を再 fetch (発行された token が is_active で出る)
+      const next = await fetchShareLinks(recordId);
+      setLinks(next);
+      // フォーム reset
+      setPseudoEmail("");
+      setPseudoName("");
+      setLabel("");
+      setShowForm(false);
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("403")) {
+        setError("token を発行する権限がありません");
+      } else if (msg.includes("400")) {
+        setError("入力内容が無効です (role / email / expires_days)");
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRevoke = async (prefix: string) => {
+    if (!confirm("この token を失効しますか？(取り消し不可)")) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await revokeShareLink(recordId, prefix);
+      const next = await fetchShareLinks(recordId);
+      setLinks(next);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    if (!justIssued) return;
+    try {
+      await navigator.clipboard.writeText(justIssued.token);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // 古いブラウザ fallback
+      const ta = document.createElement("textarea");
+      ta.value = justIssued.token;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleCopyUrl = async () => {
+    if (!justIssued) return;
+    const url = `${window.location.origin}/share/${justIssued.token}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const activeLinks = links.filter((l) => l.is_active);
+  const inactiveLinks = links.filter((l) => !l.is_active);
+
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium text-muted-foreground">
+          外部 token ({activeLinks.length}
+          {inactiveLinks.length > 0 ? ` / ${links.length}` : ""})
+        </div>
+        {!showForm && !justIssued && (
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={() => setShowForm(true)}
+          >
+            + 新規発行
+          </Button>
+        )}
+      </div>
+
+      {/* 発行直後の raw token 表示 (1 回限り、再表示不可) */}
+      {justIssued && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 space-y-2 text-xs">
+          <div className="font-semibold text-amber-900">
+            ✨ 新しい token を発行しました ({justIssued.pseudo_email}、
+            {TOKEN_ROLE_LABEL[justIssued.role] ?? justIssued.role})
+          </div>
+          <p className="text-amber-800">
+            <strong>この画面を閉じると raw token は二度と表示できません。</strong>{" "}
+            今すぐコピーして相手に送ってください。
+          </p>
+          <div className="bg-white border rounded p-2 font-mono text-[11px] break-all">
+            {justIssued.token}
+          </div>
+          <div className="flex gap-1.5 flex-wrap">
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={handleCopy}
+            >
+              {copied ? "✓ コピー" : "token をコピー"}
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={handleCopyUrl}
+            >
+              {copied ? "✓ コピー" : "共有 URL (/share/...) をコピー"}
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              onClick={() => {
+                setJustIssued(null);
+                setCopied(false);
+              }}
+            >
+              閉じる
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* 新規発行フォーム */}
+      {showForm && !justIssued && (
+        <form
+          onSubmit={handleIssue}
+          className="space-y-2 rounded-md border border-dashed p-2.5"
+        >
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              type="email"
+              value={pseudoEmail}
+              onChange={(e) => setPseudoEmail(e.target.value)}
+              placeholder="pseudo email (例: ext+jane@klab.share)"
+              required
+              disabled={submitting}
+              className="h-8 text-xs col-span-2"
+              title="audit 用 identity。token で投稿された記録の created_by に刻まれる"
+            />
+            <Input
+              type="text"
+              value={pseudoName}
+              onChange={(e) => setPseudoName(e.target.value)}
+              placeholder="表示名 (例: Jane (NIMS))"
+              disabled={submitting}
+              className="h-8 text-xs"
+            />
+            <Input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="label (整理用 メモ)"
+              disabled={submitting}
+              className="h-8 text-xs"
+            />
+            <div
+              className="inline-flex items-center rounded-md border border-input p-0.5 bg-background text-xs col-span-1"
+              role="radiogroup"
+              aria-label="権限"
+            >
+              {(["viewer", "analyst"] as ShareLinkRole[]).map((r) => {
+                const active = role === r;
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    disabled={submitting}
+                    onClick={() => setRole(r)}
+                    title={r === "viewer" ? "閲覧 + DL のみ" : "解析投稿可能"}
+                    className={
+                      "px-2 py-0.5 rounded-sm cursor-pointer text-[11px] " +
+                      (active
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted")
+                    }
+                  >
+                    {TOKEN_ROLE_LABEL[r]}
+                  </button>
+                );
+              })}
+            </div>
+            <Input
+              type="number"
+              value={expiresDays}
+              onChange={(e) => setExpiresDays(e.target.value)}
+              placeholder="有効期限 (日、0=無期限)"
+              min={0}
+              max={365}
+              disabled={submitting}
+              className="h-8 text-xs"
+              title="0 = 無期限、最大 365 日"
+            />
+          </div>
+          <div className="flex gap-1.5">
+            <Button
+              type="submit"
+              disabled={submitting || !pseudoEmail.trim()}
+              size="sm"
+            >
+              {submitting ? "発行中..." : "発行"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setShowForm(false);
+                setError(null);
+              }}
+            >
+              キャンセル
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {/* 既存 token 一覧 */}
+      {loading && links.length === 0 ? (
+        <Skeleton className="h-8 w-full" />
+      ) : links.length === 0 ? (
+        !showForm && !justIssued ? (
+          <p className="text-xs text-muted-foreground py-1">
+            まだ token は発行されていません。
+          </p>
+        ) : null
+      ) : (
+        <ul className="space-y-1.5">
+          {links.map((link) => (
+            <li
+              key={link.token_hash_prefix}
+              className={
+                "rounded-md border px-2 py-1.5 text-xs space-y-0.5 " +
+                (link.is_active ? "" : "opacity-50 line-through")
+              }
+            >
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-mono truncate" title={link.pseudo_email}>
+                  {link.pseudo_display_name || link.pseudo_email}
+                </span>
+                <Badge
+                  variant={link.role === "analyst" ? "default" : "outline"}
+                  className="text-[10px]"
+                >
+                  {TOKEN_ROLE_LABEL[link.role] ?? link.role}
+                </Badge>
+                {!link.is_active && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    {link.revoked_at ? "失効" : "期限切れ"}
+                  </Badge>
+                )}
+                {link.label && (
+                  <span className="text-muted-foreground truncate">
+                    {link.label}
+                  </span>
+                )}
+                {link.is_active && (
+                  <button
+                    type="button"
+                    className="ml-auto text-muted-foreground hover:text-destructive cursor-pointer"
+                    disabled={submitting}
+                    onClick={() => handleRevoke(link.token_hash_prefix)}
+                    title="この token を失効する (取り消し不可)"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              <div className="text-[10px] text-muted-foreground font-mono">
+                {link.token_hash_prefix}…{" "}
+                {link.expires_at
+                  ? `· 失効: ${new Date(link.expires_at).toLocaleDateString("ja-JP")}`
+                  : "· 無期限"}
+                {" · "}発行: {new Date(link.created_at).toLocaleDateString("ja-JP")}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error && (
+        <p className="text-xs text-destructive bg-destructive/10 px-2 py-1.5 rounded">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

@@ -456,6 +456,121 @@ export interface SharedRecordListResponse {
   has_more?: boolean;
 }
 
+// --- S1 Phase 2: 外部 token sharing (ls_*) ---
+
+export type ShareLinkRole = "viewer" | "analyst";
+
+export interface ShareLinkInfo {
+  // 一覧 / revoke ハンドルは hash の先頭 16 chars。raw token は含まれない。
+  token_hash_prefix: string;
+  record_id: string;
+  team: string;
+  role: string;
+  pseudo_email: string;
+  pseudo_display_name: string;
+  created_by: string;
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  label: string;
+  is_active: boolean;
+}
+
+export interface CreatedShareLink extends ShareLinkInfo {
+  // 発行直後だけ含まれる raw token。再表示不可なので UI で 1 回だけ
+  // クリップボードへ。
+  token: string;
+}
+
+export interface ShareLinkListResponse {
+  items: ShareLinkInfo[];
+}
+
+export interface ShareLinkScopeMe {
+  record_id: string;
+  team: string;
+  role: string;
+  pseudo_email: string;
+  pseudo_display_name: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface IssueShareLinkBody {
+  role: ShareLinkRole;
+  pseudo_email: string;
+  pseudo_display_name?: string;
+  label?: string;
+  expires_days?: number | null;
+}
+
+// `GET /api/records/{id}/share-links` — grant 主体だけが叩ける一覧。
+export async function fetchShareLinks(id: string): Promise<ShareLinkInfo[]> {
+  const res = await authFetch(`${API_BASE}/api/records/${id}/share-links`);
+  if (!res.ok) throw new Error(`Failed to fetch share-links: ${res.status}`);
+  const data = (await res.json()) as ShareLinkListResponse;
+  return data.items;
+}
+
+// `POST /api/records/{id}/share-links` — token 発行 (raw token は 1 回限り)。
+export async function issueShareLink(
+  id: string,
+  body: IssueShareLinkBody,
+): Promise<CreatedShareLink> {
+  const res = await authFetch(`${API_BASE}/api/records/${id}/share-links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Issue share-link failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+// `DELETE /api/records/{id}/share-links/{token_hash_prefix}` — revoke。
+export async function revokeShareLink(
+  id: string,
+  tokenHashPrefix: string,
+): Promise<void> {
+  const res = await authFetch(
+    `${API_BASE}/api/records/${id}/share-links/${encodeURIComponent(tokenHashPrefix)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Revoke share-link failed: ${res.status} ${text}`);
+  }
+}
+
+// 公開 ``/share/{token}`` ページ用: token を Authorization に詰めて
+// 自身の scope を取得する。`authFetch` は使わず raw fetch (Firebase
+// auth 経路を bypass)。
+export async function fetchShareLinkScope(
+  token: string,
+): Promise<ShareLinkScopeMe> {
+  const res = await fetch(`${API_BASE}/api/share-links/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to verify share-link: ${res.status}`);
+  }
+  return res.json();
+}
+
+// 公開ページ用の汎用 fetcher。token を渡すだけで Authorization を付ける。
+export async function shareTokenFetch(
+  token: string,
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  return fetch(url, { ...init, headers });
+}
+
+
 export async function fetchSharedWithMe(params?: {
   limit?: number;
   offset?: number;
