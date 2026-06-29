@@ -404,6 +404,35 @@ export default function RecordDetailPage() {
             </Badge>
           </Link>
         )}
+        {/* S1-SEC2 (2026-06-29): record の audit identity 経路。
+            "share-link" だと外部 token 由来で作成 / 最後の更新がされている
+            ことを明示する。pseudo_email が実在 user の email と衝突して
+            いても、ここで構造的に区別できる。
+            created と updated を分けて表示するのは「最初は本物・後で
+            token」のようなケースを見分けるため。 */}
+        {(record.created_audit_source === "share-link" ||
+          record.updated_audit_source === "share-link") && (
+          <Badge
+            variant="outline"
+            className="text-xs gap-1 bg-amber-50 border-amber-300 text-amber-900"
+            title={
+              record.created_audit_source === "share-link" &&
+              record.updated_audit_source === "share-link"
+                ? "この record は外部共有 token (ls_*) で作成され、最後の更新も token 経由です"
+                : record.created_audit_source === "share-link"
+                  ? "この record は外部共有 token (ls_*) で作成されました"
+                  : "この record の最後の更新は外部共有 token (ls_*) 経由です"
+            }
+          >
+            <span aria-hidden>🔗</span>
+            {record.created_audit_source === "share-link" &&
+            record.updated_audit_source === "share-link"
+              ? "外部 token 由来"
+              : record.created_audit_source === "share-link"
+                ? "外部 token で作成"
+                : "外部 token で更新"}
+          </Badge>
+        )}
         {/* S1 Phase 1B: 共有モーダル。read 権限があれば「共有」ボタン
             自体は出す (中身で grant 主体判定 + 自分の role 表示)。 */}
         <div className="ml-auto">

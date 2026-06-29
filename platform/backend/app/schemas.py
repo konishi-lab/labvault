@@ -47,6 +47,13 @@ class RecordSummary(BaseModel):
     # template 名 (`Record._template_name`)。Web UI が context chip
     # `[template: XRD]` を表示するために使う。template 未紐付けは None。
     template_name: str | None = None
+    # S1-SEC2 (2026-06-29): record 生成・最終更新の認証経路。値:
+    # ``"share-link"`` (外部 token 経由) / ``"firebase"`` (Web API + Firebase
+    # / PAT 経由) / ``None`` (SDK 直接 / 旧 record で未付与)。Web UI が
+    # 「🔗 外部 token 由来」chip を出すのに使う。pseudo_email impersonation を
+    # audit log で構造的に検出可能 (SEC2 の核心防御)。
+    created_audit_source: str | None = None
+    updated_audit_source: str | None = None
 
 
 class RecordDetail(RecordSummary):

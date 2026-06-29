@@ -244,6 +244,8 @@ class Record:
         parent_id: str | None = None,
         template_name: str | None = None,
         shares: dict[str, str] | None = None,
+        created_audit_source: str | None = None,
+        updated_audit_source: str | None = None,
         lab: Lab | None = None,
     ) -> None:
         self._id = id
@@ -282,6 +284,16 @@ class Record:
         self._deleted_at = deleted_at
         self._parent_id = parent_id
         self._template_name = template_name
+        # S1-SEC2 hot-fix (2026-06-29): audit identity の経路を明示する。
+        # `"share-link"` = 外部 token (`ls_*`) 経由、`"firebase"` = Web API
+        # で Firebase / PAT 認証経由、`None` = SDK 直接 (Notebook) または
+        # 旧 record (フィールド未導入時に作成)。
+        # `created_*` は record 生成時に確定、`updated_*` は mutation 毎に
+        # 上書きする。pseudo_email が実在 user の email と衝突しても、これ
+        # を見れば share-link 由来の改ざんを構造的に判別できる (SEC2 の
+        # 核心防御)。
+        self._created_audit_source = created_audit_source
+        self._updated_audit_source = updated_audit_source or created_audit_source
         self._lab = lab
 
     # --- プロパティ ---
@@ -394,6 +406,29 @@ class Record:
     def updated_by(self, value: str) -> None:
         # _persist は呼ばない。次の mutation 時にまとめて書かれる
         self._updated_by = value
+
+    @property
+    def created_audit_source(self) -> str | None:
+        """S1-SEC2: record 生成時の認証経路。
+
+        ``"share-link"`` (外部 token), ``"firebase"`` (Web API + Firebase/PAT),
+        ``None`` (SDK 直接 / 旧 record) のいずれか。pseudo_email impersonation
+        を audit log で構造的に検出する。
+        """
+        return self._created_audit_source
+
+    @property
+    def updated_audit_source(self) -> str | None:
+        """S1-SEC2: 最終 mutation 時の認証経路 (上書きされる)。
+
+        値の意味は ``created_audit_source`` と同じ。
+        """
+        return self._updated_audit_source
+
+    @updated_audit_source.setter
+    def updated_audit_source(self, value: str | None) -> None:
+        # updated_by と同様、_persist は呼ばない (次の mutation で書かれる)
+        self._updated_audit_source = value
 
     @property
     def tags(self) -> list[str]:
@@ -1251,6 +1286,10 @@ class Record:
             # `_persist` を呼ぶ流れで自動的に正しい状態になる)。
             "shares": dict(self._shares),
             "shared_with_emails": sorted(self._shares.keys()),
+            # S1-SEC2: 認証経路 audit marker (None なら field 自体省略しない
+            # —— None でも書いて「明示的に不明」を表現)
+            "created_audit_source": self._created_audit_source,
+            "updated_audit_source": self._updated_audit_source,
         }
         # template.indexed_fields の値を idx_<name> として top-level に昇格
         # (Firestore 検索用)。template 未指定 or 値未入力なら何も追加されない。
@@ -1345,6 +1384,12 @@ class Record:
             parent_id=data.get("parent_id"),
             template_name=data.get("template"),
             shares=_load_shares_dict(data.get("shares")),
+            created_audit_source=_normalize_audit_source(
+                data.get("created_audit_source")
+            ),
+            updated_audit_source=_normalize_audit_source(
+                data.get("updated_audit_source")
+            ),
             lab=lab,
         )
         rec._condition_units = dict(data.get("condition_units") or {})
@@ -1367,6 +1412,21 @@ def _parse_dt(raw: str | datetime) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=_dt.UTC)
     return dt
+
+
+_VALID_AUDIT_SOURCES = ("share-link", "firebase")
+
+
+def _normalize_audit_source(raw: Any) -> str | None:
+    """S1-SEC2: backend から読んだ audit_source を sanitize する。
+
+    既知値 (``"share-link"`` / ``"firebase"``) ならそのまま、それ以外 (None /
+    旧 record / 未知値) は None として扱う。フォワード互換のため、未知値は
+    raise せず None フォールバック。
+    """
+    if isinstance(raw, str) and raw in _VALID_AUDIT_SOURCES:
+        return raw
+    return None
 
 
 def _load_shares_dict(raw: Any) -> dict[str, str] | None:
