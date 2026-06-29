@@ -68,3 +68,29 @@ def test_created_by_root_filter_index_exists() -> None:
     data = json.loads(INDEXES_PATH.read_text())
     found = [idx for idx in data["indexes"] if _fields_of(idx) == expected]
     assert len(found) == 1, f"Missing composite index: {expected}"
+
+
+def test_shared_with_emails_collection_group_index_exists() -> None:
+    """S1 Phase 1B: `shared-with-me` cross-team query 用の collection group index。
+
+    `FirestoreMetadataBackend.list_records_shared_with` が
+    `collection_group('records').where(deleted_at==None)
+        .where(shared_with_emails array_contains email)
+        .order_by(updated_at DESC)` を投げるので、
+    `(deleted_at ASC, shared_with_emails CONTAINS, updated_at DESC)` の
+    COLLECTION_GROUP scoped index が要る。
+    """
+    expected = (
+        ("deleted_at", "ASCENDING"),
+        ("shared_with_emails", "CONTAINS"),
+        ("updated_at", "DESCENDING"),
+    )
+    data = json.loads(INDEXES_PATH.read_text())
+    found = [
+        idx
+        for idx in data["indexes"]
+        if _fields_of(idx) == expected and idx.get("queryScope") == "COLLECTION_GROUP"
+    ]
+    assert len(found) == 1, (
+        f"Missing COLLECTION_GROUP composite index for shared-with-me: {expected}"
+    )

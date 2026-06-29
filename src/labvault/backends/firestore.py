@@ -118,6 +118,36 @@ class FirestoreMetadataBackend:
 
         return [doc.to_dict() for doc in q.stream()]
 
+    def list_records_shared_with(
+        self,
+        email: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """email に共有された record を全 team 横断で取得する (S1).
+
+        `collection_group('records')` で全 team の records を 1 クエリで
+        走査し、`shared_with_emails` array-contains と `deleted_at == None`
+        で絞り込んで `updated_at` 降順に返す。Firestore 側で複合 index
+        `(deleted_at, shared_with_emails, updated_at DESC)` を `firestore.indexes.json`
+        に宣言しておく必要がある。
+        """
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        target = (email or "").strip().lower()
+        if not target:
+            return []
+
+        q: Any = self._get_db().collection_group("records")
+        q = q.where(filter=FieldFilter("deleted_at", "==", None))
+        q = q.where(filter=FieldFilter("shared_with_emails", "array_contains", target))
+        q = q.order_by("updated_at", direction="DESCENDING")
+        if offset:
+            q = q.offset(offset)
+        q = q.limit(limit)
+        return [doc.to_dict() for doc in q.stream()]
+
     # --- CellLog ---
 
     def save_cell_log(self, team: str, record_id: str, data: dict[str, Any]) -> None:

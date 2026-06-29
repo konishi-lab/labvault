@@ -139,6 +139,15 @@
         { "fieldPath": "created_by", "order": "ASCENDING" },
         { "fieldPath": "updated_at", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "records",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "deleted_at", "order": "ASCENDING" },
+        { "fieldPath": "shared_with_emails", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "updated_at", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -77,6 +77,28 @@ class InMemoryMetadataBackend:
 
         return copy.deepcopy(records[offset : offset + limit])
 
+    def list_records_shared_with(
+        self,
+        email: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """email に共有された record を全 team 横断で返す。"""
+        target = (email or "").strip().lower()
+        if not target:
+            return []
+        results: list[dict[str, Any]] = []
+        for records in self._records.values():
+            for r in records.values():
+                if r.get("deleted_at") is not None:
+                    continue
+                shared = r.get("shared_with_emails") or []
+                if target in shared:
+                    results.append(r)
+        results.sort(key=lambda r: r.get("updated_at", ""), reverse=True)
+        return copy.deepcopy(results[offset : offset + limit])
+
     # --- CellLog ---
 
     def save_cell_log(self, team: str, record_id: str, data: dict[str, Any]) -> None:
