@@ -121,3 +121,53 @@ class TestFirestoreLive:
 
         # cleanup
         backend.delete_record(team, "T002")
+
+    def test_shares_revoke_round_trip(self, backend, team):
+        """S1-DATA1 regression (本番 Firestore round-trip).
+
+        `set(data, merge=True)` 時代は、grant 2 件 → 1 件 revoke 後も
+        Firestore 側に消えたはずの email が ``shares.<email>`` subfield
+        として残留し、URL 直アクセスで認可を突破できる leak が起きていた。
+        本テストは update_record (update() ベース) が **shares map を完全
+        置換** することを本物 Firestore で round-trip 確認する。
+        """
+        # 初期 grant 2 件で create
+        data = {
+            "id": "T003",
+            "title": "share revoke round-trip",
+            "type": "experiment",
+            "status": "running",
+            "tags": [],
+            "conditions": {},
+            "results": {},
+            "notes": [],
+            "links": [],
+            "data_refs": [],
+            "external_refs": [],
+            "events": [],
+            "created_by": "tester",
+            "created_at": "2026-06-29T00:00:00+00:00",
+            "updated_at": "2026-06-29T00:00:00+00:00",
+            "deleted_at": None,
+            "parent_id": None,
+            "shares": {"alice@x.com": "viewer", "bob@y.com": "viewer"},
+            "shared_with_emails": ["alice@x.com", "bob@y.com"],
+        }
+        backend.create_record(team, data)
+
+        # bob を revoke した後 (SDK が _to_dict で送る形)
+        data_after = dict(data)
+        data_after["shares"] = {"alice@x.com": "viewer"}
+        data_after["shared_with_emails"] = ["alice@x.com"]
+        data_after["updated_at"] = "2026-06-29T00:01:00+00:00"
+        backend.update_record(team, "T003", data_after)
+
+        # round-trip 確認: Firestore 側に bob が残っていないこと
+        result = backend.get_record(team, "T003")
+        assert result is not None
+        assert result["shares"] == {"alice@x.com": "viewer"}
+        assert "bob@y.com" not in result["shares"]
+        assert result["shared_with_emails"] == ["alice@x.com"]
+
+        # cleanup
+        backend.delete_record(team, "T003")
