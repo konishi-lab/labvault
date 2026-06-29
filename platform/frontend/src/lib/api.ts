@@ -38,6 +38,12 @@ export interface RecordSummary {
   // template 名 (Record._template_name)。Web UI が context chip
   // `[template: XRD]` を表示するために使う。template 未紐付けは null。
   template_name?: string | null;
+  // S1-SEC2 (2026-06-29): record 生成・最終更新の認証経路。
+  // "share-link" = 外部 token 経由、"firebase" = Web API 認証経由、
+  // null = SDK 直接 / 旧 record。`/records/[id]` の header に
+  // 「🔗 外部 token 由来」chip を出すのに使う。
+  created_audit_source?: string | null;
+  updated_audit_source?: string | null;
 }
 
 export interface NoteResponse {

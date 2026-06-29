@@ -66,6 +66,8 @@ def _to_summary(rec: Any) -> RecordSummary:
         updated_at=rec.updated_at,
         parent_id=rec.parent_id,
         template_name=getattr(rec, "template_name", None),
+        created_audit_source=getattr(rec, "created_audit_source", None),
+        updated_audit_source=getattr(rec, "updated_audit_source", None),
     )
 
 
@@ -119,6 +121,8 @@ def _to_detail(rec: Any, viewer: User | None = None) -> RecordDetail:
         updated_at=rec.updated_at,
         parent_id=rec.parent_id,
         template_name=getattr(rec, "template_name", None),
+        created_audit_source=getattr(rec, "created_audit_source", None),
+        updated_audit_source=getattr(rec, "updated_audit_source", None),
         conditions=rec.get_conditions(),
         condition_units=rec.get_condition_units(),
         condition_descriptions=rec.get_condition_descriptions(),
@@ -153,6 +157,17 @@ def _to_detail(rec: Any, viewer: User | None = None) -> RecordDetail:
         ],
         events=rec.events,
     )
+
+
+def _audit_source_for(user: User) -> str:
+    """S1-SEC2 hot-fix (2026-06-29): user の認証経路を audit field 用文字列で返す。
+
+    share-link token 経由なら ``"share-link"``、それ以外 (Firebase / PAT /
+    super_admin) は ``"firebase"``。SDK 直接呼び出し (Notebook 経由) は
+    backend handler を通らないので、本関数は呼ばれない (Record の
+    `_created_audit_source` は None のまま = legacy 経路として扱われる)。
+    """
+    return "share-link" if user.share_link_scope is not None else "firebase"
 
 
 @router.get("", response_model=RecordListResponse)
@@ -313,6 +328,7 @@ def create_record(
     record 作成) は team membership を要求 (``require_team_member``) —
     share 経由 user が team 空間に勝手に root を作るのを防ぐ。
     """
+    source = _audit_source_for(user)
     if body.parent_id:
         # 子 record 作成 — 親への analyst 権限が要る
         try:
@@ -334,6 +350,9 @@ def create_record(
             **body.conditions,
         )
         rec._parent_id = parent.id
+        # S1-SEC2: audit source は作成時に決定 (created/updated 両方)
+        rec._created_audit_source = source
+        rec._updated_audit_source = source
         rec.updated_by = user.email
         rec._persist()
         # `Record.sub()` と揃える: 親⇄子の双方向 link を張る
@@ -350,6 +369,10 @@ def create_record(
             created_by=user.email,
             **body.conditions,
         )
+        # S1-SEC2: lab.new 後に audit source を刻んで再 persist (1 round-trip)
+        rec._created_audit_source = source
+        rec._updated_audit_source = source
+        rec._persist()
     return _to_detail(rec, user)
 
 
@@ -603,6 +626,8 @@ def list_shared_with_me(
                     updated_at=d["updated_at"],
                     parent_id=d.get("parent_id"),
                     template_name=d.get("template"),
+                    created_audit_source=d.get("created_audit_source"),
+                    updated_audit_source=d.get("updated_audit_source"),
                     team=d.get("team", "") or "",
                     role=role,
                 )
@@ -661,6 +686,10 @@ def restore_record(
         rec = lab.restore(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
+    # S1-SEC2: restore も mutation の一種
+    rec.updated_by = user.email
+    rec.updated_audit_source = _audit_source_for(user)
+    rec._persist()
     return _to_detail(rec, user)
 
 
@@ -875,6 +904,7 @@ def grant_record_share(
         )
 
     rec.updated_by = user.email
+    rec.updated_audit_source = _audit_source_for(user)
     rec.grant_share(email, body.role)
     log_event(
         logger,
@@ -976,6 +1006,35 @@ def issue_record_share_link(
             status_code=400,
             detail="valid pseudo_email is required (audit 用 identity)",
         )
+    # S1-SEC2 B1 (2026-06-29 hot-fix): 既存の Firebase user (allowed_users
+    # doc が存在) と同じ email を pseudo_email に指定するのは impersonation
+    # の温床なので reject する。`created_audit_source` field でも別経路で
+    # 検出可能だが、ここでの reject は最初の防御線 (defense-in-depth)。
+    # Firestore 1 read で 1 doc を見るだけなので cost も極小。
+    from ..auth import allowed_users_ref
+
+    try:
+        if allowed_users_ref().document(pseudo_email).get().exists:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"pseudo_email {pseudo_email!r} は既存の Firebase user の "
+                    "email と一致します。share-link は外部協力者向け identity "
+                    "なので、実在 user とは衝突しない値を指定してください "
+                    "(例: ext+<name>@klab.share など)"
+                ),
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # Firestore 障害時は best-effort で通す (chain of trust より availability)。
+        # 後段の audit_source field で十分検出可能。
+        logger.warning(
+            "allowed_users lookup failed during share-link issue, "
+            "skipping pseudo_email collision check",
+            exc_info=True,
+        )
+
     display = (body.pseudo_display_name or pseudo_email).strip()
 
     from ..share_links import MAX_EXPIRES_DAYS, ShareLink, generate_token
@@ -1121,6 +1180,7 @@ def revoke_record_share(
         raise HTTPException(status_code=400, detail="email is required")
     existed = target in (getattr(rec, "shares", None) or {})
     rec.updated_by = user.email
+    rec.updated_audit_source = _audit_source_for(user)
     rec.revoke_share(target)
     if existed:
         log_event(
@@ -1138,12 +1198,19 @@ def revoke_record_share(
 
 
 def _get_and_stamp(lab: Lab, record_id: str, user: User) -> Any:
-    """レコード取得 + 更新者刻印。mutator 呼び出し前に使う。"""
+    """レコード取得 + 更新者刻印。mutator 呼び出し前に使う。
+
+    S1-SEC2 hot-fix (2026-06-29): ``updated_audit_source`` も合わせて刻む。
+    続く mutator が ``_persist()`` を呼ぶ前にこの 2 つを set しておく
+    (Record.updated_by setter / updated_audit_source setter は _persist
+    を呼ばない設計なので、同じパターン)。
+    """
     try:
         rec = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found") from None
     rec.updated_by = user.email
+    rec.updated_audit_source = _audit_source_for(user)
     return rec
 
 

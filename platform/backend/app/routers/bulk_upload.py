@@ -315,6 +315,12 @@ async def bulk_upload(
                         )
                     )
                     target.updated_by = user.email
+                    # S1-SEC2: share-link 経路の audit marker
+                    target.updated_audit_source = (
+                        "share-link"
+                        if user.share_link_scope is not None
+                        else "firebase"
+                    )
                     target._persist()
                     uploaded += 1
 

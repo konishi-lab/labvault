@@ -65,6 +65,10 @@ async def upload_file(
     require_analyze(user, rec)
 
     rec.updated_by = user.email
+    # S1-SEC2: share-link 経路の audit marker
+    rec.updated_audit_source = (
+        "share-link" if user.share_link_scope is not None else "firebase"
+    )
     data = await file.read()
     rec.add(data, name=file.filename or "untitled")
     return _to_detail(rec, user)

@@ -938,3 +938,148 @@ def test_share_link_analyst_cannot_use_edit_endpoints(
         f"{method} {url} expected {expect_status}, got {res.status_code}: "
         f"{res.text[:200]}"
     )
+
+
+# --- S1-SEC2 hot-fix (2026-06-29): pseudo_email collision + audit_source ---
+
+
+def test_b1_pseudo_email_matching_allowed_users_rejected(
+    client: TestClient, record_id: str, fake_db: Any
+) -> None:
+    """S1-SEC2 B1: pseudo_email が既存 allowed_users と一致 → 400。
+
+    impersonation の defense-in-depth (audit_source field と二重で守る)。
+    """
+    # allowed_users に alice@example.com を登録
+    from tests.conftest import _FakeCollection  # type: ignore
+
+    fake_db._collections["allowed_users"] = _FakeCollection(
+        {"alice@example.com": {"email": "alice@example.com", "active": True}}
+    )
+
+    c = _as(client, _owner)
+    res = c.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "viewer", "pseudo_email": "alice@example.com"},
+    )
+    assert res.status_code == 400
+    body = res.json()
+    assert "allowed_users" not in body.get("detail", "")  # 詳細は user 向け文言
+    assert "実在 user" in body.get("detail", "") or "Firebase user" in body.get(
+        "detail", ""
+    )
+
+
+def test_b1_pseudo_email_not_in_allowed_users_accepted(
+    client: TestClient, record_id: str, fake_db: Any
+) -> None:
+    """allowed_users に居ない email なら通常通り 201。"""
+    c = _as(client, _owner)
+    res = c.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "viewer", "pseudo_email": "ext+e@klab.share"},
+    )
+    assert res.status_code == 201
+
+
+def test_audit_source_share_link_on_child_create(
+    client: TestClient, record_id: str
+) -> None:
+    """analyst token で子 record を作ると created/updated 両方が "share-link"。"""
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "analyst", "pseudo_email": "ext+ana@y.com"},
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    res = client.post(
+        "/api/records",
+        headers={
+            "Authorization": f"Bearer {raw_token}",
+            "X-Labvault-Team": "teamA",
+        },
+        json={"title": "ext-analysis", "parent_id": record_id},
+    )
+    assert res.status_code == 201
+    body = res.json()
+    assert body["created_audit_source"] == "share-link"
+    assert body["updated_audit_source"] == "share-link"
+
+
+def test_audit_source_firebase_on_normal_create(
+    client: TestClient,
+) -> None:
+    """Firebase user (owner) が root record を作ると created/updated 両方 "firebase"。"""
+    c = _as(client, _owner)
+    res = c.post(
+        "/api/records",
+        headers=_hdrs(),
+        json={"title": "firebase-root"},
+    )
+    assert res.status_code == 201
+    body = res.json()
+    assert body["created_audit_source"] == "firebase"
+    assert body["updated_audit_source"] == "firebase"
+
+
+def test_audit_source_updated_only_when_share_link_appends_file(
+    client: TestClient, record_id: str
+) -> None:
+    """Firebase user が作った record に share-link analyst がファイル upload
+    → created は "firebase" のまま、updated は "share-link" になる。"""
+    import io
+
+    # owner が作成 (already exists via fixture, created_by="owner@a.com")。
+    # 一度 firebase 経路でファイルを足して audit_source を "firebase" に焼く
+    c1 = _as(client, _owner)
+    res0 = c1.post(
+        f"/api/records/{record_id}/files",
+        headers=_hdrs(),
+        files={"file": ("seed.txt", io.BytesIO(b"x"), "text/plain")},
+    )
+    assert res0.status_code == 201
+    assert res0.json()["created_audit_source"] in (None, "firebase")
+    assert res0.json()["updated_audit_source"] == "firebase"
+
+    # share-link analyst を発行 + token で別ファイル upload
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "analyst", "pseudo_email": "ext+ana@y.com"},
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    res = client.post(
+        f"/api/records/{record_id}/files",
+        headers={"Authorization": f"Bearer {raw_token}", "X-Labvault-Team": "teamA"},
+        files={"file": ("ext.txt", io.BytesIO(b"y"), "text/plain")},
+    )
+    assert res.status_code == 201
+    body = res.json()
+    # 作成 source は変わらない (Firebase 経路 = 旧 record は None でも OK)
+    assert body["created_audit_source"] in (None, "firebase")
+    # 最後の mutation は share-link
+    assert body["updated_audit_source"] == "share-link"
+
+
+def test_audit_source_roundtrip_via_get(
+    client: TestClient, record_id: str, lab: Lab
+) -> None:
+    """記録された audit_source は GET /api/records/{id} 経由でも取れる。"""
+    rec = lab.get(record_id)
+    rec._created_audit_source = "share-link"
+    rec._updated_audit_source = "share-link"
+    rec._persist()
+
+    c = _as(client, _owner)
+    res = c.get(f"/api/records/{record_id}", headers=_hdrs())
+    assert res.status_code == 200
+    body = res.json()
+    assert body["created_audit_source"] == "share-link"
+    assert body["updated_audit_source"] == "share-link"
