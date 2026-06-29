@@ -25,6 +25,8 @@ _firestore_db: Any | None = None
 _firestore_lock = threading.Lock()
 _shared_metadata_backend: Any | None = None
 _shared_metadata_lock = threading.Lock()
+_share_link_store: Any | None = None
+_share_link_lock = threading.Lock()
 
 
 def get_firestore_db() -> Any:
@@ -136,6 +138,32 @@ def get_shared_metadata_backend() -> Any:
                 project=project, database=database
             )
         return _shared_metadata_backend
+
+
+def get_share_link_store() -> Any:
+    """S1 Phase 2: ``shared_links`` collection の永続化ストアを返す (singleton)。
+
+    通常は Firestore を直接叩く ``FirestoreShareLinkStore``。tests からは
+    monkeypatch で ``InMemoryShareLinkStore`` 等に差し替える。
+    """
+    global _share_link_store
+    with _share_link_lock:
+        if _share_link_store is None:
+            from .share_links import FirestoreShareLinkStore
+
+            _share_link_store = FirestoreShareLinkStore(get_firestore_db())
+        return _share_link_store
+
+
+def reset_share_link_store() -> bool:
+    """``get_share_link_store()`` シングルトンを破棄。transient error
+    検出時に他の Firestore singletons と並列で reset される。"""
+    global _share_link_store
+    with _share_link_lock:
+        if _share_link_store is None:
+            return False
+        _share_link_store = None
+        return True
 
 
 def reset_shared_metadata_backend() -> bool:

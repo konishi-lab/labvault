@@ -25,6 +25,7 @@ from ..schemas import (
     CellLogListResponse,
     ConditionsUpdate,
     ConditionUnitsUpdate,
+    CreatedShareLink,
     NoteCreate,
     RecordCreate,
     RecordDetail,
@@ -32,8 +33,12 @@ from ..schemas import (
     RecordSummary,
     ResultUnitsUpdate,
     ResultUpdate,
+    RevokeShareLinkResponse,
     ShareEntry,
     ShareGrantRequest,
+    ShareLinkCreate,
+    ShareLinkInfo,
+    ShareLinkListResponse,
     ShareListResponse,
     SharedRecordListResponse,
     SharedRecordSummary,
@@ -829,6 +834,216 @@ def grant_record_share(
         granted_by=user.email,
     )
     return _to_detail(rec)
+
+
+# --- 外部 token sharing (S1 Phase 2) ---
+
+
+def _link_to_info(link: Any) -> ShareLinkInfo:
+    """``ShareLink`` (dataclass) → ``ShareLinkInfo`` (Pydantic) のアダプタ。"""
+    return ShareLinkInfo(
+        token_hash_prefix=link.token_hash[:16],
+        record_id=link.record_id,
+        team=link.team,
+        role=link.role,
+        pseudo_email=link.pseudo_email,
+        pseudo_display_name=link.pseudo_display_name,
+        created_by=link.created_by,
+        created_at=link.created_at,
+        expires_at=link.expires_at,
+        revoked_at=link.revoked_at,
+        label=link.label,
+        is_active=link.is_active(),
+    )
+
+
+@router.get("/{record_id}/share-links", response_model=ShareLinkListResponse)
+def list_record_share_links(
+    record_id: str,
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
+) -> ShareLinkListResponse:
+    """この record の発行済 share-link 一覧。
+
+    閲覧可能なのは grant 主体 (``can_grant``)。raw token は含まれない
+    ので、漏洩リスクは無いが「誰宛てに何個 link 出ているか」は機微情報
+    なので閲覧主体を絞っている。
+    """
+    try:
+        rec = lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found") from None
+    require_grant(user, rec)
+
+    from ..dependencies import get_share_link_store
+
+    store = get_share_link_store()
+    links = store.list_for_record(record_id, lab._team)
+    links.sort(key=lambda link_: link_.created_at, reverse=True)
+    return ShareLinkListResponse(items=[_link_to_info(link_) for link_ in links])
+
+
+@router.post(
+    "/{record_id}/share-links",
+    response_model=CreatedShareLink,
+    status_code=201,
+)
+def issue_record_share_link(
+    record_id: str,
+    body: ShareLinkCreate,
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
+) -> CreatedShareLink:
+    """record 1 本に対する外部 token を発行する。
+
+    発行主体: ``can_grant`` (record creator / team admin / super-admin)。
+    raw token は **本レスポンスにのみ** 含まれ、Firestore には SHA-256
+    hash しか残らない (PAT 方式)。発行者は受け取った raw token を即
+    クライアントへ伝える運用 (再表示不可)。
+
+    audit 用に pseudo email + pseudo display name を required にしてある。
+    token で書き込まれた record の ``created_by`` / ``updated_by`` には
+    この pseudo identity が刻まれる。
+    """
+    import datetime as _dt
+
+    try:
+        rec = lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found") from None
+    require_grant(user, rec)
+
+    if body.role not in VALID_SHARE_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"role must be one of {list(VALID_SHARE_ROLES)}",
+        )
+    pseudo_email = (body.pseudo_email or "").strip().lower()
+    if not pseudo_email or "@" not in pseudo_email:
+        raise HTTPException(
+            status_code=400,
+            detail="valid pseudo_email is required (audit 用 identity)",
+        )
+    display = (body.pseudo_display_name or pseudo_email).strip()
+
+    from ..share_links import MAX_EXPIRES_DAYS, ShareLink, generate_token
+
+    days = body.expires_days if body.expires_days is not None else 30
+    if days < 0 or days > MAX_EXPIRES_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"expires_days must be between 0 and {MAX_EXPIRES_DAYS}",
+        )
+    now = _dt.datetime.now(_dt.UTC)
+    expires_at = (now + _dt.timedelta(days=days)) if days > 0 else None
+
+    raw_token, token_hash = generate_token()
+    link = ShareLink(
+        token_hash=token_hash,
+        record_id=record_id,
+        team=lab._team,
+        role=body.role,
+        pseudo_email=pseudo_email,
+        pseudo_display_name=display,
+        created_by=user.email,
+        created_at=now,
+        expires_at=expires_at,
+        revoked_at=None,
+        label=(body.label or "").strip(),
+    )
+
+    from ..dependencies import get_share_link_store
+
+    store = get_share_link_store()
+    store.create(link)
+
+    log_event(
+        logger,
+        "record.share_link_issued",
+        record_id=record_id,
+        team=lab._team,
+        token_hash_prefix=token_hash[:16],
+        role=body.role,
+        pseudo_email=pseudo_email,
+        expires_at=expires_at.isoformat() if expires_at else None,
+        issued_by=user.email,
+    )
+
+    info = _link_to_info(link)
+    return CreatedShareLink(
+        token=raw_token,
+        token_hash_prefix=info.token_hash_prefix,
+        record_id=info.record_id,
+        team=info.team,
+        role=info.role,
+        pseudo_email=info.pseudo_email,
+        pseudo_display_name=info.pseudo_display_name,
+        created_by=info.created_by,
+        created_at=info.created_at,
+        expires_at=info.expires_at,
+        revoked_at=info.revoked_at,
+        label=info.label,
+        is_active=info.is_active,
+    )
+
+
+@router.delete(
+    "/{record_id}/share-links/{token_hash_prefix}",
+    response_model=RevokeShareLinkResponse,
+)
+def revoke_record_share_link(
+    record_id: str,
+    token_hash_prefix: str,
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
+) -> RevokeShareLinkResponse:
+    """指定 token の link を revoke する (revoked_at を立てる)。
+
+    revoke 主体: ``can_grant``。prefix は list 表示用の先頭 16 文字。
+    完全 hash でなく prefix 経由なのは URL の取り回しの都合 (raw token
+    自体は二度と表示されないため)。collision (2^64) は実用上ゼロ。
+    """
+    import datetime as _dt
+
+    try:
+        rec = lab.get(record_id)
+    except RecordNotFoundError:
+        raise HTTPException(status_code=404, detail="Record not found") from None
+    require_grant(user, rec)
+
+    prefix = (token_hash_prefix or "").strip().lower()
+    if not prefix or len(prefix) < 8:
+        raise HTTPException(
+            status_code=400, detail="token_hash_prefix must be at least 8 chars"
+        )
+
+    from ..dependencies import get_share_link_store
+
+    store = get_share_link_store()
+    target = next(
+        (
+            link_
+            for link_ in store.list_for_record(record_id, lab._team)
+            if link_.token_hash.startswith(prefix)
+        ),
+        None,
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="share-link not found")
+
+    now = _dt.datetime.now(_dt.UTC)
+    store.revoke(target.token_hash, at=now)
+    log_event(
+        logger,
+        "record.share_link_revoked",
+        record_id=record_id,
+        team=lab._team,
+        token_hash_prefix=target.token_hash[:16],
+        revoked_by=user.email,
+    )
+    return RevokeShareLinkResponse(
+        status="ok", token_hash_prefix=target.token_hash[:16]
+    )
 
 
 @router.delete("/{record_id}/shares/{email}", response_model=RecordDetail)

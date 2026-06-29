@@ -171,6 +171,7 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
         from .dependencies import (
             reset_firestore_db,
             reset_lab,
+            reset_share_link_store,
             reset_shared_metadata_backend,
             retriable_firestore_exceptions,
             transient_firestore_exceptions,
@@ -208,6 +209,7 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
             dropped_labs = reset_lab()
             reset_fs = reset_firestore_db()
             reset_shared = reset_shared_metadata_backend()
+            reset_links = reset_share_link_store()
             log_event(
                 logger,
                 "firestore.client_reset",
@@ -219,6 +221,7 @@ async def _cors_safe_exception_handler(request: Request, exc: Exception) -> JSON
                 dropped_labs=dropped_labs,
                 reset_firestore_db=reset_fs,
                 reset_shared_metadata=reset_shared,
+                reset_share_link_store=reset_links,
             )
             return JSONResponse(
                 status_code=503,
