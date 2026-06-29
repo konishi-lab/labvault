@@ -32,7 +32,16 @@ from .auth import (
 )
 from .dependencies import close_lab, get_firestore_db, get_team_meta
 from .notifications import notify_signup_request
-from .routers import bulk_upload, files, metadata, preview, pypi_proxy, records, search
+from .routers import (
+    bulk_upload,
+    files,
+    metadata,
+    preview,
+    pypi_proxy,
+    records,
+    search,
+    share_links,
+)
 from .routers import mcp as mcp_router
 from .schemas import (
     AddTeamRequest,
@@ -280,6 +289,7 @@ app.include_router(preview.router, dependencies=_auth_deps)
 app.include_router(files.router, dependencies=_auth_deps)
 app.include_router(search.router, dependencies=_auth_deps)
 app.include_router(metadata.router, dependencies=_auth_deps)
+app.include_router(share_links.router, dependencies=_auth_deps)
 # PyPI proxy は pip からの HTTP Basic Auth (`__token__:lv_*`) を独自に
 # 検証するため、Firebase Bearer 認証の dependency は外す。
 app.include_router(pypi_proxy.router)

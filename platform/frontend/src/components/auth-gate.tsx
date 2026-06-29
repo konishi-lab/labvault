@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { setTeamProvider, setTokenProvider } from "@/lib/api";
 import { RequestAccessForm } from "@/components/request-access-form";
@@ -11,6 +12,13 @@ import { WelcomeScreen } from "@/components/welcome-screen";
 export function AuthGate({ children }: { children: ReactNode }) {
   const { user, loading, getIdToken, currentTeam, authStatus, showWelcome } =
     useAuth();
+  const pathname = usePathname();
+
+  // S1 Phase 2B: ``/share/<token>`` 公開ページは Firebase 認証ガード
+  // 自体を bypass する (token そのものが auth)。AuthProvider は外側に
+  // 残るが、share ページは ``useAuth()`` を呼ばず、token を直接
+  // Authorization header に詰めて API を叩く (share-api.ts 参照)。
+  const isPublicSharePath = pathname?.startsWith("/share/") ?? false;
 
   // api.ts 側に token / team 取得関数を渡す。user 切替時に最新を反映。
   useEffect(() => {
@@ -20,6 +28,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     setTeamProvider(() => currentTeam);
   }, [currentTeam]);
+
+  if (isPublicSharePath) {
+    return <>{children}</>;
+  }
 
   if (loading) {
     return (

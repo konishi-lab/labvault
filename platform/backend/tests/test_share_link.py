@@ -600,3 +600,63 @@ def test_malformed_ls_token_rejected(client: TestClient) -> None:
         headers={"Authorization": "Bearer ls_garbage"},
     )
     assert res.status_code == 401
+
+
+# --- /api/share-links/me (self introspection) -----------------------------
+
+
+def test_share_link_me_returns_scope(
+    client: TestClient, record_id: str
+) -> None:
+    """share-link token で /me を叩くと scope (record_id / role / pseudo) が返る。"""
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={
+            "role": "analyst",
+            "pseudo_email": "ext+me@klab.share",
+            "pseudo_display_name": "Me Tester",
+            "label": "intro",
+        },
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    res = client.get(
+        "/api/share-links/me",
+        headers={"Authorization": f"Bearer {raw_token}"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["record_id"] == record_id
+    assert body["team"] == "teamA"
+    assert body["role"] == "analyst"
+    assert body["pseudo_email"] == "ext+me@klab.share"
+    assert body["pseudo_display_name"] == "Me Tester"
+    # 30 日 default で expires_at が入っている
+    assert body["expires_at"] is not None
+    assert body["revoked_at"] is None
+
+
+def test_share_link_me_rejects_firebase_user(
+    client: TestClient, record_id: str
+) -> None:
+    """Firebase user が /me を叩くと 403 (share-link 専用 endpoint)。"""
+    c = _as(client, _owner)
+    res = c.get("/api/share-links/me", headers=_hdrs())
+    assert res.status_code == 403
+
+
+def test_share_link_me_rejects_no_auth(client: TestClient) -> None:
+    """auth 無しで /me を叩くと 403 (Firebase 経路で来た user 扱い)。
+
+    本番では Authorization 無し → ``current_authenticated_user`` で 401。
+    ただし conftest が ``LABVAULT_DEV_SKIP_AUTH=1`` を立てるため、auth
+    無しでも dev user が返り、結果的に「Firebase user → 403 (/me は
+    share-link 専用)」の path を踏む。本テストは dev mode 下での
+    挙動を保証する。
+    """
+    app.dependency_overrides.clear()
+    res = client.get("/api/share-links/me")
+    assert res.status_code == 403

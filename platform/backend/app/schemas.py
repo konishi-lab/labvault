@@ -316,6 +316,24 @@ class RevokeShareLinkResponse(BaseModel):
     token_hash_prefix: str
 
 
+class ShareLinkScopeMe(BaseModel):
+    """``GET /api/share-links/me`` のレスポンス。
+
+    share-link token で認証された user が、自分のスコープ (どの record に
+    どの role でアクセス可能か) を発見するための endpoint。``/share/{token}``
+    公開ページが「最初の 1 fetch」で record_id を引いて、その後通常の
+    ``/api/records/{id}`` を叩く流れに使う。
+    """
+
+    record_id: str
+    team: str
+    role: str  # "viewer" | "analyst"
+    pseudo_email: str
+    pseudo_display_name: str
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
 # --- Auth / signup ---
 
 
