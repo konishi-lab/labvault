@@ -63,11 +63,28 @@ class AuthenticatedUser:
 
 
 @dataclass(frozen=True)
+class ShareLinkScope:
+    """S1 Phase 2: share-link token 認証で得た「1 record + 1 role」のスコープ。
+
+    User に attach されると、その user はこの 1 record 以外には何もできない。
+    permissions.py がこの scope を見て can_read / can_analyze を判定する。
+    """
+
+    record_id: str
+    role: str  # "viewer" | "analyst"
+    team: str  # record owner team (header 検証用 / observability 用)
+
+
+@dataclass(frozen=True)
 class User:
     """認証 + 認可済ユーザー。handler では Depends(current_user) で受け取る。
 
     teams: ((team_id, role), ...) のタプル。default_team は header 未指定時の既定。
     role は legacy (allowed_users.role)、teams[].role が新しい team 単位 role。
+
+    S1 Phase 2: ``share_link_scope`` が set されている場合、この user は
+    record 1 本だけにアクセス可能な「外部 token」モード。team membership は
+    持たない (= teams=()). audit 用の email / display_name は pseudo identity。
     """
 
     uid: str
@@ -76,6 +93,7 @@ class User:
     role: str  # legacy admin | member | viewer (post-migration は teams[].role を使う)
     teams: tuple[tuple[str, str], ...] = ()
     default_team: str = ""
+    share_link_scope: ShareLinkScope | None = None
 
     def has_team(self, team_id: str) -> bool:
         return any(t == team_id for t, _ in self.teams)
@@ -85,6 +103,11 @@ class User:
             if t == team_id:
                 return r
         return None
+
+    @property
+    def is_share_link_user(self) -> bool:
+        """share-link token 経由で認証された user か。"""
+        return self.share_link_scope is not None
 
 
 def _firestore_db() -> Any:
@@ -110,6 +133,52 @@ def tokens_ref() -> Any:
 
 
 PAT_PREFIX = "lv_"
+SHARE_LINK_PREFIX = "ls_"
+
+
+def _verify_share_link(token: str) -> User | None:
+    """S1 Phase 2: share-link token (``ls_*``) を検証する。
+
+    - token_hash で ``shared_links`` collection を引く
+    - 有効期限切れ / revoke 済みは弾く
+    - 成功時は pseudo identity + ``share_link_scope`` を持った User を返す
+      (= 通常の ``current_user`` フローを bypass し、handler では普通の
+      User として扱える。``permissions.py`` が scope を見て認可する)
+
+    raw token は保存していないので、SHA-256 hash で lookup する (PAT と同じ)。
+    """
+    if not token.startswith(SHARE_LINK_PREFIX):
+        return None
+
+    from .dependencies import get_share_link_store
+    from .share_links import hash_token
+
+    token_hash = hash_token(token)
+    store = get_share_link_store()
+    link = store.get_by_hash(token_hash)
+    if link is None or not link.is_active():
+        return None
+
+    scope = ShareLinkScope(
+        record_id=link.record_id,
+        role=link.role,
+        team=link.team,
+    )
+    # share-link user は allowed_users 照合を経由しない (外部協力者で
+    # team membership が無いのが前提)。teams=() / role="" / default_team=team
+    # にして、handler から見ると「特定 team の record にだけアクセス可能な
+    # 不思議な user」になる。`current_team_for_shared_access` は header の
+    # team を 200 で通すので、frontend は X-Labvault-Team: <owner-team> を
+    # 必ず付けて投げる。
+    return User(
+        uid=f"share-link:{token_hash[:16]}",
+        email=link.pseudo_email,
+        display_name=link.pseudo_display_name or link.pseudo_email,
+        role="",
+        teams=(),
+        default_team=link.team,
+        share_link_scope=scope,
+    )
 
 
 def _verify_pat(token: str) -> AuthenticatedUser | None:
@@ -207,8 +276,20 @@ def current_authenticated_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    init_firebase_admin()
     token = authorization.removeprefix("Bearer ").strip()
+
+    # S1 Phase 2: share-link token (``ls_*``) は ``current_user`` 側で
+    # 完全に処理するため、ここでは到達しない (current_user が早期 return)。
+    # しかし、サインアップ申請のように ``current_authenticated_user`` を
+    # 直接使う path から ``ls_*`` が来た場合は、share-link は allowed_users
+    # 概念と無関係なので 401 で弾く方が安全。
+    if token.startswith(SHARE_LINK_PREFIX):
+        raise HTTPException(
+            status_code=401,
+            detail="share-link token cannot be used for this endpoint",
+        )
+
+    init_firebase_admin()
 
     # 1) PAT (Personal Access Token) — 我々が発行した lv_* 形式
     if token.startswith(PAT_PREFIX):
@@ -244,12 +325,37 @@ def current_authenticated_user(
 
 
 def current_user(
-    auth_user: AuthenticatedUser = Depends(current_authenticated_user),
+    authorization: str | None = Header(default=None),
 ) -> User:
     """Firebase token + allowed_users 照合を通した User を返す。
 
     通常の handler はこれを使う。allowed_users 未登録なら 403。
+
+    S1 Phase 2: ``Authorization: Bearer ls_*`` の場合は share-link token と
+    して **allowed_users 照合を bypass** し、pseudo identity + scope を
+    持った User を返す。permissions.py がその scope を見て record 単位で
+    認可する。
+
+    本 dep は意図的に ``Depends(current_authenticated_user)`` を使わずに
+    Authorization header を直接受ける。FastAPI の Depends は手前で
+    評価されるので、``current_authenticated_user`` を Depends すると
+    share-link でも一度 Firebase 検証経路に入ってしまうため。
     """
+    # S1 Phase 2: share-link 経路は allowed_users 照合をスキップ。
+    if authorization and authorization.startswith("Bearer "):
+        raw = authorization.removeprefix("Bearer ").strip()
+        if raw.startswith(SHARE_LINK_PREFIX):
+            link_user = _verify_share_link(raw)
+            if link_user is None:
+                raise HTTPException(
+                    status_code=401, detail="Invalid or expired share-link"
+                )
+            return link_user
+
+    # 通常 token (Firebase / PAT / Google OAuth) は手動で
+    # current_authenticated_user を呼ぶ (Depends ではないので Header
+    # default の値を明示的に渡す)。
+    auth_user = current_authenticated_user(authorization=authorization)
     # 開発用スキップ
     if _dev_skip():
         return User(

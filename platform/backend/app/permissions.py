@@ -60,10 +60,15 @@ def can_read(user: User, record: Any) -> bool:
     """user がこの record の **詳細 / ファイル DL** を見られるか。
 
     判定順:
-    1. super_admin → 常に True
-    2. team membership (record.team が user.teams に居る) → True
-    3. shares に user.email がある (role を問わず) → True
+    1. share-link scope (S1 Phase 2): scope.record_id == rec.id なら
+       role 問わず True (viewer/analyst 両方が read 可)。scope mismatch
+       なら他の path は試さず False (share-link user の境界を厳格に保つ)
+    2. super_admin → 常に True
+    3. team membership (record.team が user.teams に居る) → True
+    4. shares に user.email がある (role を問わず) → True
     """
+    if user.share_link_scope is not None:
+        return _matches_share_link_scope(user.share_link_scope, record)
     if is_super_admin(user):
         return True
     record_team = _record_team(record)
@@ -77,10 +82,18 @@ def can_analyze(user: User, record: Any) -> bool:
     できるか。
 
     判定順:
-    1. team membership → True (team 内ユーザーは元々何でもできる)
-    2. shares で role == "analyst" → True
-    3. それ以外 (super_admin だけ / viewer share / 関係なし) → False
+    1. share-link scope (S1 Phase 2): scope.record_id == rec.id かつ
+       scope.role == "analyst" のみ True。viewer scope はここで False。
+       scope mismatch も False (他の path に fall through しない)
+    2. team membership → True (team 内ユーザーは元々何でもできる)
+    3. shares で role == "analyst" → True
+    4. それ以外 (super_admin だけ / viewer share / 関係なし) → False
     """
+    if user.share_link_scope is not None:
+        return (
+            _matches_share_link_scope(user.share_link_scope, record)
+            and user.share_link_scope.role == ROLE_ANALYST
+        )
     if is_super_admin(user):
         return True
     record_team = _record_team(record)
@@ -93,14 +106,19 @@ def can_grant(user: User, record: Any) -> bool:
     """user がこの record の **共有を変更 (grant / revoke)** できるか。
 
     判定順:
-    1. super_admin → True
-    2. user.email == record.created_by → True (本人による grant)
-    3. record.team の team admin → True
+    1. share-link user (S1 Phase 2) → 常に False (再共有 / token 再発行
+       を禁止。token は record owner / team admin から明示発行されたもの
+       だけが有効)
+    2. super_admin → True
+    3. user.email == record.created_by → True (本人による grant)
+    4. record.team の team admin → True
 
     **「他人が grant した share を引き継いだ別チームメンバー」は grant
     できない** (= shares 経由でアクセスしている人は再共有不可)。意図的な
     制限で、share が再帰的に拡散するのを防ぐ。
     """
+    if user.share_link_scope is not None:
+        return False
     if is_super_admin(user):
         return True
     record_team = _record_team(record)
@@ -124,7 +142,11 @@ def can_edit(user: User, record: Any) -> bool:
 
     share された側は **edit 不可** (= team membership だけが edit 権限)。
     解析結果の追加は子 record の作成として `can_analyze` 経由で許可。
+    S1 Phase 2 share-link user も同様に edit 不可 (analyst でも子 record
+    作成と upload だけが許される)。
     """
+    if user.share_link_scope is not None:
+        return False
     if is_super_admin(user):
         return True
     record_team = _record_team(record)
@@ -164,7 +186,14 @@ def require_team_member(user: User, team: str) -> None:
     record を自由に作れると team の空間を勝手に汚せてしまうので、root
     record は team member だけが作る。子 record (parent_id 指定) は親に
     対する ``require_analyze`` で判定する別経路。super_admin はバイパス。
+    S1 Phase 2 share-link user も root 作成は不可 (scope は record 1 本に
+    固定で、新規 root を作れる権限を持たない設計)。
     """
+    if user.share_link_scope is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="share-link token では root record を作成できません",
+        )
     if is_super_admin(user):
         return
     if not user.has_team(team):
@@ -185,6 +214,36 @@ def _record_team(record: Any) -> str | None:
             return team
     if isinstance(record, dict):
         v = record.get("team")
+        if isinstance(v, str):
+            return v
+    return None
+
+
+def _matches_share_link_scope(scope: Any, record: Any) -> bool:
+    """share-link scope と record の対応関係を検証する。
+
+    record_id だけでなく **team も一致** することを要求する (Crockford
+    Base32 6 桁 ID が別 team で衝突する確率はゼロに近いが、ID 衝突を
+    悪用するシナリオを構造的に排除するためのガード)。
+    """
+    rid = _record_id(record)
+    rteam = _record_team(record)
+    return bool(
+        rid is not None
+        and rid == scope.record_id
+        and rteam is not None
+        and rteam == scope.team
+    )
+
+
+def _record_id(record: Any) -> str | None:
+    """`record.id` (Record) または `record["id"]` (dict) を返す。"""
+    if hasattr(record, "id"):
+        rid = record.id
+        if isinstance(rid, str):
+            return rid
+    if isinstance(record, dict):
+        v = record.get("id")
         if isinstance(v, str):
             return v
     return None

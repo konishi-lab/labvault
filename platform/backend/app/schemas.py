@@ -265,6 +265,57 @@ class ShareListResponse(BaseModel):
     items: list[ShareEntry]
 
 
+# --- 外部 token sharing (S1 Phase 2) ---
+
+
+class ShareLinkCreate(BaseModel):
+    """``POST /api/records/{id}/share-links`` の body。
+
+    pseudo_email + pseudo_display_name は token 利用者の identity。token
+    で書き込んだ record の ``created_by`` / ``updated_by`` に刻まれるので、
+    監査可能性のため required。expires_days 省略時は 30 日。
+    """
+
+    role: str  # "viewer" | "analyst"
+    pseudo_email: str
+    pseudo_display_name: str = ""
+    label: str = ""
+    # 0 → 期限無し、None → 30 日 (default)、最大は 365 日 (sanity)
+    expires_days: int | None = None
+
+
+class ShareLinkInfo(BaseModel):
+    """share-link 1 件の公開メタデータ (raw token は含めない)。"""
+
+    token_hash_prefix: str  # 表示用 prefix (先頭 16 chars)
+    record_id: str
+    team: str
+    role: str
+    pseudo_email: str
+    pseudo_display_name: str
+    created_by: str
+    created_at: datetime
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+    label: str = ""
+    is_active: bool
+
+
+class CreatedShareLink(ShareLinkInfo):
+    """token 発行直後だけ返すレスポンス。``token`` は再表示不可。"""
+
+    token: str
+
+
+class ShareLinkListResponse(BaseModel):
+    items: list[ShareLinkInfo]
+
+
+class RevokeShareLinkResponse(BaseModel):
+    status: str  # "ok"
+    token_hash_prefix: str
+
+
 # --- Auth / signup ---
 
 
