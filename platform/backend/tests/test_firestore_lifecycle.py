@@ -213,6 +213,13 @@ def test_transient_exception_returns_503_and_resets(
 
     fc = _FakeClient()
     monkeypatch.setattr(deps, "_firestore_db", fc)
+    # S1-TEST4 hot-fix (2026-06-29): share_link_store / shared_metadata_backend
+    # singleton も 503 で reset されることを assert する。元の test は
+    # _labs / _firestore_db のみ確認しており、PR #88 / #85 で追加された
+    # 2 singleton の reset 呼び出しが silently 削除されても検出できない
+    # gap があった。`object()` を仕込んで None に戻ることを assert する。
+    monkeypatch.setattr(deps, "_share_link_store", object())
+    monkeypatch.setattr(deps, "_shared_metadata_backend", object())
 
     with caplog.at_level(logging.WARNING, logger="app.main"):
         res = client.get("/__test/raise_transient")
@@ -223,10 +230,13 @@ def test_transient_exception_returns_503_and_resets(
     assert res.headers.get("retry-after") == "1"
     assert res.headers.get("cache-control") == "no-store"
 
-    # singleton は破棄され、handler の reset_lab / reset_firestore_db が走った
+    # singleton は破棄され、4 つの reset_* が走った
     assert deps._labs == {}
     assert deps._firestore_db is None
     assert _FakeClient.closed is True
+    # S1-TEST4: share_link / shared_metadata も None になる
+    assert deps._share_link_store is None
+    assert deps._shared_metadata_backend is None
 
     # observability event が emit されている
     fields_list = [
@@ -234,6 +244,16 @@ def test_transient_exception_returns_503_and_resets(
     ]
     events = [f["event"] for f in fields_list if isinstance(f, dict)]
     assert "firestore.client_reset" in events
+    # S1-TEST4: event field に追加された reset 結果 flag も確認
+    reset_events = [
+        f
+        for f in fields_list
+        if isinstance(f, dict) and f.get("event") == "firestore.client_reset"
+    ]
+    assert reset_events, "expected firestore.client_reset event"
+    fields = reset_events[0]
+    assert fields.get("reset_share_link_store") is True
+    assert fields.get("reset_shared_metadata") is True
 
 
 def test_generic_exception_still_returns_500(client: TestClient) -> None:

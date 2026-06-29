@@ -1282,3 +1282,91 @@ def test_inmemory_share_link_store_revoke_for_record() -> None:
     # 再度 revoke しても 0 (idempotent)
     revoked2 = store.revoke_for_record("rec1", "teamA", at=now)
     assert revoked2 == 0
+
+
+# --- S1-TEST6 hot-fix (2026-06-29): bulk_upload SSE 経路の audit カバー ---
+
+
+def test_obs3_bulk_upload_events_include_share_link_actor(
+    client: TestClient, record_id: str, lab: Lab, caplog: pytest.LogCaptureFixture
+) -> None:
+    """S1-TEST6 + OBS3: share-link token で bulk-upload を試みた時の
+    SSE 経路で ``bulk_upload.start`` / ``bulk_upload.done`` event に
+    ``actor=pseudo_email`` + ``actor_audit_source="share-link"`` が
+    刻まれる (SEC4 で per-child は forbidden になるが、event 自体は
+    emit されることを確認)。
+    """
+    import io
+    import logging as _logging
+
+    parent = lab.get(record_id)
+    parent.sub("child-a")
+
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "analyst", "pseudo_email": "ext+bulk@y.com"},
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    with caplog.at_level(_logging.INFO, logger="app.routers.bulk_upload"):
+        res = client.post(
+            f"/api/records/{record_id}/bulk-upload?rows=1&cols=1",
+            headers={
+                "Authorization": f"Bearer {raw_token}",
+                "X-Labvault-Team": "teamA",
+            },
+            files=[("files", ("a.txt", io.BytesIO(b"x"), "text/plain"))],
+        )
+    assert res.status_code == 200
+
+    # start + done event を集める
+    fields_list = [
+        getattr(r, "_lv_fields", None) for r in caplog.records
+    ]
+    bulk_events = [
+        f
+        for f in fields_list
+        if isinstance(f, dict) and f.get("event", "").startswith("bulk_upload.")
+    ]
+    assert any(f.get("event") == "bulk_upload.start" for f in bulk_events)
+    assert any(f.get("event") == "bulk_upload.done" for f in bulk_events)
+    # actor / actor_audit_source が share-link 経路で正しく埋まっている
+    for f in bulk_events:
+        assert f.get("actor") == "ext+bulk@y.com"
+        assert f.get("actor_audit_source") == "share-link"
+
+
+def test_obs3_bulk_upload_events_include_firebase_actor(
+    client: TestClient, record_id: str, lab: Lab, caplog: pytest.LogCaptureFixture
+) -> None:
+    """S1-TEST6 + OBS3: Firebase user (owner) の bulk-upload でも event に
+    ``actor=owner@a.com`` + ``actor_audit_source="firebase"`` が刻まれる。"""
+    import io
+    import logging as _logging
+
+    parent = lab.get(record_id)
+    parent.sub("child-fb")
+
+    c = _as(client, _owner)
+    with caplog.at_level(_logging.INFO, logger="app.routers.bulk_upload"):
+        res = c.post(
+            f"/api/records/{record_id}/bulk-upload?rows=1&cols=1",
+            headers=_hdrs(),
+            files=[("files", ("a.txt", io.BytesIO(b"x"), "text/plain"))],
+        )
+    assert res.status_code == 200
+
+    fields_list = [
+        getattr(r, "_lv_fields", None) for r in caplog.records
+    ]
+    bulk_events = [
+        f
+        for f in fields_list
+        if isinstance(f, dict) and f.get("event", "").startswith("bulk_upload.")
+    ]
+    for f in bulk_events:
+        assert f.get("actor") == "owner@a.com"
+        assert f.get("actor_audit_source") == "firebase"

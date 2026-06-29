@@ -320,3 +320,180 @@ def test_data7_unknown_role_is_skipped(
     # rec_ok だけ出る、rec_bad は skip
     assert rec_ok.id in ids
     assert rec_bad.id not in ids
+
+
+# --- S1-TEST3 hot-fix (2026-06-29): cross-team scenario の追加カバー ---
+#
+# 既存 fixture は 1 lab (teamA) しか持たないため、shared-with-me の
+# **複数 team キーを跨ぐ merge / updated_at DESC sort / pagination 境界**
+# が構造的に未検証だった。同じ InMemoryMetadataBackend を 2 つの Lab で
+# 共有し、teamA / teamB に user 宛 record を分散させて InMemory の
+# cross-team iteration path を直接たたく。
+
+
+@pytest.fixture()
+def multi_team_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> InMemoryMetadataBackend:
+    """teamA / teamB の 2 lab が同じ InMemoryMetadataBackend を共有する fixture。
+
+    ``list_records_shared_with`` の ``for records in self._records.values():``
+    cross-team iteration を実際に多 team で叩く。
+    """
+    for k in (
+        "LABVAULT_GCP_PROJECT",
+        "LABVAULT_FIRESTORE_DATABASE",
+        "LABVAULT_NEXTCLOUD_URL",
+        "LABVAULT_NEXTCLOUD_GROUP_FOLDER",
+        "LABVAULT_PLATFORM_URL",
+    ):
+        monkeypatch.setenv(k, "")
+    return InMemoryMetadataBackend()
+
+
+@pytest.fixture()
+def multi_team_seeded(
+    multi_team_backend: InMemoryMetadataBackend,
+) -> dict[str, str]:
+    """teamA に 2 件・teamB に 2 件、bob 宛 share を仕込む。
+
+    updated_at は **意図的に teamA と teamB を交互** にして、cross-team
+    merge + ソート挙動を再現する。
+    """
+    storage = InMemoryStorageBackend()
+    search = InMemorySearchBackend()
+    lab_a = Lab(
+        "teamA",
+        metadata_backend=multi_team_backend,
+        storage_backend=storage,
+        search_backend=search,
+    )
+    lab_b = Lab(
+        "teamB",
+        metadata_backend=multi_team_backend,
+        storage_backend=storage,
+        search_backend=search,
+    )
+
+    # team B の rec を先に作って、後で teamA の rec を作る。team A の
+    # 方が新しい updated_at になるので、ソートは teamA(新) → teamB(旧)
+    rec_b1 = lab_b.new("rec-B1", auto_log=False, created_by="owner@b.com")
+    rec_b1.grant_share("bob@b.com", "viewer")
+
+    rec_a1 = lab_a.new("rec-A1", auto_log=False, created_by="owner@a.com")
+    rec_a1.grant_share("bob@b.com", "analyst")
+
+    rec_b2 = lab_b.new("rec-B2", auto_log=False, created_by="owner@b.com")
+    rec_b2.grant_share("bob@b.com", "viewer")
+
+    rec_a2 = lab_a.new("rec-A2", auto_log=False, created_by="owner@a.com")
+    rec_a2.grant_share("bob@b.com", "analyst")
+
+    return {
+        "A1": rec_a1.id,
+        "A2": rec_a2.id,
+        "B1": rec_b1.id,
+        "B2": rec_b2.id,
+    }
+
+
+@pytest.fixture()
+def multi_team_client(
+    monkeypatch: pytest.MonkeyPatch,
+    multi_team_backend: InMemoryMetadataBackend,
+    multi_team_seeded: dict[str, str],
+) -> Iterator[TestClient]:
+    """multi_team_backend をベースに client を構築。"""
+    # get_lab_for_team は呼び出しごとに新 Lab を作る (どの team が来ても
+    # 同じ backend を見る)
+    def _lab(team: str) -> Lab:
+        return Lab(
+            team,
+            metadata_backend=multi_team_backend,
+            storage_backend=InMemoryStorageBackend(),
+            search_backend=InMemorySearchBackend(),
+        )
+
+    monkeypatch.setattr("app.dependencies.get_lab_for_team", _lab)
+    monkeypatch.setattr(
+        "app.dependencies.get_shared_metadata_backend",
+        lambda: multi_team_backend,
+    )
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+def test_cross_team_merge_and_team_field_in_response(
+    multi_team_client: TestClient, multi_team_seeded: dict[str, str]
+) -> None:
+    """S1-TEST3: 複数 team の record が混在し、各 item に正しい ``team``
+    field が付いて返る。"""
+    app.dependency_overrides[current_user] = _bob
+    res = multi_team_client.get("/api/records/shared-with-me")
+    assert res.status_code == 200
+    items = res.json()["items"]
+    # 4 件全部が bob 宛 → 全部返る
+    by_id = {item["id"]: item for item in items}
+    assert by_id[multi_team_seeded["A1"]]["team"] == "teamA"
+    assert by_id[multi_team_seeded["A2"]]["team"] == "teamA"
+    assert by_id[multi_team_seeded["B1"]]["team"] == "teamB"
+    assert by_id[multi_team_seeded["B2"]]["team"] == "teamB"
+
+
+def test_cross_team_sorted_by_updated_at_desc(
+    multi_team_client: TestClient, multi_team_seeded: dict[str, str]
+) -> None:
+    """S1-TEST3: cross-team で取った items が ``updated_at`` DESC で
+    並ぶ (team を跨いだ merge sort が正しい)。"""
+    app.dependency_overrides[current_user] = _bob
+    res = multi_team_client.get("/api/records/shared-with-me")
+    items = res.json()["items"]
+    # 作成順: B1, A1, B2, A2 → updated_at desc では A2, B2, A1, B1
+    ids_in_order = [item["id"] for item in items]
+    expected_order = [
+        multi_team_seeded["A2"],
+        multi_team_seeded["B2"],
+        multi_team_seeded["A1"],
+        multi_team_seeded["B1"],
+    ]
+    assert ids_in_order == expected_order
+
+
+def test_cross_team_pagination_limit_crosses_team_boundary(
+    multi_team_client: TestClient, multi_team_seeded: dict[str, str]
+) -> None:
+    """S1-TEST3: limit が team 境界を跨いでも正しく作用する。
+
+    limit=2 で取ると updated_at 上位 2 件 (A2 + B2) が出て has_more=True。
+    """
+    app.dependency_overrides[current_user] = _bob
+    res = multi_team_client.get("/api/records/shared-with-me?limit=2")
+    body = res.json()
+    assert len(body["items"]) == 2
+    assert body["has_more"] is True
+    ids = [item["id"] for item in body["items"]]
+    assert ids == [
+        multi_team_seeded["A2"],
+        multi_team_seeded["B2"],
+    ]
+
+
+def test_cross_team_offset_at_boundary(
+    multi_team_client: TestClient, multi_team_seeded: dict[str, str]
+) -> None:
+    """S1-TEST3: offset=2, limit=2 で 3-4 番目の item が取れる。
+
+    cross-team merge sort 後の offset 計算が正しいことを境界条件で確認。
+    """
+    app.dependency_overrides[current_user] = _bob
+    res = multi_team_client.get("/api/records/shared-with-me?limit=2&offset=2")
+    body = res.json()
+    assert len(body["items"]) == 2
+    ids = [item["id"] for item in body["items"]]
+    assert ids == [
+        multi_team_seeded["A1"],
+        multi_team_seeded["B1"],
+    ]
+    # 4 件中 3-4 番目で全部取れた → has_more=False
+    assert body["has_more"] is False
