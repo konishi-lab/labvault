@@ -8,7 +8,8 @@ from fastapi.responses import Response
 from labvault import Lab
 from labvault.core.exceptions import RecordNotFoundError
 
-from ..auth import User, current_user, get_lab
+from ..auth import User, current_user, get_lab_relaxed
+from ..permissions import require_analyze, require_read
 from ..schemas import FileInfo, RecordDetail
 
 router = APIRouter(prefix="/api/records/{record_id}/files", tags=["files"])
@@ -17,13 +18,21 @@ router = APIRouter(prefix="/api/records/{record_id}/files", tags=["files"])
 @router.get("", response_model=list[FileInfo])
 def list_files(
     record_id: str,
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
 ) -> list[FileInfo]:
-    """ファイル一覧を取得する。"""
+    """ファイル一覧を取得する。
+
+    S1 Phase 1B/1C 補完: viewer / analyst 共有された外部 user も一覧を
+    引けるよう ``require_read`` で認可。team 非所属 user は
+    ``X-Labvault-Team`` header を record の所有 team に向けて投げる
+    必要がある (frontend が自動でセット)。
+    """
     try:
         rec = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
+    require_read(user, rec)
     return [
         FileInfo(
             name=ref.name,
@@ -39,16 +48,21 @@ def list_files(
 async def upload_file(
     record_id: str,
     file: UploadFile,
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
     user: User = Depends(current_user),
 ) -> RecordDetail:
-    """ファイルをアップロードする。"""
+    """ファイルをアップロードする。
+
+    S1 Phase 1C: ``require_analyze`` で認可。analyst 共有された外部 user も
+    解析結果ファイルを upload できる。viewer は 403、関係ない user も 403。
+    """
     from ..routers.records import _to_detail
 
     try:
         rec = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found") from None
+    require_analyze(user, rec)
 
     rec.updated_by = user.email
     data = await file.read()
@@ -61,13 +75,18 @@ def download_file(
     record_id: str,
     filename: str,
     download: bool = False,
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
 ) -> Response:
-    """ファイルをダウンロード/表示する。?download=1 で強制ダウンロード。"""
+    """ファイルをダウンロード/表示する。?download=1 で強制ダウンロード。
+
+    S1 Phase 1B/1C 補完: ``require_read`` で認可、viewer 共有 user も DL 可能。
+    """
     try:
         rec = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found")
+    require_read(user, rec)
 
     try:
         data = rec.get_data(filename)

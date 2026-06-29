@@ -17,6 +17,7 @@ from ..permissions import (
     require_analyze,
     require_grant,
     require_read,
+    require_team_member,
 )
 from ..schemas import (
     AggregateResponse,
@@ -280,18 +281,54 @@ def list_records(
 @router.post("", response_model=RecordDetail, status_code=201)
 def create_record(
     body: RecordCreate,
-    lab: Lab = Depends(get_lab),
+    lab: Lab = Depends(get_lab_relaxed),
     user: User = Depends(current_user),
 ) -> RecordDetail:
-    """レコードを作成する。created_by は認証済 email を刻印。"""
-    rec = lab.new(
-        body.title,
-        type=body.type,
-        tags=body.tags if body.tags else None,
-        auto_log=False,
-        created_by=user.email,
-        **body.conditions,
-    )
+    """レコードを作成する。created_by は認証済 email を刻印。
+
+    S1 Phase 1C: ``parent_id`` 指定で子 record を作る場合は親 record に
+    対する ``require_analyze`` で認可判定 — 他チームから analyst 共有
+    された user も解析結果 record を作れる。``parent_id`` 未指定 (root
+    record 作成) は team membership を要求 (``require_team_member``) —
+    share 経由 user が team 空間に勝手に root を作るのを防ぐ。
+    """
+    if body.parent_id:
+        # 子 record 作成 — 親への analyst 権限が要る
+        try:
+            parent = lab.get(body.parent_id)
+        except RecordNotFoundError:
+            raise HTTPException(
+                status_code=404, detail="parent record not found"
+            ) from None
+        require_analyze(user, parent)
+        # `Record.sub()` は親 Lab の default user を created_by に使う
+        # ため、ここでは lab.new() + parent_id 直結 + bidirectional link
+        # を inline で書いて created_by に呼び出し user の email を刻む。
+        rec = lab.new(
+            body.title,
+            type=body.type,
+            tags=body.tags if body.tags else None,
+            auto_log=False,
+            created_by=user.email,
+            **body.conditions,
+        )
+        rec._parent_id = parent.id
+        rec.updated_by = user.email
+        rec._persist()
+        # `Record.sub()` と揃える: 親⇄子の双方向 link を張る
+        parent.link(rec.id, "has_child")
+        rec.link(parent.id, "child_of")
+    else:
+        # root record 作成 — team membership を要求
+        require_team_member(user, lab._team)
+        rec = lab.new(
+            body.title,
+            type=body.type,
+            tags=body.tags if body.tags else None,
+            auto_log=False,
+            created_by=user.email,
+            **body.conditions,
+        )
     return _to_detail(rec)
 
 
