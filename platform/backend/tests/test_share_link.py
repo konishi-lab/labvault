@@ -648,6 +648,172 @@ def test_share_link_me_rejects_firebase_user(
     assert res.status_code == 403
 
 
+# --- S1-CQ1 / SEC1 / SEC3 hot-fix (2026-06-29) ----------------------------
+
+
+def test_share_link_user_cannot_see_other_users_shares(
+    client: TestClient, record_id: str, lab: Lab
+) -> None:
+    """S1-CQ1: share-link token で record 詳細を取っても、他の Firebase
+    user の email が ``shares`` field で漏洩しない。"""
+    # 事前に別 user (alice) に通常の share を grant
+    rec = lab.get(record_id)
+    rec.grant_share("alice@x.com", "viewer")
+
+    # share-link token を pseudo_email='ext@y.com' で発行
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "viewer", "pseudo_email": "ext@y.com"},
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    res = client.get(
+        f"/api/records/{record_id}",
+        headers={"Authorization": f"Bearer {raw_token}", "X-Labvault-Team": "teamA"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    # share-link user 自身は shares dict に居ない (= 空) はず
+    # (alice の email も見えない)
+    assert "alice@x.com" not in body["shares"]
+    assert body["shares"] == {}
+
+
+def test_share_link_user_cannot_list_shares(
+    client: TestClient, record_id: str
+) -> None:
+    """S1-CQ1: share-link token で /api/records/{id}/shares を叩くと 403。"""
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "analyst", "pseudo_email": "ext@y.com"},
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    res = client.get(
+        f"/api/records/{record_id}/shares",
+        headers={"Authorization": f"Bearer {raw_token}", "X-Labvault-Team": "teamA"},
+    )
+    assert res.status_code == 403
+
+
+def test_share_link_user_blocked_from_shared_with_me(
+    client: TestClient, record_id: str
+) -> None:
+    """S1-SEC1: share-link token で /shared-with-me を叩くと 403。"""
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        # 攻撃シナリオ: 被害者の email を pseudo_email に指定
+        json={"role": "viewer", "pseudo_email": "victim@some.org"},
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    res = client.get(
+        "/api/records/shared-with-me",
+        headers={"Authorization": f"Bearer {raw_token}"},
+    )
+    assert res.status_code == 403
+
+
+def test_share_link_viewer_cannot_see_children(
+    client: TestClient, record_id: str, lab: Lab
+) -> None:
+    """S1-SEC3: share-link viewer で parent の children/conditions を叩いて
+    も子 record の summary や conditions/results が露出しない (scope
+    record 1 本に固定)。
+    """
+    # 親 record の子を 2 件作る
+    parent = lab.get(record_id)
+    parent.sub("secret-child-1")
+    parent.sub("secret-child-2")
+
+    # viewer scope の share-link token を発行
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "viewer", "pseudo_email": "ext@y.com"},
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    # /children は 200 だが空配列 (scope mismatch で per-child filter)
+    res = client.get(
+        f"/api/records/{record_id}/children",
+        headers={"Authorization": f"Bearer {raw_token}", "X-Labvault-Team": "teamA"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["items"] == []
+    assert body["total"] == 0
+
+    # /children/conditions も同様
+    res2 = client.get(
+        f"/api/records/{record_id}/children/conditions",
+        headers={"Authorization": f"Bearer {raw_token}", "X-Labvault-Team": "teamA"},
+    )
+    assert res2.status_code == 200
+    assert res2.json() == []
+
+
+def test_share_link_analyst_bulk_upload_blocked_for_children_out_of_scope(
+    client: TestClient, record_id: str, lab: Lab
+) -> None:
+    """S1-SEC4: bulk_upload は **per-child の require_analyze** を行う。
+    share-link analyst (scope = parent record 1 本) は parent の require_analyze
+    は通るが、 children へは can_analyze が False なので 1 file ごとに
+    forbidden ステータスで弾かれる (= 全 file が 'forbidden' で skip)。
+    """
+    import io
+
+    # parent に子を 2 件作る
+    parent = lab.get(record_id)
+    parent.sub("child-A1")
+    parent.sub("child-A2")
+
+    # analyst scope の share-link token を発行
+    c1 = _as(client, _owner)
+    issued = c1.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "analyst", "pseudo_email": "ext+ana@y.com"},
+    ).json()
+    raw_token = issued["token"]
+
+    app.dependency_overrides.clear()
+    # 2x1 grid で 2 file を bulk-upload。share-link analyst の scope は
+    # parent record 1 本なので、children には can_analyze=False → 全 file
+    # forbidden になるはず。
+    res = client.post(
+        f"/api/records/{record_id}/bulk-upload?rows=1&cols=2",
+        headers={"Authorization": f"Bearer {raw_token}", "X-Labvault-Team": "teamA"},
+        files=[
+            ("files", ("a.txt", io.BytesIO(b"a"), "text/plain")),
+            ("files", ("b.txt", io.BytesIO(b"b"), "text/plain")),
+        ],
+    )
+    # SSE response。ステータスは 200 (handler の require_analyze は parent
+    # で通る)、ただし各 file は 'forbidden' で skip される。
+    assert res.status_code == 200
+    body = res.text
+    # 各 file が forbidden で出ること
+    assert body.count('"status": "forbidden"') == 2
+    # uploaded カウントは 0 のまま
+    assert '"uploaded": 0' in body
+
+    # 子 record にファイルが付いていないこと
+    for child in parent.children():
+        assert len([f for f in child.list_data()]) == 0
+
+
 def test_share_link_me_rejects_no_auth(client: TestClient) -> None:
     """auth 無しで /me を叩くと 403 (Firebase 経路で来た user 扱い)。
 

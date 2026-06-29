@@ -17,7 +17,7 @@ from labvault.core.record import Record
 
 from ..auth import User, current_user, get_lab_relaxed
 from ..observability import log_event
-from ..permissions import require_analyze
+from ..permissions import can_analyze, require_analyze
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +269,31 @@ async def bulk_upload(
                     continue
 
                 target = children[record_idx]
+
+                # S1-SEC4 (2026-06-29 hot-fix): 親 require_analyze だけでは
+                # share-link analyst (scope=parent record 1 本) が全 child
+                # に書き込めてしまう。loop 内で per-child の can_analyze
+                # チェックを入れ、scope mismatch は skip する。Firebase
+                # team member / super_admin は全 child で通過するので影響
+                # なし。Firebase shares 経由の analyst も同様にガード強化
+                # (child が parent より厳しい shares を持つ場合の暗黙昇格を
+                # 防ぐ)。
+                if not can_analyze(user, target):
+                    errors.append(
+                        f"{filename}: forbidden (no analyze permission on "
+                        f"child {target.id})"
+                    )
+                    yield _sse(
+                        "progress",
+                        {
+                            "current": file_idx + 1,
+                            "total": total,
+                            "filename": filename,
+                            "status": "forbidden",
+                            "uploaded": uploaded,
+                        },
+                    )
+                    continue
 
                 try:
                     nc_path = _build_nc_path(target, filename, lab)

@@ -67,7 +67,7 @@ async def upload_file(
     rec.updated_by = user.email
     data = await file.read()
     rec.add(data, name=file.filename or "untitled")
-    return _to_detail(rec)
+    return _to_detail(rec, user)
 
 
 @router.get("/{filename:path}")
