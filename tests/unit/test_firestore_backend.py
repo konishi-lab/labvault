@@ -63,6 +63,13 @@ class TestRecordCRUD:
         result = backend.get_record("team-a", "AB3F")
         assert result is None
 
+    def _record_ref(self, backend):
+        """mock の collection→document→collection→document chain を辿った doc ref。"""
+        teams_coll = backend._db.collection.return_value
+        team_doc = teams_coll.document.return_value
+        records_coll = team_doc.collection.return_value
+        return records_coll.document.return_value
+
     def test_update_record_uses_update_not_set_merge(self, backend):
         """S1-DATA1 regression: ``update()`` を使う (top-level 全置換)。
 
@@ -74,17 +81,21 @@ class TestRecordCRUD:
         data = {"id": "AB3F", "title": "updated"}
         backend.update_record("team-a", "AB3F", data)
 
-        ref = backend._db.collection.return_value.document.return_value.collection.return_value.document.return_value
+        ref = self._record_ref(backend)
         ref.update.assert_called_once_with(data)
         # 旧実装 (set merge=True) は呼ばれない
         ref.set.assert_not_called()
 
     def test_update_record_falls_back_to_set_on_not_found(self, backend):
         """``update()`` は doc 不在で NotFound を投げる → ``set()`` で
-        fallback (buffer 復元 / legacy 経路保護)。"""
-        from google.api_core.exceptions import NotFound
+        fallback (buffer 復元 / legacy 経路保護)。
 
-        ref = backend._db.collection.return_value.document.return_value.collection.return_value.document.return_value
+        google.api_core が未インストール (``[gcp]`` extra 無し) の環境
+        では fallback path を試せないので skip。
+        """
+        NotFound = pytest.importorskip("google.api_core.exceptions").NotFound
+
+        ref = self._record_ref(backend)
         ref.update.side_effect = NotFound("missing")
 
         data = {"id": "AB3F", "title": "fresh"}
@@ -112,7 +123,7 @@ class TestRecordCRUD:
         after_revoke = {"id": "AB3F", "shares": {"alice@x.com": "viewer"}}
         backend.update_record("team-a", "AB3F", after_revoke)
 
-        ref = backend._db.collection.return_value.document.return_value.collection.return_value.document.return_value
+        ref = self._record_ref(backend)
         # 2 回 update() が呼ばれ、2 回目の引数は alice だけ含む shares
         assert ref.update.call_count == 2
         second_call_args = ref.update.call_args_list[1][0][0]

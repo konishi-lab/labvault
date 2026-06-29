@@ -83,13 +83,25 @@ class FirestoreMetadataBackend:
         ``NotFound`` (= doc が無い) は通常 ``create_record`` 経由で
         先に作成しているので起きないが、buffer 復元 / legacy 経路の
         ために ``set()`` で fallback する。
-        """
-        from google.api_core.exceptions import NotFound
 
+        google package を遅延参照する形にして、``[gcp]`` extra 未インス
+        トール環境 (CI minimal) でも import-time エラーを起こさない
+        (Firestore 系 unit test は ``_get_db`` を mock するので
+        ``ref.update`` も MagicMock 経由で成功し、本 fallback path は
+        実 Firestore でのみ通る)。
+        """
         ref = self._records_ref(team).document(record_id)
         try:
             ref.update(data)
-        except NotFound:
+        except Exception as e:
+            # NotFound のみ fallback (他例外は re-raise)。google package を
+            # 遅延 import して [gcp] extra 未インストール環境でも壊さない。
+            try:
+                from google.api_core.exceptions import NotFound
+            except ImportError:
+                raise e from None
+            if not isinstance(e, NotFound):
+                raise
             ref.set(data)
 
     def delete_record(self, team: str, record_id: str) -> None:
