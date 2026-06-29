@@ -94,6 +94,11 @@ export function ShareDialog({
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState<ShareRole>("viewer");
   const [submitting, setSubmitting] = useState(false);
+  // S1-UX2 hot-fix (2026-06-29): 発行直後の raw token (1 回限り表示)
+  // は親 ShareDialog に持ち上げ、modal close を抑止する。child の
+  // ShareLinksPanel が unmount された瞬間に raw token が永久喪失する
+  // 罠を構造的に防ぐ。
+  const [justIssued, setJustIssued] = useState<CreatedShareLink | null>(null);
 
   // grant 主体判定 (frontend 側で先回り)。backend の `can_grant` と一致:
   // super_admin OR record.created_by 本人 OR owner team の admin。
@@ -211,8 +216,20 @@ export function ShareDialog({
         )?.role ?? null
       : null;
 
+  // S1-UX2 hot-fix: 発行直後の raw token を表示中は modal close を抑止
+  // する。ESC / 外側クリック / X ボタンいずれでも閉じない。明示的な
+  // 「閉じる」ボタン (ShareLinksPanel 内) でだけ setJustIssued(null) →
+  // 通常の close が可能になる。raw token は Firestore に hash しか
+  // 保存されていない (再表示不可) ため、誤操作で永久喪失する罠を防ぐ。
+  const handleOpenChange = (next: boolean) => {
+    if (!next && justIssued) {
+      return; // close を無視
+    }
+    setOpen(next);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger
         render={
           <Button
@@ -231,7 +248,12 @@ export function ShareDialog({
           </Button>
         }
       />
-      <DialogContent className="sm:max-w-md">
+      <DialogContent
+        className="sm:max-w-md"
+        // S1-UX2: raw token 表示中は右上 X ボタンも隠す (handleOpenChange
+        // が close を抑止するので X を残しても閉じないが、UI 上の混乱を防ぐ)。
+        showCloseButton={!justIssued}
+      >
         <DialogHeader>
           <DialogTitle>record の共有</DialogTitle>
           <DialogDescription>
@@ -368,7 +390,13 @@ export function ShareDialog({
 
         {/* S1 Phase 2: 外部 token 共有 (ls_*) — Firebase アカウントを持たない
             協力者向け。grant 主体だけが見える */}
-        {canGrant && open && <ShareLinksPanel recordId={recordId} />}
+        {canGrant && open && (
+          <ShareLinksPanel
+            recordId={recordId}
+            justIssued={justIssued}
+            setJustIssued={setJustIssued}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -381,7 +409,17 @@ const TOKEN_ROLE_LABEL: Record<string, string> = {
   analyst: "閲覧 + 解析投稿",
 };
 
-function ShareLinksPanel({ recordId }: { recordId: string }) {
+function ShareLinksPanel({
+  recordId,
+  justIssued,
+  setJustIssued,
+}: {
+  recordId: string;
+  // S1-UX2: 親 ShareDialog 側で持つ state を passthrough。raw token 表示中
+  // は親が close を抑止する。
+  justIssued: CreatedShareLink | null;
+  setJustIssued: (v: CreatedShareLink | null) => void;
+}) {
   const [links, setLinks] = useState<ShareLinkInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -392,8 +430,6 @@ function ShareLinksPanel({ recordId }: { recordId: string }) {
   const [pseudoName, setPseudoName] = useState("");
   const [label, setLabel] = useState("");
   const [expiresDays, setExpiresDays] = useState<string>("30");
-  // 発行直後の raw token (1 回限り表示)
-  const [justIssued, setJustIssued] = useState<CreatedShareLink | null>(null);
   const [copied, setCopied] = useState(false);
 
   // 一覧 fetch
@@ -541,8 +577,13 @@ function ShareLinksPanel({ recordId }: { recordId: string }) {
             {TOKEN_ROLE_LABEL[justIssued.role] ?? justIssued.role})
           </div>
           <p className="text-amber-800">
-            <strong>この画面を閉じると raw token は二度と表示できません。</strong>{" "}
+            <strong>raw token は二度と表示できません。</strong>{" "}
             今すぐコピーして相手に送ってください。
+            <br />
+            <span className="text-amber-700">
+              (誤閉じ防止のため、コピー後に下の「コピーした、閉じる」を
+              押すまで modal は閉じません)
+            </span>
           </p>
           <div className="bg-white border rounded p-2 font-mono text-[11px] break-all">
             {justIssued.token}
@@ -573,7 +614,7 @@ function ShareLinksPanel({ recordId }: { recordId: string }) {
                 setCopied(false);
               }}
             >
-              閉じる
+              コピーした、閉じる
             </Button>
           </div>
         </div>

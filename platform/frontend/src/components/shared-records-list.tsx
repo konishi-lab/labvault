@@ -38,7 +38,7 @@ export function SharedRecordsList({
   hasMore: boolean;
 }) {
   const router = useRouter();
-  const { setCurrentTeam, teams } = useAuth();
+  const { setCurrentTeam, currentTeam, teams } = useAuth();
 
   if (items.length === 0) {
     return (
@@ -51,20 +51,25 @@ export function SharedRecordsList({
     );
   }
 
-  // 自分が所属する team の id 集合 (highlight 用)。これに含まれない team
-  // の record だけが「本来の意味での『他チームから共有』」だが、自 team の
-  // record も share 経由でアクセスは可能なので返り得る (= 表示する)。
+  // 自分が所属する team の id 集合 (UI ハイライト用)。
   const myTeamIds = new Set(teams.map((t) => t.team_id));
 
   const handleClick = (item: SharedRecordSummary) => {
-    // 自 team 以外の record は currentTeam を切り替えて見せる。
-    // 自 team の場合は切り替え不要 (header はそのまま)。
-    if (item.team && !myTeamIds.has(item.team)) {
-      // 自分が所属していない team へ X-Labvault-Team を一時的に向ける。
-      // useAuth の setCurrentTeam が localStorage にも保存するので、
-      // 戻ってきた後も同じ team で表示する点に注意 (team selector で
-      // 戻せば良い)。代替案: detail page に ?team=X で override する
-      // 仕組みを足すこと。Phase 2 検討。
+    // S1-UX1 hot-fix (2026-06-29): 切替判定は **currentTeam との差分** で行う。
+    //
+    // 旧実装は `if (!myTeamIds.has(item.team))` で『自 team の所属判定』を
+    // 使っていた。これだと teams=[A,B] / currentTeam=A の user が team B の
+    // 共有 record をクリックしても切り替わらず (B も myTeamIds に含まれるため)、
+    // 詳細ページで X-Labvault-Team: A のまま record(team=B) を lookup して
+    // 404 になっていた。
+    //
+    // 正しくは『現 header と違う team の record なら切り替える』。これで
+    // 自 team / 他 team いずれも構造的に同じ挙動になる。
+    // 自分の所属していない team へ切替える場合は useAuth の setCurrentTeam が
+    // localStorage にも保存するため、戻った後も同じ team で表示が続く点に
+    // 注意 (team selector で手動で戻す)。Phase 2 で `?team=X` override 方式
+    // を検討予定。
+    if (item.team && item.team !== currentTeam) {
       setCurrentTeam(item.team);
     }
     router.push(`/records/${item.id}`);
