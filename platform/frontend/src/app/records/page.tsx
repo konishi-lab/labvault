@@ -14,11 +14,13 @@ import {
 import {
   fetchIndexedFieldSuggestions,
   fetchRecords,
+  fetchSharedWithMe,
   searchRecords,
 } from "@/lib/api";
-import type { RecordSummary } from "@/lib/api";
+import type { RecordSummary, SharedRecordSummary } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { StatsPanel } from "@/components/stats-panel";
+import { SharedRecordsList } from "@/components/shared-records-list";
 
 const PAGE_LIMIT = 200;
 
@@ -74,12 +76,18 @@ function RecordsContent() {
   //   - 両方なし: 完全フラット (作成日順)
   // 旧仕様 (mine=1 のみ) で来たユーザーには backward-compat で同じ挙動。
   const boostMine = searchParams.get("boost") === "1";
+  // S1 Phase 1B: 「他チームから共有された record」モード。shared=1 のとき
+  // 通常の /api/records ではなく /api/records/shared-with-me を叩いて
+  // cross-team で「自分宛て共有」だけを表示する。mine / boost / template
+  // / conditions / query は無視 (backend が条件 filter を受けない)。
+  const sharedMode = searchParams.get("shared") === "1";
   const templateFilter = searchParams.get("template") || "";
 
   const { user } = useAuth();
   const currentUserEmail = user?.email || null;
 
   const [records, setRecords] = useState<RecordSummary[]>([]);
+  const [sharedRecords, setSharedRecords] = useState<SharedRecordSummary[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -124,20 +132,29 @@ function RecordsContent() {
     [searchParams],
   );
 
-  // D3: 3 値セグメント [全員] [自分を上に] [自分のみ] のハンドラ。
-  // URL は 2 つの独立 bool で表現 (互換性のため):
-  //   "all"     → mine 削除 / boost 削除
-  //   "boost"   → boost=1 / mine 削除
-  //   "mine"    → mine=1 / boost 削除
-  type MineMode = "all" | "boost" | "mine";
-  const mineMode: MineMode = mineOnly ? "mine" : boostMine ? "boost" : "all";
-  const handleMineModeChange = useCallback(
-    (next: MineMode) => {
+  // D3 + S1 Phase 1B: 4 値セグメント [全員] [自分を上に] [自分のみ]
+  // [共有された]。URL の bool を組み合わせる (互換性のため):
+  //   "all"     → mine 削除 / boost 削除 / shared 削除
+  //   "boost"   → boost=1 / mine 削除 / shared 削除
+  //   "mine"    → mine=1 / boost 削除 / shared 削除
+  //   "shared"  → shared=1 / mine 削除 / boost 削除
+  type ListMode = "all" | "boost" | "mine" | "shared";
+  const listMode: ListMode = sharedMode
+    ? "shared"
+    : mineOnly
+      ? "mine"
+      : boostMine
+        ? "boost"
+        : "all";
+  const handleListModeChange = useCallback(
+    (next: ListMode) => {
       const params = new URLSearchParams(searchParams.toString());
       params.delete("mine");
       params.delete("boost");
+      params.delete("shared");
       if (next === "mine") params.set("mine", "1");
       if (next === "boost") params.set("boost", "1");
+      if (next === "shared") params.set("shared", "1");
       _updateRecordsUrl(params);
     },
     [searchParams],
@@ -146,6 +163,20 @@ function RecordsContent() {
   useEffect(() => {
     setLoading(true);
     setError(null);
+
+    // S1 Phase 1B: shared mode は cross-team で別 endpoint を叩く。
+    // query / conditions / mine / template は backend が受けないので無視。
+    if (sharedMode) {
+      fetchSharedWithMe({ limit: PAGE_LIMIT })
+        .then((res) => {
+          setSharedRecords(res.items);
+          setRecords([]);
+          setHasMore(!!res.has_more);
+        })
+        .catch((err: Error) => setError(err.message))
+        .finally(() => setLoading(false));
+      return;
+    }
 
     // query / conditions / created_by を **同時に** 受け付ける統一ロード経路。
     // backend は /api/search が q + conditions + created_by を全部受ける
@@ -173,11 +204,19 @@ function RecordsContent() {
     load
       .then(({ items, has_more }) => {
         setRecords(items);
+        setSharedRecords([]);
         setHasMore(has_more);
       })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [query, conditionsObj, mineOnly, currentUserEmail, templateFilter]);
+  }, [
+    query,
+    conditionsObj,
+    mineOnly,
+    sharedMode,
+    currentUserEmail,
+    templateFilter,
+  ]);
 
   // D3: 「自分を上に」は `boost=1` で **明示** トグルされた時のみ。
   // 旧仕様の暗黙ソートは「なぜ俺の record が上にあるんだ」の問い合わせ
@@ -208,14 +247,14 @@ function RecordsContent() {
 
   return (
     <div className="space-y-4">
-      {/* フィルタバー: D3 セグメント + template chip + condition chip */}
+      {/* フィルタバー: D3 + S1 セグメント + template chip + condition chip */}
       <div className="flex items-center gap-2 flex-wrap">
-        <MineModeSegment
-          mode={mineMode}
-          onChange={handleMineModeChange}
+        <ListModeSegment
+          mode={listMode}
+          onChange={handleListModeChange}
           disabled={!currentUserEmail}
         />
-        {templateFilter && (
+        {!sharedMode && templateFilter && (
           <Button
             size="sm"
             variant="outline"
@@ -226,89 +265,121 @@ function RecordsContent() {
             <span aria-hidden>📎</span>template: {templateFilter} ×
           </Button>
         )}
-        <ConditionFilterPanel
-          filters={filters}
-          onChange={handleFiltersChange}
-          keySuggestions={keySuggestions}
-        />
+        {/* condition chip は shared mode では無効化 (backend が受けない) */}
+        {!sharedMode && (
+          <ConditionFilterPanel
+            filters={filters}
+            onChange={handleFiltersChange}
+            keySuggestions={keySuggestions}
+          />
+        )}
       </div>
 
-      {/* 件数ヘッダ */}
-      {!loading && (
-        <div className="text-xs text-muted-foreground px-1">
-          {orderedRecords.length === 0 ? (
-            "該当なし"
-          ) : hasMore ? (
-            <>
-              {orderedRecords.length}+ 件以上ヒット (
-              <strong>条件を絞り込んでください</strong>)
-            </>
-          ) : (
-            <>{orderedRecords.length} 件表示中</>
-          )}
-          {boostMine && currentUserEmail && orderedRecords.length > 0 && (
-            <span className="ml-2">· 自分の record を上に表示中</span>
-          )}
-        </div>
-      )}
-
-      {/* 数値サマリ panel (戦略案 #6 Phase A)。「現フィルタにマッチする
-          全集合 (上限 500) の n / mean / std / min / max / median」を
-          backend で計算して出す。frontend 集計だと「表示中 200 件で
-          打ち切った窓の統計」になってしまうのを構造的に防ぐ。 */}
-      <StatsPanel
-        filters={{
-          query,
-          conditions:
-            Object.keys(conditionsObj).length > 0 ? conditionsObj : undefined,
-          createdBy:
-            mineOnly && currentUserEmail ? currentUserEmail : undefined,
-          template: templateFilter || undefined,
-        }}
-        keySuggestions={keySuggestions}
-      />
-
-      {loading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-12 w-full" />
-          ))}
-        </div>
+      {sharedMode ? (
+        // S1 Phase 1B: 共有された record の一覧 (cross-team)。
+        loading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
+          </div>
+        ) : (
+          <SharedRecordsList items={sharedRecords} hasMore={hasMore} />
+        )
       ) : (
-        <SortableRecordTable
-          records={orderedRecords}
-          defaultSort="created_at"
-          currentUserEmail={currentUserEmail}
-        />
+        <>
+          {/* 件数ヘッダ */}
+          {!loading && (
+            <div className="text-xs text-muted-foreground px-1">
+              {orderedRecords.length === 0 ? (
+                "該当なし"
+              ) : hasMore ? (
+                <>
+                  {orderedRecords.length}+ 件以上ヒット (
+                  <strong>条件を絞り込んでください</strong>)
+                </>
+              ) : (
+                <>{orderedRecords.length} 件表示中</>
+              )}
+              {boostMine && currentUserEmail && orderedRecords.length > 0 && (
+                <span className="ml-2">· 自分の record を上に表示中</span>
+              )}
+            </div>
+          )}
+
+          {/* 数値サマリ panel (戦略案 #6 Phase A)。「現フィルタにマッチする
+              全集合 (上限 500) の n / mean / std / min / max / median」を
+              backend で計算して出す。frontend 集計だと「表示中 200 件で
+              打ち切った窓の統計」になってしまうのを構造的に防ぐ。 */}
+          <StatsPanel
+            filters={{
+              query,
+              conditions:
+                Object.keys(conditionsObj).length > 0 ? conditionsObj : undefined,
+              createdBy:
+                mineOnly && currentUserEmail ? currentUserEmail : undefined,
+              template: templateFilter || undefined,
+            }}
+            keySuggestions={keySuggestions}
+          />
+
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </div>
+          ) : (
+            <SortableRecordTable
+              records={orderedRecords}
+              defaultSort="created_at"
+              currentUserEmail={currentUserEmail}
+            />
+          )}
+        </>
       )}
     </div>
   );
 }
 
-// D3: [全員] [自分を上に] [自分のみ] の 3 値セグメントコントロール。
-// 暗黙ソート (旧仕様) は廃止し、「自分を上に」を明示トグル化することで
-// 「なぜ俺の record が上にあるんだ」現象を解消する。
-function MineModeSegment({
+// D3 + S1 Phase 1B: [全員] [自分を上に] [自分のみ] [共有された] の
+// 4 値セグメントコントロール。
+// - D3 (PR #81): 暗黙ソートを廃止し「自分を上に」を明示トグル化。
+// - S1 (本 PR): 「共有された」を追加し、cross-team の shared-with-me
+//   経由のリスト表示に切り替える。conditions / template / mine は
+//   shared mode では無視される (backend が受けない)。
+function ListModeSegment({
   mode,
   onChange,
   disabled,
 }: {
-  mode: "all" | "boost" | "mine";
-  onChange: (m: "all" | "boost" | "mine") => void;
+  mode: "all" | "boost" | "mine" | "shared";
+  onChange: (m: "all" | "boost" | "mine" | "shared") => void;
   disabled?: boolean;
 }) {
   const opts: Array<{
-    value: "all" | "boost" | "mine";
+    value: "all" | "boost" | "mine" | "shared";
     label: string;
     title: string;
   }> = [
-    { value: "all", label: "全員", title: "全 record をフラットに表示" },
+    { value: "all", label: "全員", title: "現 team の全 record をフラットに表示" },
     {
       value: "boost",
       label: "自分を上に",
-      title: "全 record を出すが、自分が作った record を先頭に並べる",
+      title:
+        "現 team の全 record を出すが、自分が作った record を先頭に並べる",
     },
-    { value: "mine", label: "自分のみ", title: "自分が作った record だけ表示" },
+    {
+      value: "mine",
+      label: "自分のみ",
+      title: "現 team で自分が作った record だけ表示",
+    },
+    {
+      value: "shared",
+      label: "共有された",
+      title:
+        "別 team から自分宛てに share された record (cross-team)。フィルタや条件は無視される",
+    },
   ];
   return (
     <div

@@ -28,6 +28,8 @@ import type { ConditionFilter } from "@/components/condition-filter";
 import { ConditionScatterChart } from "@/components/scatter-chart";
 import { SummaryChips } from "@/components/summary-chips";
 import { CellLogSection } from "@/components/cell-log-section";
+import { ShareDialog } from "@/components/share-dialog";
+import { useAuth } from "@/lib/auth";
 import type { NoteResponse } from "@/lib/api";
 
 const statusColor: Record<string, string> = {
@@ -318,6 +320,7 @@ function formatBytes(bytes: number): string {
 export default function RecordDetailPage() {
   const params = useParams();
   const id = params.id as string;
+  const { user, currentTeam, teams, isAdmin } = useAuth();
   const [record, setRecord] = useState<RecordDetail | null>(null);
   const [children, setChildren] = useState<RecordSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -401,6 +404,25 @@ export default function RecordDetailPage() {
             </Badge>
           </Link>
         )}
+        {/* S1 Phase 1B: 共有モーダル。read 権限があれば「共有」ボタン
+            自体は出す (中身で grant 主体判定 + 自分の role 表示)。 */}
+        <div className="ml-auto">
+          <ShareDialog
+            recordId={id}
+            createdBy={record.created_by}
+            ownerTeam={currentTeam}
+            initialShares={record.shares ?? null}
+            currentUserEmail={user?.email ?? null}
+            isSuperAdmin={isAdmin}
+            isOwnerTeamAdmin={
+              currentTeam !== null &&
+              teams.some(
+                (t) => t.team_id === currentTeam && t.role === "admin",
+              )
+            }
+            onUpdated={(shares) => setRecord({ ...record, shares })}
+          />
+        </div>
       </div>
 
       <SummaryChips
