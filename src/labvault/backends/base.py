@@ -41,6 +41,27 @@ class MetadataBackend(Protocol):
         """
         ...
 
+    def list_records_shared_with(
+        self,
+        email: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """email に共有された record を **全 team 横断** で返す (S1 / 共有機能).
+
+        従来の `list_records` は team を必須引数に取るが、共有された側のユー
+        ザーから「自分に共有された全 record」を引きたいときは team 単位で
+        分けない方が自然なので、専用の cross-team query を Protocol に置く。
+
+        Firestore 実装は `collection_group('records')` で全 team を走査し、
+        `shared_with_emails` array-contains で絞る。InMemory 実装は内部の
+        全 team 辞書を線形スキャンする。返り値の各 record dict には
+        `team` field が入っている (record 詳細を取り直す際に X-Labvault-Team
+        を組み立てるため)。
+        """
+        ...
+
     def save_cell_log(
         self, team: str, record_id: str, data: dict[str, Any]
     ) -> None: ...

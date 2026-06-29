@@ -125,6 +125,29 @@ class RecordListResponse(BaseModel):
     has_more: bool = False
 
 
+class SharedRecordSummary(RecordSummary):
+    """`/api/records/shared-with-me` の各要素。
+
+    通常の `RecordSummary` に加え:
+    - `team`: record の所有 team (X-Labvault-Team header を frontend が
+      組み立てる際に必要)
+    - `role`: 閲覧ユーザーがこの record に持つ share role
+      (``"viewer"`` または ``"analyst"``)。UI が「解析」アクションを
+      出すかどうか判定するのに使う。
+    """
+
+    team: str
+    role: str  # "viewer" | "analyst"
+
+
+class SharedRecordListResponse(BaseModel):
+    """`GET /api/records/shared-with-me` のレスポンス。"""
+
+    items: list[SharedRecordSummary]
+    total: int
+    has_more: bool = False
+
+
 class StatsBlock(BaseModel):
     """数値集合の要約統計 (`/api/records/aggregate` のサブ構造)。
 

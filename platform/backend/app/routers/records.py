@@ -34,6 +34,8 @@ from ..schemas import (
     ShareEntry,
     ShareGrantRequest,
     ShareListResponse,
+    SharedRecordListResponse,
+    SharedRecordSummary,
     StatsBlock,
     StatusUpdate,
     TagsUpdate,
@@ -464,6 +466,80 @@ def aggregate_records(
         group_by=group_by,
         groups={k: _to_block(v) for k, v in result.groups.items()},
         truncated=truncated,
+    )
+
+
+# `/{record_id}` より前に declare する (FastAPI ルーティング順)。
+@router.get("/shared-with-me", response_model=SharedRecordListResponse)
+def list_shared_with_me(
+    limit: int = 50,
+    offset: int = 0,
+    user: User = Depends(current_user),
+) -> SharedRecordListResponse:
+    """自分宛てに `shares` 経由で共有された record を **全 team 横断** で返す。
+
+    S1 Phase 1B (PR for 2026-06-29): cross-team query。`X-Labvault-Team`
+    header は受けず (自分が属さない team の record も返るため)、
+    Firestore 側で `collection_group('records')` を `shared_with_emails
+    array_contains user.email` で絞り込んで `updated_at` 降順に返す。
+
+    Frontend は items 各要素の `team` を使って `X-Labvault-Team` を組み
+    立て、record 詳細 endpoint を叩く流れ。`role` は viewer / analyst の
+    どちらが付与されているか (UI が「解析」アクションを出すか判定)。
+    """
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be >= 0")
+
+    from ..dependencies import get_shared_metadata_backend
+
+    backend = get_shared_metadata_backend()
+    email = (user.email or "").strip().lower()
+
+    with EventTimer(
+        logger,
+        "records.shared_with_me",
+        limit=limit,
+        offset=offset,
+    ) as timer:
+        # +1 件取って has_more を判定する。
+        raw = backend.list_records_shared_with(email, limit=limit + 1, offset=offset)
+        truncated = len(raw) > limit
+        if truncated:
+            raw = raw[:limit]
+
+        items: list[SharedRecordSummary] = []
+        for d in raw:
+            shares = d.get("shares") or {}
+            role = shares.get(email, "viewer") if isinstance(shares, dict) else "viewer"
+            if role not in VALID_SHARE_ROLES:
+                # 旧 / 想定外の role が保存されていても無視せず viewer 扱いで
+                # 表示する (UI 側で「未知の role」を出すより安全側)。
+                role = "viewer"
+            items.append(
+                SharedRecordSummary(
+                    id=d.get("id", ""),
+                    title=d.get("title", ""),
+                    type=d.get("type", "experiment"),
+                    status=str(d.get("status", "")),
+                    tags=list(d.get("tags") or []),
+                    created_by=d.get("created_by", "") or "",
+                    created_at=d["created_at"],
+                    updated_by=d.get("updated_by", "") or "",
+                    updated_at=d["updated_at"],
+                    parent_id=d.get("parent_id"),
+                    template_name=d.get("template"),
+                    team=d.get("team", "") or "",
+                    role=role,
+                )
+            )
+        timer.add(returned=len(items), has_more=truncated)
+
+    return SharedRecordListResponse(
+        items=items,
+        total=len(items),
+        has_more=truncated,
     )
 
 

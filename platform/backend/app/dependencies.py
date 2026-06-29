@@ -23,6 +23,8 @@ _labs: dict[str, Lab] = {}
 _labs_lock = threading.Lock()
 _firestore_db: Any | None = None
 _firestore_lock = threading.Lock()
+_shared_metadata_backend: Any | None = None
+_shared_metadata_lock = threading.Lock()
 
 
 def get_firestore_db() -> Any:
@@ -109,6 +111,45 @@ def close_lab() -> None:
             except Exception:
                 logger.exception("close lab failed")
         _labs.clear()
+
+
+def get_shared_metadata_backend() -> Any:
+    """S1 Phase 1B (shared-with-me): cross-team query 用の MetadataBackend.
+
+    通常の Lab は team を 1 つ固定するため、複数 team を横断する
+    `list_records_shared_with` のためには team に紐付かない backend
+    インスタンスが必要。本関数は Firestore client を再利用する形で
+    `FirestoreMetadataBackend` を 1 回だけ作って返す (singleton)。
+
+    Local 開発で Firestore ADC が無い場合は ``LABVAULT_DEV_SKIP_AUTH=1``
+    と組み合わせ、tests からは monkeypatch で InMemoryMetadataBackend
+    を返すように差し替えること。
+    """
+    global _shared_metadata_backend
+    with _shared_metadata_lock:
+        if _shared_metadata_backend is None:
+            from labvault.backends.firestore import FirestoreMetadataBackend
+
+            project = os.environ.get("LABVAULT_GCP_PROJECT", "")
+            database = os.environ.get("LABVAULT_FIRESTORE_DATABASE", "(default)")
+            _shared_metadata_backend = FirestoreMetadataBackend(
+                project=project, database=database
+            )
+        return _shared_metadata_backend
+
+
+def reset_shared_metadata_backend() -> bool:
+    """`get_shared_metadata_backend()` シングルトンを破棄する。
+
+    Firestore client が broken pipe 等で永続的に失敗するときの自動回復
+    パスに組み込む (`reset_firestore_db` と並列に呼ばれる想定)。
+    """
+    global _shared_metadata_backend
+    with _shared_metadata_lock:
+        if _shared_metadata_backend is None:
+            return False
+        _shared_metadata_backend = None
+        return True
 
 
 def reset_lab(team_id: str | None = None) -> int:
