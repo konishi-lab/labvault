@@ -478,6 +478,9 @@ export interface ShareLinkInfo {
   created_at: string;
   expires_at: string | null;
   revoked_at: string | null;
+  // S1-OBS9/UX5 (2026-06-29): 最終使用時刻 (auth.py で best-effort 更新)。
+  // ShareLinksPanel が「最終使用: ...」を表示して dormant token 特定に使う。
+  last_used_at: string | null;
   label: string;
   is_active: boolean;
 }

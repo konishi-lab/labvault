@@ -159,6 +159,15 @@ def _verify_share_link(token: str) -> User | None:
     if link is None or not link.is_active():
         return None
 
+    # S1-OBS9 hot-fix (2026-06-29): best-effort で last_used_at を更新。
+    # PAT の `_verify_pat` と同じパターン (ここで失敗しても auth は通す)。
+    try:
+        store.touch_last_used(token_hash, at=dt.datetime.now(dt.UTC))
+    except Exception:  # noqa: BLE001 — auth path を切らない
+        logger.warning(
+            "failed to update last_used_at for share-link", exc_info=True
+        )
+
     scope = ShareLinkScope(
         record_id=link.record_id,
         role=link.role,
@@ -347,6 +356,24 @@ def current_user(
         if raw.startswith(SHARE_LINK_PREFIX):
             link_user = _verify_share_link(raw)
             if link_user is None:
+                # S1-OBS2 hot-fix (2026-06-29): 失敗の brute-force 検出 +
+                # 監査用に WARNING で 1 行 emit。raw token は
+                # ``observability._ShareLinkTokenRedactor`` で自動マスク
+                # されるが、念のため hash prefix だけを log に乗せる。
+                import hashlib
+
+                from .observability import log_event
+
+                token_hash_prefix = hashlib.sha256(
+                    raw.encode("utf-8")
+                ).hexdigest()[:8]
+                log_event(
+                    logger,
+                    "share_link.auth_failed",
+                    level=logging.WARNING,
+                    token_hash_prefix=token_hash_prefix,
+                    reason="invalid_or_expired",
+                )
                 raise HTTPException(
                     status_code=401, detail="Invalid or expired share-link"
                 )

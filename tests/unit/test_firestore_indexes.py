@@ -94,3 +94,33 @@ def test_shared_with_emails_collection_group_index_exists() -> None:
     assert len(found) == 1, (
         f"Missing COLLECTION_GROUP composite index for shared-with-me: {expected}"
     )
+
+
+def test_shared_links_does_not_require_composite_index() -> None:
+    """S1-OBS8 hot-fix (2026-06-29): ``shared_links`` collection の query
+    パターンが composite index を要求しない構造を documented invariant 化。
+
+    現在の query (``platform/backend/app/share_links.py``):
+
+    - ``get_by_hash`` / ``revoke``:
+      ``where('token_hash','==',x).limit(1)`` — 単一 equality
+    - ``list_for_record``:
+      ``where('record_id','==',x).where('team','==',y)`` —
+      2 equality filter (no ordering)。Firestore は zigzag merge で
+      単一 field index を組合せ可能 → composite 不要
+
+    将来 ``order_by`` 追加 / range filter 追加で composite が必要になっ
+    たら、``firestore.indexes.json`` に declare + 本 test の docstring +
+    assertion を更新する (PR #74 の教訓: ``FailedPrecondition: requires
+    an index`` を本番 deploy 後に踏まないために事前固定)。
+    """
+    data = json.loads(INDEXES_PATH.read_text())
+    shared_link_indexes = [
+        idx for idx in data["indexes"] if idx.get("collectionGroup") == "shared_links"
+    ]
+    assert shared_link_indexes == [], (
+        "shared_links に composite index 宣言が出現しました。query pattern が "
+        "変わって composite が必要になった可能性があります。本 test の "
+        "docstring を更新し、新しい query 形を documented invariant として "
+        "明示してください。"
+    )

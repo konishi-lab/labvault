@@ -212,6 +212,12 @@ async def bulk_upload(
         # 出す。GeneratorExit 自身は再 raise (SSE プロトコル遵守)。
         aborted = False
         t0 = time.perf_counter()
+        # S1-OBS3 hot-fix (2026-06-29): actor + audit_source を必ず log に
+        # 入れる。share-link analyst が他チームの parent に bulk-upload した
+        # 時の audit trail が以前は user.email を欠いて断絶していた。
+        actor_audit_source = (
+            "share-link" if user.share_link_scope is not None else "firebase"
+        )
         log_event(
             logger,
             "bulk_upload.start",
@@ -220,6 +226,8 @@ async def bulk_upload(
             total_bytes=total_bytes,
             grid=f"{rows}x{cols}",
             children_count=len(children),
+            actor=user.email,
+            actor_audit_source=actor_audit_source,
         )
         try:
             for file_idx, (filename, data) in enumerate(file_data):
@@ -378,6 +386,8 @@ async def bulk_upload(
                 error_count=len(errors),
                 duration_ms=duration_ms,
                 aborted=aborted,
+                actor=user.email,
+                actor_audit_source=actor_audit_source,
             )
 
     return StreamingResponse(

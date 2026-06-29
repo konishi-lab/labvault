@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 from contextlib import AbstractContextManager
@@ -71,6 +72,57 @@ class _JsonFormatter(logging.Formatter):
 _JSON_LOGGING_INSTALLED = False
 
 
+# S1-D2 hot-fix (2026-06-29): /share/<raw token> path にある ``ls_<hex>``
+# token を application log (uvicorn access log + 自前 event log 含む) で
+# 全て ``<redacted>`` に置換する。
+#
+# Cloud Run の **platform-level access log** (GCP がリクエスト単位で
+# 自動収集する側) には影響しない — それは GCP infra が path 文字列を
+# そのまま logging し、application code から関与できない。完全な
+# 解決には URL 設計変更 (Phase D1: URL fragment 化) が必要。
+#
+# 本 filter で対処できる範囲:
+#   - uvicorn の access log line
+#   - 自前の `log_event` / WARNING / ERROR の message
+#   - exception trace
+# 対処できない範囲:
+#   - Cloud Run の HTTP request log (Cloud Logging の `requests.X` 系)
+#   - frontend が browser 履歴 / Referer に乗せる経路
+#
+# match: `ls_` 接頭辞 + 32 hex chars (share_links.py の token format)
+_SHARE_LINK_TOKEN_RE = re.compile(r"ls_[0-9a-fA-F]{32}")
+_REDACTED_TOKEN = "ls_<redacted>"
+
+
+class _ShareLinkTokenRedactor(logging.Filter):
+    """log record の message + args に含まれる ``ls_<hex>`` token を redact する。
+
+    全 logger に attach し、application log 経路 (uvicorn access log 含む)
+    での token 漏洩を構造的に防ぐ。Cloud Run 側の platform 記録には効か
+    ない (Phase D1 が必要)。
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # 大半の record は token を含まないので、まずは args/msg を文字列化
+        # せず string contains で fast-path。
+        msg_str = str(record.msg) if record.msg else ""
+        has_in_msg = "ls_" in msg_str
+        has_in_args = any("ls_" in str(a) for a in (record.args or ()))
+        if not has_in_msg and not has_in_args:
+            return True
+        if has_in_msg:
+            record.msg = _SHARE_LINK_TOKEN_RE.sub(_REDACTED_TOKEN, msg_str)
+        if has_in_args and record.args:
+            redacted_args: list[Any] = []
+            for a in record.args:
+                if isinstance(a, str) and "ls_" in a:
+                    redacted_args.append(_SHARE_LINK_TOKEN_RE.sub(_REDACTED_TOKEN, a))
+                else:
+                    redacted_args.append(a)
+            record.args = tuple(redacted_args)
+        return True
+
+
 def setup_json_logging() -> None:
     """root logger に JSON formatter 付き StreamHandler を 1 度だけ attach する。
 
@@ -104,6 +156,9 @@ def setup_json_logging() -> None:
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(_JsonFormatter())
     handler.set_name("labvault-json")
+    # S1-D2: token redaction filter を root の handler に attach。子 logger
+    # も伝播経由で経由するので、application log 全体で漏洩防止。
+    handler.addFilter(_ShareLinkTokenRedactor())
     root.addHandler(handler)
     # default は INFO (DEBUG にすると Firestore SDK が冗長すぎる)
     if root.level == logging.WARNING:
@@ -174,6 +229,41 @@ def safe_keys(keys: Any) -> list[str]:
         else:
             out.append(_REDACTED)
     return out
+
+
+def safe_email_for_log(email: str | None) -> str:
+    """S1-OBS5 hot-fix (2026-06-29): email を local 部分を 2 文字 + ``***``
+    でマスクして audit log 用に整形する。
+
+    入力 → 出力例:
+        ``alice@example.com`` → ``al***@example.com``
+        ``b@x.com`` → ``b***@x.com`` (短い local もガード)
+        ``not-an-email`` → ``<invalid-email>``
+        ``None`` / ``""`` → ``<empty>``
+
+    用途方針:
+    - **share-link 認証失敗 / brute-force 検出系**: email が攻撃ベクトル
+      になるのでこの helper で必ず wrap する
+    - **share grant / revoke / 発行系の audit event**: email 自身が audit
+      subject (誰に何を grant したか) なので **raw のまま log に乗せる**。
+      これは明示的に accepted PII で、retention policy (Cloud Logging
+      default 30 days) で十分管理可能と整理した
+    - **share-link 利用系の event** (bulk_upload など): actor の email を
+      raw で乗せる (audit 用途、grant/revoke と同じ整理)
+
+    PII を完全削除したい場合は将来的に audit subcollection に分離して
+    Cloud Logging 経由を全部 mask する別 PR (Phase F 候補) に切り出せる。
+    """
+    if not email:
+        return "<empty>"
+    if "@" not in email:
+        return "<invalid-email>"
+    local, _, domain = email.rpartition("@")
+    if not local:
+        return f"<empty-local>@{domain}"
+    if len(local) <= 2:
+        return f"{local[:1]}***@{domain}"
+    return f"{local[:2]}***@{domain}"
 
 
 class EventTimer(AbstractContextManager["EventTimer"]):

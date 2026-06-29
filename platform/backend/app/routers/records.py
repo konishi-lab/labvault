@@ -934,6 +934,7 @@ def _link_to_info(link: Any) -> ShareLinkInfo:
         created_at=link.created_at,
         expires_at=link.expires_at,
         revoked_at=link.revoked_at,
+        last_used_at=getattr(link, "last_used_at", None),
         label=link.label,
         is_active=link.is_active(),
     )
@@ -1093,6 +1094,7 @@ def issue_record_share_link(
         created_at=info.created_at,
         expires_at=info.expires_at,
         revoked_at=info.revoked_at,
+        last_used_at=info.last_used_at,
         label=info.label,
         is_active=info.is_active,
     )
