@@ -559,9 +559,11 @@ export async function revokeShareLink(
   }
 }
 
-// 公開 ``/share/{token}`` ページ用: token を Authorization に詰めて
-// 自身の scope を取得する。`authFetch` は使わず raw fetch (Firebase
-// auth 経路を bypass)。
+// 公開 ``/share/<record_id>#<token>`` ページ用: fragment から取り出した
+// token を Authorization header に詰めて自身の scope を取得する。
+// `authFetch` は使わず raw fetch (Firebase auth 経路を bypass)。
+// Phase D1 (2026-06-30): URL fragment 化に伴い旧 ``/share/<token>`` 形式
+// は client-side で新形式に redirect。本関数の入出力は変わらない。
 export async function fetchShareLinkScope(
   token: string,
 ): Promise<ShareLinkScopeMe> {

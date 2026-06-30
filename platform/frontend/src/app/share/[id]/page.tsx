@@ -1,16 +1,29 @@
 "use client";
 
-// S1 Phase 2B: ``/share/{token}`` 公開ページ。
+// S1 Phase 2B + Phase D1: ``/share/<record_id>#<token>`` 公開ページ。
 //
-// Firebase アカウントを持たない外部協力者向け。token を URL から取り出し、
-// `Authorization: Bearer ls_<hex>` で API を叩く。AuthGate は /share/* を
-// skip するので、Firebase ログイン状態に関係なく開ける。
+// Firebase アカウントを持たない外部協力者向け。
+//
+// **D1 (2026-06-30)**: token は URL fragment (``#``) に移動。
+// fragment はブラウザがサーバに送らないため、Cloud Run platform request
+// log や Referer header への token 漏洩を絶てる (Phase 2B 当初の
+// ``/share/<token>`` 形式は OBS1/API1 で指摘されていた)。
+//
+// 旧 ``/share/<token>`` (= path に token を含む形) でアクセスされた場合は
+// client-side で ``/share/<record_id>#<token>`` に redirect する
+// (parseShareUrl の ``kind="migrate"`` 分岐)。redirect は ``location.
+// replace`` で行うので、ブラウザ履歴の旧 URL も上書きされる。ただし
+// redirect 元の HTTP request は一度 Cloud Run log に残るため、移行
+// 期間中の旧 URL 通知は最小化する。
 //
 // 流れ:
-// 1. URL の token で `/api/share-links/me` を叩いて scope (record_id /
-//    team / role / pseudo identity) を取得
-// 2. 同じ token で `/api/records/{record_id}` を叩いて record 詳細を表示
-// 3. analyst なら、簡易な「ファイル upload」フォームを出す
+// 1. URL の (path id, fragment) を parseShareUrl で 3 分岐
+//    a. ``new`` → path id を record_id、fragment を token として
+//       ``/api/share-links/me`` で scope を verify、record 詳細を fetch
+//    b. ``migrate`` → path id を token として scope を fetch、新 URL に
+//       ``location.replace``
+//    c. ``invalid`` → エラーメッセージ表示
+// 2. analyst なら、簡易な「ファイル upload」フォームを出す
 //    (子 record 作成は MVP では省略 — SDK 経由で実施)
 
 import { useEffect, useState } from "react";
@@ -31,6 +44,7 @@ import {
   type RecordDetail,
   type ShareLinkScopeMe,
 } from "@/lib/api";
+import { buildShareUrl, parseShareUrl } from "./parse-share-url";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -52,31 +66,93 @@ function formatBytes(bytes: number): string {
 
 export default function SharePage() {
   const params = useParams();
-  const token = (params.token as string) || "";
+  const pathId = (params.id as string) || "";
 
+  // S1 Phase D1: token は path ではなく fragment (#) から読む。
+  // useParams は SSR 時の空文字 → mount 時の値という遷移をするので、
+  // hash の読み取りも useEffect 内 (= client-only) に置く。
+  const [token, setToken] = useState<string | null>(null);
   const [scope, setScope] = useState<ShareLinkScopeMe | null>(null);
   const [record, setRecord] = useState<RecordDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [migrating, setMigrating] = useState(false);
 
   useEffect(() => {
-    if (!token) {
-      setError("token が指定されていません");
+    if (!pathId) {
+      // useParams 初回値 (SSR 時) は空 — 次の render を待つ
+      return;
+    }
+    const hash =
+      typeof window === "undefined"
+        ? ""
+        : window.location.hash.replace(/^#/, "");
+    const parsed = parseShareUrl({ pathId, hash });
+
+    if (parsed.kind === "invalid") {
+      setError(parsed.reason);
       setLoading(false);
       return;
     }
+
+    if (parsed.kind === "migrate") {
+      // 旧 /share/<token> → /share/<record_id>#<token> に付け替える。
+      // scope を取って record_id を引き、location.replace で新 URL に。
+      setMigrating(true);
+      setLoading(true);
+      (async () => {
+        try {
+          const s = await fetchShareLinkScope(parsed.token);
+          const next = buildShareUrl({
+            origin: window.location.origin,
+            recordId: s.record_id,
+            token: parsed.token,
+          });
+          window.location.replace(next);
+          // 以降は新 URL での再 mount を待つ。state は触らない。
+        } catch (e) {
+          const msg = (e as Error).message;
+          setMigrating(false);
+          setLoading(false);
+          if (msg.includes("401")) {
+            setError(
+              "この token は無効または期限切れです。link を発行した方に再発行を依頼してください。",
+            );
+          } else {
+            setError(msg);
+          }
+        }
+      })();
+      return;
+    }
+
+    // kind === "new"
+    const t = parsed.token;
+    setToken(t);
     let cancelled = false;
     setLoading(true);
     setError(null);
     (async () => {
       try {
-        // 1. scope (record_id) を解決
-        const s = await fetchShareLinkScope(token);
+        // 1. scope (record_id) を解決して URL 整合性を verify
+        const s = await fetchShareLinkScope(t);
         if (cancelled) return;
+        if (s.record_id !== parsed.recordId) {
+          // URL の record_id と token の scope が不一致。token を信用し
+          // て新 URL に書き換えてやり直す (シェア URL の手打ち破損想定)。
+          window.location.replace(
+            buildShareUrl({
+              origin: window.location.origin,
+              recordId: s.record_id,
+              token: t,
+            }),
+          );
+          return;
+        }
         setScope(s);
         // 2. record 詳細を fetch (同じ token で Authorization)
         const res = await shareTokenFetch(
-          token,
+          t,
           `${API_BASE}/api/records/${s.record_id}`,
           { headers: { "X-Labvault-Team": s.team } },
         );
@@ -107,11 +183,16 @@ export default function SharePage() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [pathId]);
 
-  if (loading) {
+  if (loading || migrating) {
     return (
       <div className="mx-auto max-w-3xl space-y-4 p-6">
+        {migrating && (
+          <p className="text-xs text-muted-foreground">
+            旧 URL を新形式に書き換えています…
+          </p>
+        )}
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-32 w-full" />
       </div>
@@ -129,7 +210,7 @@ export default function SharePage() {
     );
   }
 
-  if (!scope || !record) {
+  if (!scope || !record || !token) {
     return null;
   }
 

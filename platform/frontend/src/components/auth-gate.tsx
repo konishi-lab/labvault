@@ -14,10 +14,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
     useAuth();
   const pathname = usePathname();
 
-  // S1 Phase 2B: ``/share/<token>`` 公開ページは Firebase 認証ガード
-  // 自体を bypass する (token そのものが auth)。AuthProvider は外側に
-  // 残るが、share ページは ``useAuth()`` を呼ばず、token を直接
-  // Authorization header に詰めて API を叩く (share-api.ts 参照)。
+  // S1 Phase 2B + D1: ``/share/<record_id>#<token>`` 公開ページは
+  // Firebase 認証ガード自体を bypass する (token そのものが auth)。
+  // AuthProvider は外側に残るが、share ページは ``useAuth()`` を呼ばず、
+  // token を直接 Authorization header に詰めて API を叩く (api.ts の
+  // shareTokenFetch 参照)。token は URL fragment にあり Cloud Run log
+  // に残らない。
   const isPublicSharePath = pathname?.startsWith("/share/") ?? false;
 
   // api.ts 側に token / team 取得関数を渡す。user 切替時に最新を反映。
