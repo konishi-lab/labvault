@@ -48,6 +48,7 @@ import {
   findActiveLinkForEmail,
   validateExpiresDays,
 } from "./share-dialog-helpers";
+import { buildShareUrl } from "@/app/share/[id]/parse-share-url";
 
 interface ShareDialogProps {
   recordId: string;
@@ -572,7 +573,16 @@ function ShareLinksPanel({
 
   const handleCopyUrl = async () => {
     if (!justIssued) return;
-    const url = `${window.location.origin}/share/${justIssued.token}`;
+    // S1 Phase D1 (2026-06-30): token を URL fragment (#) に配置することで
+    // Cloud Run platform request log と Referer header への漏洩を絶つ。
+    // share-link page は path id を record_id、fragment を token として
+    // 解釈する。旧形式 ``/share/<token>`` も client-side で新形式に
+    // redirect する後方互換あり。
+    const url = buildShareUrl({
+      origin: window.location.origin,
+      recordId,
+      token: justIssued.token,
+    });
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -638,7 +648,7 @@ function ShareLinksPanel({
               variant="outline"
               onClick={handleCopyUrl}
             >
-              {copied ? "✓ コピー" : "共有 URL (/share/...) をコピー"}
+              {copied ? "✓ コピー" : "共有 URL をコピー"}
             </Button>
             <Button
               type="button"

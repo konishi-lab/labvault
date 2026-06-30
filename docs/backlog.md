@@ -3,26 +3,45 @@
 「次に着手する候補」を優先度別に並べたキュー。完了したら `multitenant_next_steps.md` /
 `design/v10/05_milestones.md` の該当エントリにも反映する。
 
-最終更新: 2026-06-29 夜 (S1 全 6 PR 着地 + agent teams レビュー hot-fix 10 PR 着地、critical 1 + high 8 + medium 19 = 28 件全完了)
+最終更新: 2026-06-30 朝 (PR #100 TEST15 + PR #101 D1 着地、S1 残作業のうち URL token 漏洩 critical を完全解決)
 
 ---
 
-## 📌 次着手予定 (2026-06-30 朝)
+## 📌 次着手予定 (2026-06-30 以降)
 
-S1 共有機能の review 由来 hot-fix が **28 件全完了**。次の判断ポイントは
-以下の 3 つから選択:
+- **戦略案 #6 Phase B (scatter on /records)** — 差別化機能、roadmap 主軸。
+  既存 ConditionScatterChart を流用 + `/api/records/fields` 一括 fetch。
+  1〜2 週間規模。
+- **CQ7** (share-dialog.tsx 829 行を 2 file に分割) や **CQ14** (重複 helper
+  集約) などの低優先 refactor が積み残し。Phase B 着手前にやるか、Phase B
+  作業と並行 / 後ろ倒しか要判断。
 
-1. **Phase D1 (URL token を URL fragment 化)** — OBS1 完全解決。設計変更
-   レベル、frontend route + backend handler 同時改修。要設計検討。
-2. **戦略案 #6 Phase B (scatter on /records)** — 差別化機能、roadmap 主軸。
-   既存 ConditionScatterChart を流用 + `/api/records/fields` 一括 fetch。
-   1〜2 週間規模。
-3. **TEST15 (frontend integration test 基盤導入)** — vitest +
-   @testing-library を入れて share-dialog / shared-records-list / public
-   share page の test を整備。1〜2 日。
+---
 
-おすすめ順: **3 (test 基盤) → 1 (D1) → 2 (Phase B 進行)** で「足固め →
-URL token 設計修正 → 戦略機能着手」の順。
+## ✅ Phase D1 完了 (2026-06-30、PR #101)
+
+URL token (`/share/<token>`) の **Cloud Run platform log + Referer 漏洩**を
+URL 設計変更で根本解消:
+
+- `/share/<token>` → `/share/<record_id>#<token>` に移行。fragment は
+  ブラウザがサーバに送らないため Cloud Run log に残らない。
+- 旧 URL でアクセスされた場合は client-side で `location.replace` により
+  新 URL に付け替え (ブラウザ履歴も上書き)。
+- 新規 helper: `parseShareUrl` / `buildShareUrl` (テスト 10 件)。
+- share-dialog の発行 URL も新形式に。50 tests / tsc / build 全 clean。
+
+---
+
+## ✅ TEST15 完了 (2026-06-30、PR #100)
+
+frontend integration test 基盤導入 + 主要 4 file をカバー。詳細:
+
+- vitest 3.2 + RTL + jest-dom + jsdom + user-event を導入
+- vitest.config.ts / setup / tsconfig types / package scripts / CI step 追加
+- 40 tests / 4 file (utils / share-dialog-helpers / shared-records-list /
+  api fetch wrapper)
+- side effect: share-dialog の pure logic を `share-dialog-helpers.ts`
+  に分離 (test 可能化)
 
 ---
 
@@ -91,11 +110,11 @@ confirmed**。重要度別の対応状況:
 - 他 design consistency / a11y / observability 微調整 ~18 件、詳細はレビュー
   output: `/private/tmp/.../wf9xj8afd.output`
 
-### ⚠️ 未対応 critical 残 1 件
+### ⚠️ 未対応 critical 残 → ✅ **済 (PR #101 / Phase D1)**
 
 - **OBS1 / API1** (URL token 漏洩): 部分対処 (D2 で application log 内
-  redact 済) だが、Cloud Run の platform request log と Referer header
-  への漏洩は **URL 設計変更が必要** で別 PR (Phase D1) に分離。
+  redact 済) + **PR #101 で URL fragment 化により platform log /
+  Referer 経路も解決**。残課題 0 件。
 
 ### ✋ 反証された (false positive) 18 件 — 主なもの
 
