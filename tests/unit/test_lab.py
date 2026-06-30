@@ -111,6 +111,40 @@ class TestLabList:
         assert len(offset_recs) == 3
         assert offset_recs[0].id == all_recs[2].id
 
+    def test_list_parent_id_root_only(self, lab: Lab) -> None:
+        """C2: parent_id=None で root record のみを返す。"""
+        parent = lab.new("parent")
+        parent.sub("child-1")
+        parent.sub("child-2")
+        lab.new("other-root")
+
+        root_only = lab.list(parent_id=None)
+        ids = {r.id for r in root_only}
+        assert parent.id in ids
+        assert len(ids) == 2  # parent + other-root
+        # 子は含まれていない
+        assert all(r.parent_id is None for r in root_only)
+
+    def test_list_parent_id_specific(self, lab: Lab) -> None:
+        """C2: parent_id='X' で X 直下の子のみを返す。"""
+        parent = lab.new("parent")
+        c1 = parent.sub("child-1")
+        c2 = parent.sub("child-2")
+        lab.new("other-root")  # 関係ない root
+
+        children = lab.list(parent_id=parent.id)
+        ids = {r.id for r in children}
+        assert ids == {c1.id, c2.id}
+
+    def test_list_parent_id_unset_returns_all(self, lab: Lab) -> None:
+        """C2: parent_id='__unset__' (default) は全件 (フィルタなし)。"""
+        parent = lab.new("parent")
+        parent.sub("child")
+        # default なので parent_id 指定なし
+        all_recs = lab.list()
+        ids = {r.id for r in all_recs}
+        assert len(ids) >= 2  # parent + child の両方
+
 
 class TestLabRecent:
     """Lab.recent のテスト。"""
@@ -349,3 +383,85 @@ class TestLabContextManager:
         with Lab("test") as lab:
             rec = lab.new("テスト")
             assert rec.title == "テスト"
+
+
+class TestLabPublicAPI:
+    """C2 (2026-06-30): C2 で public 化した API の smoke test。"""
+
+    def test_team_property(self, lab: Lab) -> None:
+        """Lab.team は public な team_id getter。"""
+        # conftest の lab fixture が team="test-team" で構築している前提。
+        assert lab.team == "test-team"
+
+    def test_backend_property_returns_metadata(self, lab: Lab) -> None:
+        """Lab.backend は MetadataBackend Protocol を返す (admin escape hatch)。"""
+        from labvault.backends.memory import InMemoryMetadataBackend
+
+        assert isinstance(lab.backend, InMemoryMetadataBackend)
+        # Protocol method が呼べる (raw access)
+        rec = lab.new("t")
+        raw = lab.backend.get_record(lab.team, rec.id)
+        assert raw is not None
+        assert raw["id"] == rec.id
+
+    def test_get_cell_logs_empty(self, lab: Lab) -> None:
+        """cell log 未保存の record では空 list を返す。"""
+        rec = lab.new("t")
+        assert lab.get_cell_logs(rec.id) == []
+
+    def test_save_and_get_cell_logs(self, lab: Lab) -> None:
+        """save_cell_log → get_cell_logs roundtrip。"""
+        rec = lab.new("t")
+        lab.save_cell_log(
+            rec.id,
+            {"cell_id": "c1", "cell_number": 1, "code": "print(1)"},
+        )
+        lab.save_cell_log(
+            rec.id,
+            {"cell_id": "c2", "cell_number": 2, "code": "print(2)"},
+        )
+        logs = lab.get_cell_logs(rec.id)
+        assert len(logs) == 2
+        assert [log["cell_number"] for log in logs] == [1, 2]
+
+
+class TestNoPrivateAccessInvariant:
+    """C2 invariant: 外部モジュールから lab._team / lab._metadata を触らない。
+
+    SDK の `core/lab.py` と `core/record.py` 自身 (= tight-coupled な対の
+    実装) と CLI の help テキスト以外で、``lab._team`` / ``lab._metadata``
+    を検出したら fail。リグレッション防止 (= 「ちょっと書いてしまえ」を
+    防ぐ)。
+    """
+
+    def test_no_external_private_access(self) -> None:
+        import re
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        targets = [
+            repo_root / "src" / "labvault",
+            repo_root / "platform" / "backend" / "app",
+        ]
+        allowed = {
+            repo_root / "src" / "labvault" / "core" / "lab.py",
+            repo_root / "src" / "labvault" / "core" / "record.py",
+        }
+
+        pattern = re.compile(r"\blab\._(team|metadata)\b")
+        offenders: list[str] = []
+        for root in targets:
+            for path in root.rglob("*.py"):
+                if path in allowed:
+                    continue
+                text = path.read_text(encoding="utf-8")
+                for lineno, line in enumerate(text.splitlines(), 1):
+                    if pattern.search(line):
+                        rel = path.relative_to(repo_root)
+                        offenders.append(f"{rel}:{lineno}: {line.strip()}")
+
+        assert not offenders, (
+            "外部モジュールが lab._team / lab._metadata を直接参照しています。"
+            " lab.team / lab.backend / lab.list(parent_id=...) 等の public API を"
+            " 使ってください (C2 規約):\n  - " + "\n  - ".join(offenders)
+        )

@@ -7,6 +7,7 @@ import datetime as _dt
 from datetime import datetime
 from typing import Any
 
+from labvault.backends.base import MetadataBackend
 from labvault.backends.memory import (
     InMemoryMetadataBackend,
     InMemorySearchBackend,
@@ -76,7 +77,11 @@ class Lab:
         # これにより装置 PC/CI など GCP ADC が使えない環境でも SDK が動作する。
         # 個別 backend が明示指定されていれば常にそれを優先 (テスト互換)。
         platform_client = _build_platform_client(settings)
-        self._metadata = metadata_backend or _auto_metadata(settings, platform_client)
+        # C2 (2026-06-30): Protocol typed にすることで Lab.backend property の
+        # 戻り値型推論を強化 (mypy の no-any-return 解消)。
+        self._metadata: MetadataBackend = metadata_backend or _auto_metadata(
+            settings, platform_client
+        )
         self._storage = storage_backend or _auto_storage(
             settings, platform_client, team=self._team
         )
@@ -318,15 +323,21 @@ class Lab:
         status: str | Status | None = None,
         type: str | RecordType | None = None,
         created_by: str | None = None,
+        parent_id: str | None | object = "__unset__",
         conditions: dict[str, Any] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> builtins.list[Record]:
         """レコード一覧を取得する。
 
-        conditions は scalar の等値フィルタのみサポート。indexed_fields に
-        挙がっている key は Firestore に push down される (`idx_<key>` で
-        where filter)。dict 値や indexed でない key は post-filter。
+        Args:
+            parent_id: 親 record id で絞り込む。``"__unset__"`` sentinel は
+                フィルタ無し (全レコード)、``None`` は root only (親無し)。
+                Backend Protocol の `list_records(parent_id=)` にそのまま
+                pass-through する。
+            conditions: scalar の等値フィルタ。indexed_fields に挙がっている
+                key は Firestore に push down される (`idx_<key>` で where
+                filter)。dict 値や indexed でない key は post-filter。
         """
         status_str = str(status) if status else None
         type_str = str(type) if type else None
@@ -359,6 +370,7 @@ class Lab:
             status=status_str,
             record_type=type_str,
             created_by=created_by,
+            parent_id=parent_id,
             conditions=push_down,
             limit=fetch_limit,
             offset=offset,
@@ -535,6 +547,38 @@ class Lab:
     def team(self) -> str:
         """この Lab が紐付いている team_id。"""
         return self._team
+
+    @property
+    def backend(self) -> MetadataBackend:
+        """metadata backend を Protocol typed で返す (admin / raw access 用)。
+
+        通常の record CRUD は ``Lab.get`` / ``Lab.list`` / ``Lab.new`` 等の
+        public API を使うこと。``Lab.backend`` は ``platform/backend/routers
+        /metadata.py`` のような「Protocol を 1:1 で晒す admin endpoint」
+        専用の escape hatch。private な ``_metadata`` を直接参照するより
+        意図 (= raw access していることが明示) が伝わる。
+        """
+        return self._metadata
+
+    def get_cell_logs(
+        self, record_id: str, *, limit: int = 100
+    ) -> builtins.list[dict[str, Any]]:
+        """record に紐付く cell log の一覧を取得する (cell_number 昇順)。
+
+        Protocol の ``MetadataBackend.get_cell_logs`` を team 引数を埋めて
+        薄く wrap するだけ。SDK / platform 両者がこの public 経路を使う
+        ことで private ``_metadata`` 参照を避ける (C2)。
+        """
+        return self._metadata.get_cell_logs(self._team, record_id, limit=limit)
+
+    def save_cell_log(self, record_id: str, data: dict[str, Any]) -> None:
+        """cell log を保存する。
+
+        Notebook hooks (``tracking.CellTracker``) からの呼び出し向け薄
+        ラッパ。``data`` は ``CellLog._to_dict()`` 等の dict (`cell_id` /
+        `cell_number` / `code` / `executed_at` / `error` etc.)。
+        """
+        self._metadata.save_cell_log(self._team, record_id, data)
 
     @property
     def sync_status(self) -> dict[str, Any]:

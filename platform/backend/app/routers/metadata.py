@@ -5,6 +5,10 @@ PlatformMetadataBackend (PAT 認証で動く SDK) からの呼び出しを受け
 をそのまま JSON 化する。Web UI 向けの整形済 ``/api/records/...`` とは別系統。
 
 team は ``X-Labvault-Team`` header から取る (current_team が解決)。
+
+C2 (2026-06-30): backend Protocol を 1:1 で晒す admin layer なので
+``Lab.backend`` (Protocol typed escape hatch) を使う。通常の Web 経路は
+``Lab.get`` / ``Lab.list`` 等の public API を使うこと。
 """
 
 from __future__ import annotations
@@ -98,7 +102,7 @@ def get_record(
     team: str = Depends(current_team),
 ) -> dict[str, Any]:
     """単一レコードの生 dict を返す。soft delete 済は 404。"""
-    data = lab._metadata.get_record(team, record_id)
+    data = lab.backend.get_record(team, record_id)
     if data is None:
         raise HTTPException(status_code=404, detail="record not found")
     return _jsonable(data)
@@ -131,7 +135,7 @@ def list_records(
         pid = parent_id
     else:
         pid = "__unset__"  # MetadataBackend の sentinel: フィルタなし
-    rows = lab._metadata.list_records(
+    rows = lab.backend.list_records(
         team,
         tags=tag_list,
         status=status,
@@ -153,7 +157,7 @@ def get_cell_logs(
 ) -> list[dict[str, Any]]:
     """セルログ一覧の生 dict 配列。cell_number 昇順。"""
     return [
-        _jsonable(r) for r in lab._metadata.get_cell_logs(team, record_id, limit=limit)
+        _jsonable(r) for r in lab.backend.get_cell_logs(team, record_id, limit=limit)
     ]
 
 
@@ -164,7 +168,7 @@ def get_template(
     team: str = Depends(current_team),
 ) -> dict[str, Any]:
     """テンプレートの生 dict。未存在は 404。"""
-    data = lab._metadata.get_template(team, name)
+    data = lab.backend.get_template(team, name)
     if data is None:
         raise HTTPException(status_code=404, detail="template not found")
     return _jsonable(data)
@@ -176,7 +180,7 @@ def list_templates(
     team: str = Depends(current_team),
 ) -> list[dict[str, Any]]:
     """テンプレート一覧の生 dict 配列。"""
-    return [_jsonable(t) for t in lab._metadata.list_templates(team)]
+    return [_jsonable(t) for t in lab.backend.list_templates(team)]
 
 
 # --- Write endpoints (Phase 3) ---
@@ -195,7 +199,7 @@ def create_record(
     if not body.get("id"):
         raise HTTPException(status_code=400, detail="body.id required")
     data = _restore_datetimes(body)
-    lab._metadata.create_record(team, data)
+    lab.backend.create_record(team, data)
     return Response(status_code=201)
 
 
@@ -208,7 +212,7 @@ def update_record(
 ) -> Response:
     """レコードを部分更新する (set with merge)。"""
     data = _restore_datetimes(body)
-    lab._metadata.update_record(team, record_id, data)
+    lab.backend.update_record(team, record_id, data)
     return Response(status_code=204)
 
 
@@ -219,7 +223,7 @@ def delete_record(
     team: str = Depends(current_team),
 ) -> Response:
     """レコードを物理削除する (soft delete は update_record で deleted_at を設定する別経路)."""
-    lab._metadata.delete_record(team, record_id)
+    lab.backend.delete_record(team, record_id)
     return Response(status_code=204)
 
 
@@ -236,7 +240,7 @@ def save_cell_log(
     既にあれば上書き (set)。
     """
     data = _restore_datetimes(body)
-    lab._metadata.save_cell_log(team, record_id, data)
+    lab.backend.save_cell_log(team, record_id, data)
     # save_cell_log は data を mutate して cell_id を埋めるので、それを返す
     return {"cell_id": data.get("cell_id", "")}
 
@@ -250,7 +254,7 @@ def save_template(
 ) -> Response:
     """テンプレートを upsert する。"""
     data = _restore_datetimes(body)
-    lab._metadata.save_template(team, name, data)
+    lab.backend.save_template(team, name, data)
     return Response(status_code=204)
 
 

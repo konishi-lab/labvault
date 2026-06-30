@@ -784,9 +784,8 @@ class Record:
         """
         if self._lab is None:
             return []
-        return list(
-            self._lab._metadata.get_cell_logs(self._team, self._id, limit=limit)
-        )
+        # C2 (2026-06-30): Lab.get_cell_logs 経由で _metadata 直叩きを回避。
+        return list(self._lab.get_cell_logs(self._id, limit=limit))
 
     # --- 解析 ---
 

@@ -26,6 +26,7 @@ class MetadataBackend(Protocol):
         status: str | None = None,
         record_type: str | None = None,
         created_by: str | None = None,
+        parent_id: str | None | object = "__unset__",
         conditions: dict[str, Any] | None = None,
         limit: int = 100,
         offset: int = 0,
@@ -33,6 +34,10 @@ class MetadataBackend(Protocol):
         """レコード一覧を取得する。
 
         Args:
+            parent_id: 親 record id で絞り込む。``"__unset__"`` sentinel は
+                「フィルタ無し」(全レコード)、``None`` は「root only」(親が
+                無い record だけ) を意味する。InMemory / Firestore 両実装が
+                この sentinel パターンに従う。
             conditions: top-level field の等値フィルタ (key → value)。
                 呼び出し側 (Lab.search / Lab.list) が `idx_<key>` の prefix を
                 付けて渡すことで、template の indexed_fields を Firestore の

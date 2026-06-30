@@ -81,8 +81,8 @@ def generate_grid_mapping(
 
 
 def _get_children_sorted(lab: Lab, record_id: str) -> list[Record]:
-    rows = lab._metadata.list_records(lab._team, parent_id=record_id, limit=2000)
-    children = [Record._from_dict(r, lab=lab) for r in rows]
+    # C2 (2026-06-30): lab.list(parent_id=...) で push-down。旧 _metadata 直叩き廃止。
+    children = lab.list(parent_id=record_id, limit=2000)
     return sorted(children, key=lambda c: _natural_sort_key(c.title))
 
 

@@ -172,10 +172,7 @@ class CellTracker:
         }
 
         try:
-            self._lab._metadata.save_cell_log(
-                self._record.team,
-                self._record.id,
-                cell_log,
-            )
+            # C2 (2026-06-30): Lab.save_cell_log 経由で private _metadata を回避。
+            self._lab.save_cell_log(self._record.id, cell_log)
         except Exception:
             logger.exception("Failed to save cell log")
