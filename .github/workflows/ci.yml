@@ -48,6 +48,12 @@ jobs:
         run: npm ci
       - working-directory: platform/frontend
         run: npx tsc --noEmit
+      # S1 TEST15 (2026-06-30): vitest unit/integration tests。
+      # jsdom + RTL なので NEXT_PUBLIC_* は不要だが、import 経路で
+      # firebase の env を要求するモジュールに引っかかる場合に備えて
+      # build と同じ dummy を渡しておく (現状は不要)。
+      - working-directory: platform/frontend
+        run: npm run test:run
       - working-directory: platform/frontend
         # NEXT_PUBLIC_* は build-time に inline される。CI では実値が不要なので
         # dummy で埋める (Firebase の runtime 接続は CI では行わない)。

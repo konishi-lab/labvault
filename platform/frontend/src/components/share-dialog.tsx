@@ -43,6 +43,11 @@ import {
   type ShareLinkInfo,
   type ShareRole,
 } from "@/lib/api";
+import {
+  canGrant as computeCanGrant,
+  findActiveLinkForEmail,
+  validateExpiresDays,
+} from "./share-dialog-helpers";
 
 interface ShareDialogProps {
   recordId: string;
@@ -99,14 +104,16 @@ export function ShareDialog({
   // 罠を構造的に防ぐ。
   const [justIssued, setJustIssued] = useState<CreatedShareLink | null>(null);
 
-  // grant 主体判定 (frontend 側で先回り)。backend の `can_grant` と一致:
+  // S1 TEST15 (2026-06-30): pure logic は share-dialog-helpers に切出し、
+  // unit test 可能にしている。backend の ``can_grant`` と一致:
   // super_admin OR record.created_by 本人 OR owner team の admin。
-  // shares 経由でアクセスしている user は再 grant 不可 (= ここで false)。
-  const canGrant =
-    isSuperAdmin ||
-    (currentUserEmail !== null &&
-      createdBy.toLowerCase() === currentUserEmail.toLowerCase()) ||
-    (ownerTeam !== null && isOwnerTeamAdmin);
+  const canGrant = computeCanGrant({
+    isSuperAdmin,
+    currentUserEmail,
+    createdBy,
+    ownerTeam,
+    isOwnerTeamAdmin,
+  });
 
   // initialShares (詳細 fetch 時のキャッシュ) があればそれを起点に出す。
   // ダイアログを開いたタイミングで backend から最新を取り直す (race 対策)。
@@ -459,25 +466,19 @@ function ShareLinksPanel({
       setError("有効な pseudo email を入力してください (audit 用 identity)");
       return;
     }
-    // S1-UX10 hot-fix (2026-06-29): 空欄を弾く。空文字 → Number('')==0 →
-    // 無期限 token と扱われてしまい、365 日上限の意図に反する。
-    const expiresRaw = expiresDays.trim();
-    if (!expiresRaw) {
-      setError("有効期限を入力してください (無期限なら 0 を明示的に)");
+    // S1-UX10 hot-fix (2026-06-29): 空欄を弾く / 範囲チェック。
+    // S1 TEST15 (2026-06-30): pure logic は share-dialog-helpers 側に集約。
+    const validated = validateExpiresDays(expiresDays);
+    if (!validated.ok) {
+      setError(validated.error);
       return;
     }
-    const days = Number(expiresRaw);
-    if (!Number.isInteger(days) || days < 0 || days > 365) {
-      setError("有効期限は 0〜365 日で指定してください (0 = 無期限)");
-      return;
-    }
+    const days = validated.days;
     // S1-UX4 hot-fix (2026-06-29): 同じ pseudo_email で active token が
     // 既に存在する → 確認ダイアログ。何度も発行すると相手側に複数 token
     // (古い方も active のまま) が残り、片方 revoke しても別経路が残る
     // 運用事故を防ぐ。
-    const existing = links.find(
-      (l) => l.is_active && l.pseudo_email.toLowerCase() === email,
-    );
+    const existing = findActiveLinkForEmail(links, email);
     if (existing) {
       const ok = confirm(
         `${email} には既に active な token が存在します ` +
