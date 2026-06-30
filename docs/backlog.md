@@ -278,14 +278,26 @@ backend レビュー独自の指摘。今すぐ落ちないが、本番安定性
 を delegate に書き換えた。これで PR #74 の A2 のような「ガード仕様の
 3 重実装ズレ」が構造的に再発しない。tests +19 (SDK 612→631)。
 
-### C2. `Lab.list()` の API 拡張で `_metadata` 直アクセス撤廃
-**規模**: 2 日
+### C2. `Lab.list()` の API 拡張で `_metadata` 直アクセス撤廃 ✅ **済 (PR #102)**
 
-`records.py:171, 336, 466, 502` で `hasattr(lab._metadata, "list_records")`
-分岐があり、Backend Protocol を逆参照している。`Lab.list(parent_id=...,
-parent_id_unset=False, conditions=..., created_by=...)` を SDK 側に
-昇格し、backend は `lab.list()` だけを使う形に。同時に `lab._team` →
-`lab.team` プロパティ化 (30+ 箇所)。
+外部モジュールから ``lab._team`` / ``lab._metadata`` を触っていた 40 箇所
+を public API 経由に置換:
+
+- ``Lab.list(parent_id=, ...)`` に ``parent_id`` 引数を追加
+  (sentinel ``"__unset__"``: フィルタ無し / ``None``: root only)
+- ``Lab.get_cell_logs(record_id, limit)`` / ``Lab.save_cell_log(record_id,
+  data)`` を public 化
+- ``Lab.backend`` property (Protocol typed) を admin escape hatch として追加
+  → ``platform/backend/routers/metadata.py`` (Protocol 1:1 admin) 用
+- ``Lab.team`` は既存だったので使用に切替 (15+ 箇所)
+- ``hasattr(lab._metadata, "list_records")`` 分岐を 4 箇所削除 (全 backend
+  が実装している guard 不要だった)
+- Backend Protocol の ``list_records`` 署名に ``parent_id`` を追加
+  (memory/firestore は既に対応済、Protocol だけ追従)
+- リグレッション防止: ``TestNoPrivateAccessInvariant`` で ``lab._team`` /
+  ``lab._metadata`` の外部使用を ast scan で 0 件 invariant 化
+
+tests +8 (SDK 643→651)、ruff/format/mypy/frontend tsc 全 clean。
 
 ### C3. observability (structured log) 投入 ✅ **済 (PR #79)**
 

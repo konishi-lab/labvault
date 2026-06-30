@@ -404,7 +404,7 @@ def doctor() -> None:
     if issues == 0 and not hints:
         hints.append(
             '動作確認: `python -c "from labvault import Lab; '
-            'lab = Lab(); print(type(lab._metadata).__name__)"`'
+            'lab = Lab(); print(type(lab.backend).__name__)"`'
         )
 
     if hints:
@@ -533,11 +533,15 @@ def check_results(limit: int, csv_path: str | None, verbose: bool) -> None:
     from labvault.core.results_audit import scan_record, summarize
 
     lab = _get_lab()
-    team = lab._team
+    team = lab.team
     click.echo(f'Scanning team "{team}" (limit={limit})...')
     started = time.time()
 
-    rows = lab._metadata.list_records(team, limit=limit)
+    # C2 (2026-06-30): lab.backend (Protocol typed) で raw dict 経由のまま
+    # audit ロジックに通す。Lab.list は Record オブジェクトを返してしまうので、
+    # results_audit が dict 前提のここでは admin 経路の Protocol access が
+    # 最も自然。
+    rows = lab.backend.list_records(team, limit=limit)
     elapsed = time.time() - started
 
     all_violations = []

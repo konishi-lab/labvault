@@ -245,32 +245,19 @@ def list_records(
         template=template,
         mine_only=bool(created_by),
     ) as timer:
-        # Firestore に parent_id==None フィルタを直接渡す
-        if hasattr(lab._metadata, "list_records"):
-            records = lab._metadata.list_records(
-                lab._team,
-                tags=tag_list,
-                status=status,
-                record_type=type,
-                created_by=created_by,
-                parent_id=None,  # ルートレコードのみ
-                conditions=push_down or None,
-                limit=fetch_limit,
-                offset=offset,
-            )
-            from labvault.core.record import Record as _Record
-
-            items = [_Record._from_dict(r, lab=lab) for r in records]
-        else:
-            items = lab.list(
-                tags=tag_list,
-                status=status,
-                type=type,
-                created_by=created_by,
-                limit=fetch_limit,
-                offset=offset,
-            )
-            items = [r for r in items if r.parent_id is None]
+        # C2 (2026-06-30): lab.list(parent_id=None) で直接 push-down。旧来は
+        # _metadata 直叩き + hasattr guard を持っていたが、Lab public API が
+        # parent_id を受け取るようになったので不要。
+        items = lab.list(
+            tags=tag_list,
+            status=status,
+            type=type,
+            created_by=created_by,
+            parent_id=None,  # ルートレコードのみ
+            conditions=push_down or None,
+            limit=fetch_limit,
+            offset=offset,
+        )
 
         fetched_count = len(items)
 
@@ -354,7 +341,7 @@ def create_record(
         rec._persist()
     else:
         # root record 作成 — team membership を要求
-        require_team_member(user, lab._team)
+        require_team_member(user, lab.team)
         rec = lab.new(
             body.title,
             type=body.type,
@@ -470,32 +457,16 @@ def aggregate_records(
             sorted(k for k in parsed_conditions if f"idx_{k}" not in push_down)
         ),
     ) as timer:
-        if hasattr(lab._metadata, "list_records"):
-            records = lab._metadata.list_records(
-                lab._team,
-                tags=tag_list,
-                status=status,
-                record_type=type,
-                created_by=created_by,
-                parent_id=effective_parent,
-                conditions=push_down or None,
-                limit=fetch_limit,
-            )
-            from labvault.core.record import Record as _Record
-
-            items = [_Record._from_dict(r, lab=lab) for r in records]
-        else:
-            items = lab.list(
-                tags=tag_list,
-                status=status,
-                type=type,
-                created_by=created_by,
-                limit=fetch_limit,
-            )
-            if parent_id is None:
-                items = [r for r in items if r.parent_id is None]
-            else:
-                items = [r for r in items if r.parent_id == parent_id]
+        # C2 (2026-06-30): lab.list() の parent_id sentinel 経由で一本化。
+        items = lab.list(
+            tags=tag_list,
+            status=status,
+            type=type,
+            created_by=created_by,
+            parent_id=effective_parent,
+            conditions=push_down or None,
+            limit=fetch_limit,
+        )
 
         # post-filter で push-down に乗らない条件 + template フィルタを適用。
         if parsed_conditions:
@@ -689,14 +660,14 @@ def delete_record(
 
     try:
         revoked = get_share_link_store().revoke_for_record(
-            record_id, lab._team, at=_dt.datetime.now(_dt.UTC)
+            record_id, lab.team, at=_dt.datetime.now(_dt.UTC)
         )
         if revoked:
             log_event(
                 logger,
                 "record.share_links_cascade_revoked",
                 record_id=record_id,
-                team=lab._team,
+                team=lab.team,
                 revoked_count=revoked,
                 trigger="record_delete",
                 actor=user.email,
@@ -742,21 +713,11 @@ def get_children(
     子の summary が漏れないようにする。Firebase の team member /
     super_admin は can_read が全 child で True になるので影響なし。
     """
-    from labvault.core.record import Record
-
     # S1-SEC6 (PR γ-2): 親 record の存在 + read 認可は uniform 404 で判定
     fetch_readable_or_404(lab, record_id, user)
 
-    if hasattr(lab._metadata, "list_records"):
-        all_rows = lab._metadata.list_records(
-            lab._team,
-            parent_id=record_id,
-            limit=10000,
-        )
-        all_children_raw = [Record._from_dict(r, lab=lab) for r in all_rows]
-    else:
-        all_records = lab.list(limit=10000)
-        all_children_raw = [r for r in all_records if r.parent_id == record_id]
+    # C2 (2026-06-30): lab.list(parent_id=...) 経由で push-down する。
+    all_children_raw = lab.list(parent_id=record_id, limit=10000)
 
     # S1-SEC3: 子ごとの認可。share-link scope user は scope record のみ
     # 通過 (parent 自身は children に出ない構造なので、share-link で
@@ -785,17 +746,11 @@ def get_children_conditions(
     record の child は本来読めない契約なので、conditions / results 全件
     が parent 経由で漏れないようにする。
     """
-    from labvault.core.record import Record
-
     # S1-SEC6 (PR γ-2): 親 record の存在 + read 認可は uniform 404 で判定
     fetch_readable_or_404(lab, record_id, user)
 
-    if hasattr(lab._metadata, "list_records"):
-        rows = lab._metadata.list_records(lab._team, parent_id=record_id, limit=limit)
-        all_children = [Record._from_dict(r, lab=lab) for r in rows]
-    else:
-        all_records = lab.list(limit=10000)
-        all_children = [r for r in all_records if r.parent_id == record_id]
+    # C2 (2026-06-30): lab.list(parent_id=...) 経由で push-down する。
+    all_children = lab.list(parent_id=record_id, limit=limit)
 
     # S1-SEC3: per-child 認可
     children = [c for c in all_children if can_read(user, c)]
@@ -852,7 +807,7 @@ def get_cell_logs(
 
     # backend は cell_number 昇順 + limit 件まで返す。`+1` 取って has_more
     # を見るパターン。internal の `_metadata.get_cell_logs` を使う。
-    raw = lab._metadata.get_cell_logs(lab._team, record_id, limit=limit + 1)
+    raw = lab.get_cell_logs(record_id, limit=limit + 1)
     truncated = len(raw) > limit
     if truncated:
         raw = raw[:limit]
@@ -929,7 +884,7 @@ def grant_record_share(
         logger,
         "record.share_granted",
         record_id=record_id,
-        team=lab._team,
+        team=lab.team,
         granted_to=email,
         role=body.role,
         granted_by=user.email,
@@ -977,7 +932,7 @@ def list_record_share_links(
     from ..dependencies import get_share_link_store
 
     store = get_share_link_store()
-    links = store.list_for_record(record_id, lab._team)
+    links = store.list_for_record(record_id, lab.team)
     links.sort(key=lambda link_: link_.created_at, reverse=True)
     return ShareLinkListResponse(items=[_link_to_info(link_) for link_ in links])
 
@@ -1066,7 +1021,7 @@ def issue_record_share_link(
     link = ShareLink(
         token_hash=token_hash,
         record_id=record_id,
-        team=lab._team,
+        team=lab.team,
         role=body.role,
         pseudo_email=pseudo_email,
         pseudo_display_name=display,
@@ -1086,7 +1041,7 @@ def issue_record_share_link(
         logger,
         "record.share_link_issued",
         record_id=record_id,
-        team=lab._team,
+        team=lab.team,
         token_hash_prefix=token_hash[:16],
         role=body.role,
         pseudo_email=pseudo_email,
@@ -1146,7 +1101,7 @@ def revoke_record_share_link(
     target = next(
         (
             link_
-            for link_ in store.list_for_record(record_id, lab._team)
+            for link_ in store.list_for_record(record_id, lab.team)
             if link_.token_hash.startswith(prefix)
         ),
         None,
@@ -1160,7 +1115,7 @@ def revoke_record_share_link(
         logger,
         "record.share_link_revoked",
         record_id=record_id,
-        team=lab._team,
+        team=lab.team,
         token_hash_prefix=target.token_hash[:16],
         revoked_by=user.email,
     )
@@ -1196,7 +1151,7 @@ def revoke_record_share(
             logger,
             "record.share_revoked",
             record_id=record_id,
-            team=lab._team,
+            team=lab.team,
             revoked_from=target,
             revoked_by=user.email,
         )
