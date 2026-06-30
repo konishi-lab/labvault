@@ -45,23 +45,15 @@ import {
   type ShareLinkScopeMe,
 } from "@/lib/api";
 import { buildShareUrl, parseShareUrl } from "./parse-share-url";
+import { formatBytes, ROLE_LABELS } from "@/lib/format";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const ROLE_LABEL: Record<string, string> = {
-  viewer: "閲覧のみ",
-  analyst: "閲覧 + 解析投稿",
-};
-
+// formatDate は本ページ独自の null guard 付き (他の formatDate は引数
+// 必須なので集約せず inline)。
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "-";
   return new Date(iso).toLocaleString("ja-JP");
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
 export default function SharePage() {
@@ -237,7 +229,7 @@ export default function SharePage() {
                 : "閲覧 + ファイル DL のみ"
             }
           >
-            {ROLE_LABEL[scope.role] ?? scope.role}
+            {ROLE_LABELS[scope.role as keyof typeof ROLE_LABELS] ?? scope.role}
           </Badge>
           <span className="text-xs text-muted-foreground">
             as <span className="font-mono">{scope.pseudo_email}</span>

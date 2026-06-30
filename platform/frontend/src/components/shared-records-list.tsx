@@ -14,11 +14,7 @@ import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
 import type { SharedRecordSummary } from "@/lib/api";
-
-const ROLE_LABEL: Record<string, string> = {
-  viewer: "閲覧",
-  analyst: "解析",
-};
+import { ROLE_LABELS_BADGE } from "@/lib/format";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("ja-JP", {
@@ -119,7 +115,9 @@ export function SharedRecordsList({
                         : "閲覧 + DL のみ"
                     }
                   >
-                    {ROLE_LABEL[item.role] ?? item.role}
+                    {ROLE_LABELS_BADGE[
+                      item.role as keyof typeof ROLE_LABELS_BADGE
+                    ] ?? item.role}
                   </Badge>
                   {item.template_name && (
                     <Badge

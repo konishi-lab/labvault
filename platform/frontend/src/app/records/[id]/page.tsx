@@ -16,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchRecord, fetchChildren, fetchChildrenConditions } from "@/lib/api";
 import type { FileInfo, RecordDetail, RecordSummary } from "@/lib/api";
+import { formatBytes } from "@/lib/format";
 import { useAuthedBlobUrl, downloadAuthed } from "@/lib/authed-blob";
 import { BulkUploadButton } from "@/components/bulk-upload";
 import { SortableRecordTable } from "@/components/sortable-record-table";
@@ -309,12 +310,6 @@ function FileSection({
       )}
     </>
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
 export default function RecordDetailPage() {

@@ -102,12 +102,13 @@ confirmed**。重要度別の対応状況:
 
 ### 🟢 low (21 件) → バックログ降格 / 別 PR
 
-代表的なもの:
-- **TEST15**: frontend integration test 完全欠落 → 別 task として
-  「次着手予定」候補に
-- **CQ7**: share-dialog.tsx 748 行を 2 file に分割
-- **CQ14**: `ROLE_LABEL` / `formatDate` / `formatBytes` が 4 file 重複
-- 他 design consistency / a11y / observability 微調整 ~18 件、詳細はレビュー
+- **TEST15** ✅ **済 (PR #100)**: frontend integration test 基盤 (vitest + RTL)
+- **CQ7** ✅ **済 (PR #103)**: share-dialog.tsx 829 → 399 行に分割
+  (ShareLinksPanel を share-link-panel.tsx へ抜き出し)
+- **CQ14** ✅ **済 (PR #103)**: `formatBytes` (2 箇所) と `ROLE_LABELS`
+  (3 箇所) を `lib/format.ts` に集約。`formatDate` は 5 種類の意図的な
+  フォーマット差があるため touch せず
+- 残: design consistency / a11y / observability 微調整 ~18 件、詳細はレビュー
   output: `/private/tmp/.../wf9xj8afd.output`
 
 ### ⚠️ 未対応 critical 残 → ✅ **済 (PR #101 / Phase D1)**
