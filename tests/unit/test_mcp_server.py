@@ -60,6 +60,55 @@ class TestSearch:
         result = tools["search"]()
         assert len(result) == 2
 
+    def test_search_created_by_filter(self, lab, tools):
+        """2026-07-01: created_by で email 完全一致絞り込み。"""
+        lab.new("a1", auto_log=False, created_by="alice@x.com")
+        lab.new("b1", auto_log=False, created_by="bob@x.com")
+        result = tools["search"](created_by="alice@x.com")
+        titles = {r["title"] for r in result}
+        assert titles == {"a1"}
+
+    def test_search_response_includes_created_by(self, lab, tools):
+        """search 返却に created_by field が含まれる (LLM が引き続き
+        by-creator 統計を取れる)。"""
+        lab.new("with-creator", auto_log=False, created_by="alice@x.com")
+        result = tools["search"](query="with-creator")
+        assert result[0]["created_by"] == "alice@x.com"
+
+
+class TestGetUsage:
+    """2026-07-01: get_usage MCP tool — team の storage 集計。"""
+
+    def _seed(self, lab):
+        from labvault.core.types import DataRef
+
+        rec1 = lab.new("a1", auto_log=False, created_by="alice@x.com")
+        rec2 = lab.new("b1", auto_log=False, created_by="bob@x.com")
+        rec1._data_refs.extend(
+            [
+                DataRef(name="x.npz", size_bytes=100_000),
+                DataRef(name="x.png", size_bytes=500),
+            ]
+        )
+        rec1._persist()
+        rec2._data_refs.append(DataRef(name="y.png", size_bytes=1_000))
+        rec2._persist()
+
+    def test_usage_totals(self, lab, tools):
+        self._seed(lab)
+        s = tools["get_usage"]()
+        assert s["team"] == "test-team"
+        assert s["total_records"] == 2
+        assert s["total_files"] == 3
+        assert s["total_bytes"] == 101_500
+
+    def test_usage_filter_by_creator(self, lab, tools):
+        self._seed(lab)
+        s = tools["get_usage"](created_by="alice@x.com")
+        assert s["total_records"] == 1
+        assert s["total_bytes"] == 100_500
+        assert set(s["by_creator"].keys()) == {"alice@x.com"}
+
 
 class TestGetDetail:
     def test_get_detail(self, lab, tools):

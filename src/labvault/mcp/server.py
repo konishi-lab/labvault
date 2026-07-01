@@ -95,11 +95,12 @@ def create_server(
 
     @mcp.tool(
         description="実験レコードを検索する。自然言語クエリ、タグ、ステータス、"
-        "親レコードID、条件でフィルタリング。"
+        "親レコードID、条件、作成者でフィルタリング。"
         'conditions は完全一致 ({"power": 20}) または範囲指定 '
         '({"power": {"gte": 10, "lte": 30}}) が可能。'
         "演算子: gt, gte, lt, lte, eq, ne。"
-        "include_conditions=True で各レコードの条件も返す。",
+        "include_conditions=True で各レコードの条件も返す。"
+        "created_by は email 完全一致 (例: user@example.com)。",
     )
     def search(
         query: str | None = None,
@@ -107,6 +108,7 @@ def create_server(
         status: str | None = None,
         record_type: str | None = None,
         parent_id: str | None = None,
+        created_by: str | None = None,
         conditions: dict[str, Any] | None = None,
         include_conditions: bool = False,
         limit: int = 20,
@@ -116,6 +118,7 @@ def create_server(
 
         lab = _get_lab(team)
         if query:
+            # semantic search 側は backend push-down 経路が無いので post-filter
             records = lab.search(
                 query,
                 tags=tags,
@@ -123,13 +126,17 @@ def create_server(
                 type=record_type,
                 parent_id=parent_id,
                 conditions=conditions,
-                limit=limit,
+                limit=limit * 5 if created_by else limit,
             )
+            if created_by:
+                records = [r for r in records if r.created_by == created_by]
+            records = records[:limit]
         else:
             records = lab.list(
                 tags=tags,
                 status=status,
                 type=record_type,
+                created_by=created_by,
                 limit=limit * 5 if conditions or parent_id else limit,
             )
             if parent_id is not None:
@@ -152,6 +159,7 @@ def create_server(
                 "type": r.type,
                 "status": str(r.status),
                 "tags": r.tags,
+                "created_by": r.created_by,
                 "created_at": r.created_at.isoformat(),
             }
             if include_conditions:
@@ -424,6 +432,28 @@ def create_server(
         lab = _get_lab(team)
         rec = lab.get(record_id)
         return rec.cell_logs(limit=limit)
+
+    @mcp.tool(
+        description=(
+            "team の storage 利用量 (レコード数 / ファイル数 / 総 bytes) を集計する。"
+            "created_by で特定ユーザーに絞れる (email 完全一致)。返り値には "
+            "by_creator / by_extension / by_type の内訳も含む。"
+            "「誰がどれだけデータを上げているか」「拡張子別のディスク使用量」"
+            "の可視化に使う。"
+        ),
+    )
+    def get_usage(
+        created_by: str | None = None,
+        team: str | None = None,
+    ) -> dict[str, Any]:
+        """Lab.get_usage の MCP 露出 (2026-07-01)。
+
+        max_records は client 側で意識せず team 全体を集計する想定。
+        巨大 team では時間がかかるので、実装は Firestore の list_records
+        を単純ストリームで走査 → client-side 集計。
+        """
+        lab = _get_lab(team)
+        return lab.get_usage(created_by=created_by)
 
     @mcp.tool(description="レコードの時系列履歴。作成順にイベントを一覧表示。")
     def get_timeline(

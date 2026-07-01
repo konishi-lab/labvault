@@ -141,6 +141,77 @@ class TestSearch:
         assert result.exit_code == 0
         assert "XRD" in result.output
 
+    def test_search_created_by_filter(self, runner, shared_lab: Lab):
+        """--created-by で email 完全一致絞り込み。他ユーザーの record は
+        除外される (2026-07-01)。"""
+        shared_lab.new("alice-record-1", auto_log=False, created_by="alice@x.com")
+        shared_lab.new("bob-record-1", auto_log=False, created_by="bob@x.com")
+        result = runner.invoke(cli, ["search", "-u", "alice@x.com"])
+        assert result.exit_code == 0
+        assert "alice-record-1" in result.output
+        assert "bob-record-1" not in result.output
+
+
+
+@pytest.mark.usefixtures("_patch_lab")
+class TestUsage:
+    """labvault usage — team の storage 利用量集計 (2026-07-01)。"""
+
+    def _seed(self, shared_lab: Lab) -> None:
+        from labvault.core.types import DataRef
+
+        rec1 = shared_lab.new(
+            "alice-1", auto_log=False, created_by="alice@x.com"
+        )
+        rec2 = shared_lab.new(
+            "alice-2", auto_log=False, created_by="alice@x.com"
+        )
+        rec3 = shared_lab.new("bob-1", auto_log=False, created_by="bob@x.com")
+        # data_refs を直接注入 (add_file の実物 upload を避ける)
+        for r, files in (
+            (
+                rec1,
+                [
+                    DataRef(name="a.npz", size_bytes=100_000),
+                    DataRef(name="a.png", size_bytes=500),
+                ],
+            ),
+            (rec2, [DataRef(name="b.npz", size_bytes=200_000)]),
+            (rec3, [DataRef(name="c.png", size_bytes=1_000)]),
+        ):
+            r._data_refs.extend(files)
+            r._persist()
+
+    def test_usage_shows_totals(self, runner, shared_lab: Lab):
+        self._seed(shared_lab)
+        result = runner.invoke(cli, ["usage"])
+        assert result.exit_code == 0, result.output
+        assert "records: 3" in result.output
+        assert "files:   4" in result.output
+        # 100_000 + 500 + 200_000 + 1_000 = 301_500
+        assert "301,500 B" in result.output
+
+    def test_usage_filter_by_created_by(self, runner, shared_lab: Lab):
+        self._seed(shared_lab)
+        result = runner.invoke(cli, ["usage", "-u", "alice@x.com"])
+        assert result.exit_code == 0
+        assert "records: 2" in result.output
+        assert "files:   3" in result.output
+        assert "bob@x.com" not in result.output
+
+    def test_usage_top_creators_and_extensions(
+        self, runner, shared_lab: Lab
+    ):
+        self._seed(shared_lab)
+        result = runner.invoke(cli, ["usage"])
+        # alice が bytes 上位
+        assert result.output.index("alice@x.com") < result.output.index(
+            "bob@x.com"
+        )
+        # .npz と .png が両方出る
+        assert ".npz" in result.output
+        assert ".png" in result.output
+
 
 class TestDoctor:
     def test_doctor_runs(self, runner):
