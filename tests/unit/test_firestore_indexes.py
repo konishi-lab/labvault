@@ -96,6 +96,31 @@ def test_shared_with_emails_collection_group_index_exists() -> None:
     )
 
 
+def test_tags_composite_index_exists() -> None:
+    """2026-07-01: tag search 用の COLLECTION index。
+
+    `FirestoreMetadataBackend.list_records` が
+    `where(deleted_at==None).where(tags array_contains X).order_by(updated_at DESC)`
+    を投げるので、`(deleted_at ASC, tags CONTAINS, updated_at DESC)` の
+    COLLECTION scoped index が要る。旧来は本番 Firestore に手動で作られて
+    いない状態で、CLI `labvault search --tags X` / MCP `search(tags=[X])`
+    が `FailedPrecondition: requires an index` を踏む状況だった (2026-07-01
+    kimura record 調査時に判明)。
+    """
+    expected = (
+        ("deleted_at", "ASCENDING"),
+        ("tags", "CONTAINS"),
+        ("updated_at", "DESCENDING"),
+    )
+    data = json.loads(INDEXES_PATH.read_text())
+    found = [
+        idx
+        for idx in data["indexes"]
+        if _fields_of(idx) == expected and idx.get("queryScope") == "COLLECTION"
+    ]
+    assert len(found) == 1, f"Missing COLLECTION composite index for tags: {expected}"
+
+
 def test_shared_links_does_not_require_composite_index() -> None:
     """S1-OBS8 hot-fix (2026-06-29): ``shared_links`` collection の query
     パターンが composite index を要求しない構造を documented invariant 化。

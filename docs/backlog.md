@@ -3,9 +3,29 @@
 「次に着手する候補」を優先度別に並べたキュー。完了したら `multitenant_next_steps.md` /
 `design/v10/05_milestones.md` の該当エントリにも反映する。
 
-最終更新: 2026-06-30 朝 (PR #100 TEST15 + PR #101 D1 着地、S1 残作業のうち URL token 漏洩 critical を完全解決)
+最終更新: 2026-07-01 (PR #106 admin only + audit trail、着手中 PR: search created_by / storage usage / tags index)
 
 ---
+
+## ✅ 検索・集計ギャップ埋め (2026-07-01)
+
+2026-07-01 に「kimura さんが何 GB 上げているか」を調べようとして SDK/CLI/MCP
+だけでは辿れず、直接 Firestore Client を叩く羽目になった件の再発防止。
+「LLM / 実験者が SDK 経路で完結できる」原則に穴が空いていたので surface。
+
+- **`labvault search --created-by` / MCP `search(created_by=)`** — email 完全
+  一致で record 絞り込み。SDK の `Lab.list(created_by=)` は昔から対応済で、
+  UI/MCP 側の露出が抜けていただけ
+- **Firestore composite index (`records: deleted_at + tags CONTAINS +
+  updated_at DESC`)** — tag 検索が本番で `FailedPrecondition: requires an
+  index` を踏んでいた。`firestore.indexes.json` に追加 + `test_firestore_
+  indexes.py` に invariant test
+- **`Lab.get_usage()` / MCP `get_usage` / CLI `labvault usage`** — team 全体
+  の records / files / 総 bytes を by_creator / by_extension / by_type で
+  内訳表示。`data_refs[].size_bytes` を client-side で合算 (Firestore の
+  集計 API は限定的なので線形走査)
+- 上記に伴い MCP `search` の返却に `created_by` field を追加 (LLM が by-user
+  統計を取りやすくなる)
 
 ## 📌 次着手予定 (2026-06-30 以降)
 

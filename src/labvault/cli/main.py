@@ -175,6 +175,13 @@ def show(record_id: str) -> None:
 @click.option("--status", "-s", "status_filter", default=None, help="ステータス")
 @click.option("--type", "-t", "type_filter", default=None, help="タイプでフィルタ")
 @click.option(
+    "--created-by",
+    "-u",
+    "created_by",
+    default=None,
+    help="作成者 (email 完全一致) でフィルタ。例: user@example.com",
+)
+@click.option(
     "--conditions",
     "-c",
     multiple=True,
@@ -188,6 +195,7 @@ def search(
     tags: tuple[str, ...],
     status_filter: str | None,
     type_filter: str | None,
+    created_by: str | None,
     conditions: tuple[str, ...],
     show_conditions: bool,
 ) -> None:
@@ -197,6 +205,7 @@ def search(
     cond_dict = _parse_conditions(conditions) if conditions else None
 
     if query:
+        # semantic search + post-filter (created_by は post-filter で対応)
         results = lab.search(
             query,
             tags=list(tags) if tags else None,
@@ -204,13 +213,17 @@ def search(
             type=type_filter,
             parent_id=parent_id,
             conditions=cond_dict,
-            limit=limit,
+            limit=limit * 5 if created_by else limit,
         )
+        if created_by:
+            results = [r for r in results if r.created_by == created_by]
+        results = results[:limit]
     else:
         results = lab.list(
             tags=list(tags) if tags else None,
             status=status_filter,
             type=type_filter,
+            created_by=created_by,
             limit=limit * 5 if cond_dict or parent_id else limit,
         )
         if parent_id is not None:
@@ -240,6 +253,84 @@ def search(
                     line += f"  [{', '.join(pairs)}]"
             click.echo(line)
     lab.close()
+
+
+def _human_bytes(n: int) -> str:
+    """人間が読める単位に整形 (B, KB, MB, GB, TB)."""
+    val = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if val < 1024:
+            return f"{val:.2f} {unit}"
+        val /= 1024
+    return f"{val:.2f} PB"
+
+
+@cli.command()
+@click.option(
+    "--created-by",
+    "-u",
+    "created_by",
+    default=None,
+    help="作成者 email で絞る (省略時は team 全体)",
+)
+@click.option(
+    "--top-creators",
+    default=10,
+    help="by_creator の上位表示数",
+)
+def usage(created_by: str | None, top_creators: int) -> None:
+    """team の storage 利用量を集計する (レコード数 / ファイル数 / 総 bytes)。
+
+    ``--created-by`` で特定ユーザーのみに絞れる。返り値は by_creator /
+    by_extension / by_type の内訳も表示。
+    """
+    lab = _get_lab()
+    try:
+        summary = lab.get_usage(created_by=created_by)
+    finally:
+        lab.close()
+
+    click.echo(f"team: {summary['team']}")
+    if created_by:
+        click.echo(f"created_by filter: {created_by}")
+    click.echo(f"records: {summary['total_records']:,}")
+    click.echo(f"files:   {summary['total_files']:,}")
+    click.echo(
+        f"bytes:   {_human_bytes(summary['total_bytes'])} "
+        f"({summary['total_bytes']:,} B)"
+    )
+    click.echo("")
+
+    creators = sorted(
+        summary["by_creator"].items(),
+        key=lambda kv: kv[1]["bytes"],
+        reverse=True,
+    )[:top_creators]
+    if creators:
+        click.echo(f"top creators (by bytes, top {len(creators)}):")
+        for creator, stats in creators:
+            click.echo(
+                f"  {stats['records']:5,} rec / {stats['files']:5,} files "
+                f"/ {_human_bytes(stats['bytes']):>10}  {creator}"
+            )
+        click.echo("")
+
+    ext = summary["by_extension"]
+    if ext:
+        click.echo("by file extension:")
+        for e, stats in sorted(
+            ext.items(), key=lambda kv: kv[1]["bytes"], reverse=True
+        ):
+            click.echo(
+                f"  {stats['files']:5,}  .{e:<12s}  {_human_bytes(stats['bytes'])}"
+            )
+        click.echo("")
+
+    types = summary["by_type"]
+    if types:
+        click.echo("by record type:")
+        for t, count in sorted(types.items(), key=lambda kv: kv[1], reverse=True):
+            click.echo(f"  {count:5,}  {t}")
 
 
 @cli.command()

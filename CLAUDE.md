@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **labvault** — Python/Notebookで実験する研究室のための実験データ基盤。測定から解析までのコード・データ・条件が自動で記録され、蓄積されたデータをLLMが横断検索・解析する。
 
-- 実験者向けPython SDK + CLI (17コマンド) + MCP サーバー (7ツール)
+- 実験者向けPython SDK + CLI (18コマンド) + MCP サーバー (9ツール)
 - バックエンド: Firestore（メタデータ）+ Nextcloud（ARIM MDX, 30TBバイナリ）+ Vertex AI（Embedding）
 - LLM連携: ローカル MCP サーバー（`labvault mcp`）でClaude Desktop/Codeがデータを検索・解析。CLI 経由でも同等の分析が可能（トークン効率が良い）
 - Web UI: `platform/` ディレクトリ（Next.js + FastAPI on Cloud Run）
@@ -57,9 +57,9 @@ src/labvault/
 ├── buffer/        # ローカルバッファ + 自動同期
 │   ├── database.py  # SQLite WAL (データ消失防止)
 │   └── sync.py      # SyncManager (daemon スレッドで定期同期)
-├── mcp/           # MCP サーバー (7ツール)
+├── mcp/           # MCP サーバー (9ツール)
 ├── parsers/       # ファイルパーサープラグイン（.vk4 実装済、.ras等 M3で追加予定）
-└── cli/           # Click CLI (17コマンド)
+└── cli/           # Click CLI (18コマンド)
 
 platform/          # デプロイ可能なサービス群
 ├── frontend/      # Next.js Web UI (レコード閲覧、散布図、一括アップロード等)
@@ -96,9 +96,9 @@ examples/          # すぐ試せるサンプル
 | **M2b** Nextcloud バックエンド | 完了 (ARIM MDX 確認済) |
 | **M2c** SyncManager (自動同期) | 完了 |
 | **M2d** IPython hooks (セル自動記録) | 完了 |
-| **M4** CLI (17コマンド) | 完了 |
+| **M4** CLI (18コマンド) | 完了 |
 | **M4** Embedding (Vertex AI) | 完了 (動作確認済) |
-| **M4** MCP サーバー (7ツール) | 完了 (Claude Code 動作確認済) |
+| **M4** MCP サーバー (9ツール) | 完了 (Claude Code 動作確認済) |
 | **M6** WebApp (Next.js + FastAPI) | 進行中 (レコード閲覧、条件カラム、散布図、一括アップロード) |
 | **M3** テンプレート | 完了 (alias 正規化 / required 警告 / ビルトイン 5 種 XRD/SEM/SQUID/TEM/Raman) |
 | **M3** ファイルパーサー連携 | 未着手 (`.vk4` 単体は既存。template 経由の add() 自動起動はこれから) |
@@ -137,14 +137,16 @@ LABVAULT_NEXTCLOUD_GROUP_FOLDER=large/24UTARIM004
 
 ## MCP サーバー
 
-Claude Code に設定済み。7ツール:
-- `search` — レコード検索（テキスト + フィルタ + 条件範囲指定）。`include_conditions=True` で条件も返す
+Claude Code に設定済み。9ツール:
+- `search` — レコード検索（テキスト + フィルタ + 条件範囲指定 + `created_by`）。`include_conditions=True` で条件も返す
 - `get_detail` — レコード詳細（条件、結果、メモ、ファイル）
 - `compare` — レコード横断比較（最大10件）
 - `data_preview` — ファイルプレビュー（CSV, JSON, テキスト）
 - `aggregate` — 数値キーの統計集計（conditions/results 両対応、parent_id フィルタ、group_by）
 - `get_overview` — 実験シリーズの概要（子レコード数、条件ユニーク値/統計、結果統計を1回で取得）
+- `get_notebook_log` — Notebook セル実行ログ (R13 IPython hooks 自動記録)
 - `get_timeline` — 時系列イベント一覧
+- `get_usage` — team の storage 利用量集計 (records / files / bytes、by_creator / by_extension / by_type 内訳)
 
 ### 条件フィルタの書式
 
@@ -159,7 +161,7 @@ search(conditions={"power": {"gte": 20, "lte": 40}})
 
 ## CLI コマンド
 
-17コマンド: init, new, add, list, show, search, aggregate, overview, delete, restore, note, tag, status, export, doctor, mcp, check-results
+18コマンド: init, new, add, list, show, search, aggregate, overview, usage, delete, restore, note, tag, status, export, doctor, mcp, check-results
 
 ### 分析系コマンド（MCP と同等の機能を CLI で提供）
 
@@ -167,12 +169,19 @@ search(conditions={"power": {"gte": 20, "lte": 40}})
 # 条件フィルタ付き検索 + 条件表示
 labvault search -p PARENT_ID -c "power>=50" -c "angle<=60" -C
 
+# 作成者で絞り込み
+labvault search -u user@example.com
+
 # 数値キーの統計集計（conditions/results 両対応）
 labvault aggregate power -p PARENT_ID
 labvault aggregate pulse_energy --group-by angle -p PARENT_ID
 
 # 実験シリーズの概要
 labvault overview PARENT_ID
+
+# team の storage 利用量集計 (records / files / bytes / by_creator / by_extension / by_type)
+labvault usage
+labvault usage -u user@example.com  # 特定ユーザーのみ
 ```
 
 CLI はプレーンテキスト出力のため、LLM が Bash 経由で使う場合は MCP より低トークン消費。
