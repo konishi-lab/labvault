@@ -544,6 +544,48 @@ export async function issueShareLink(
   return res.json();
 }
 
+// --- Share event 監査 log (2026-07-01) ---
+// backend: `records/{id}/share-events` — 共有 grant / revoke / share-link
+// 発行・失効の永続監査 log。Cloud Logging (30 日) と併存し、Firestore
+// 側は無期限保存。認可: grant 主体 (admin) だけ。
+
+export type ShareEventType =
+  | "granted"
+  | "revoked"
+  | "link_issued"
+  | "link_revoked";
+
+export interface ShareEventEntry {
+  event_type: ShareEventType;
+  record_id: string;
+  role: string; // "" for revoked
+  actor_email: string;
+  actor_audit_source: string;
+  at: string; // ISO
+  target_email?: string | null;
+  token_hash_prefix?: string | null;
+  pseudo_email?: string | null;
+  label?: string | null;
+}
+
+export interface ShareEventListResponse {
+  items: ShareEventEntry[];
+}
+
+export async function fetchShareEvents(
+  id: string,
+  opts?: { limit?: number },
+): Promise<ShareEventEntry[]> {
+  const params = new URLSearchParams();
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  const url = `${API_BASE}/api/records/${id}/share-events${qs ? "?" + qs : ""}`;
+  const res = await authFetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch share events: ${res.status}`);
+  const data = (await res.json()) as ShareEventListResponse;
+  return data.items;
+}
+
 // `DELETE /api/records/{id}/share-links/{token_hash_prefix}` — revoke。
 export async function revokeShareLink(
   id: string,

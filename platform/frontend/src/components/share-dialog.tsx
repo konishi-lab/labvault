@@ -41,6 +41,7 @@ import {
 } from "@/lib/api";
 import { canGrant as computeCanGrant } from "./share-dialog-helpers";
 import { ROLE_LABELS } from "@/lib/format";
+import { ShareEventsPanel } from "./share-events-panel";
 import { ShareLinksPanel } from "./share-link-panel";
 
 interface ShareDialogProps {
@@ -391,6 +392,11 @@ export function ShareDialog({
             setJustIssued={setJustIssued}
           />
         )}
+
+        {/* 2026-07-01: 共有 event 監査 log (permanent audit trail)。
+            grant 主体 (admin) だけが見える。デフォルト折り畳み、開くと
+            fetch。1 年前の grant / revoke も残るので運用の後追い調査に。 */}
+        {canGrant && open && <ShareEventsPanel recordId={recordId} />}
       </DialogContent>
     </Dialog>
   );
