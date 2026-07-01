@@ -16,6 +16,8 @@ class InMemoryMetadataBackend:
         self._records: dict[str, dict[str, dict[str, Any]]] = {}
         self._cell_logs: dict[str, dict[str, list[dict[str, Any]]]] = {}
         self._templates: dict[str, dict[str, dict[str, Any]]] = {}
+        # {team: [event, ...]}. record 単位の filter は list_share_events で。
+        self._share_events: dict[str, list[dict[str, Any]]] = {}
 
     # --- Record CRUD ---
 
@@ -127,6 +129,27 @@ class InMemoryMetadataBackend:
 
     def list_templates(self, team: str) -> list[dict[str, Any]]:
         return copy.deepcopy(list(self._templates.get(team, {}).values()))
+
+    # --- Share event 監査 log (2026-07-01) ---
+
+    def append_share_event(self, team: str, event: dict[str, Any]) -> None:
+        self._share_events.setdefault(team, []).append(copy.deepcopy(event))
+
+    def list_share_events(
+        self,
+        team: str,
+        record_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        events = [
+            e
+            for e in self._share_events.get(team, [])
+            if e.get("record_id") == record_id
+        ]
+        # 新しい順 (at DESC)。at は datetime or ISO string を想定。
+        events.sort(key=lambda e: e.get("at") or "", reverse=True)
+        return copy.deepcopy(events[:limit])
 
 
 class InMemoryStorageBackend:

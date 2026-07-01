@@ -121,6 +121,28 @@ def test_tags_composite_index_exists() -> None:
     assert len(found) == 1, f"Missing COLLECTION composite index for tags: {expected}"
 
 
+def test_share_events_index_exists() -> None:
+    """2026-07-01: 監査 log ``share_events`` の record 単位時系列 query 用の
+    複合 index。
+
+    `FirestoreMetadataBackend.list_share_events` が
+    ``where(record_id==x).order_by(at DESC)`` を投げるので、
+    ``(record_id ASC, at DESC)`` の COLLECTION scoped index が要る。
+    """
+    expected = (
+        ("record_id", "ASCENDING"),
+        ("at", "DESCENDING"),
+    )
+    data = json.loads(INDEXES_PATH.read_text())
+    found = [
+        idx
+        for idx in data["indexes"]
+        if _fields_of(idx) == expected
+        and idx.get("collectionGroup") == "share_events"
+    ]
+    assert len(found) == 1, f"Missing share_events composite index: {expected}"
+
+
 def test_shared_links_does_not_require_composite_index() -> None:
     """S1-OBS8 hot-fix (2026-06-29): ``shared_links`` collection の query
     パターンが composite index を要求しない構造を documented invariant 化。

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from typing import Any
 
@@ -40,6 +41,8 @@ from ..schemas import (
     ResultUpdate,
     RevokeShareLinkResponse,
     ShareEntry,
+    ShareEventEntry,
+    ShareEventListResponse,
     ShareGrantRequest,
     ShareLinkCreate,
     ShareLinkInfo,
@@ -160,6 +163,61 @@ def _to_detail(rec: Any, viewer: User | None = None) -> RecordDetail:
         ],
         events=rec.events,
     )
+
+
+def _append_share_event(
+    lab: Lab,
+    *,
+    event_type: str,
+    record_id: str,
+    role: str,
+    actor: User,
+    target_email: str | None = None,
+    token_hash_prefix: str | None = None,
+    pseudo_email: str | None = None,
+    label: str | None = None,
+) -> None:
+    """2026-07-01: 共有系 event を Firestore の監査 log に追記する。
+
+    Cloud Logging (30 日) と併存: Cloud Logging はリアルタイム監視 /
+    アラート用、Firestore ``share_events`` は「1 年前は誰が誰に共有した
+    のか」を後から辿るための永続監査 log。
+
+    event_type:
+        ``granted`` | ``revoked`` | ``link_issued`` | ``link_revoked``
+
+    role / target_email など「その event に無い field」は省略可 (dict に
+    含めない)。log_share_events UI が None 表示にフォールバックする。
+
+    backend の append_share_event が例外を投げても handler 全体は
+    落とさない: 監査 log 失敗で共有操作自体を止めるのは UX に反する。
+    Cloud Logging 側は既に log_event で残っているので二重記録の片方が
+    落ちても実害無し。
+    """
+    event: dict[str, Any] = {
+        "event_type": event_type,
+        "record_id": record_id,
+        "role": role,
+        "actor_email": actor.email,
+        "actor_audit_source": _audit_source_for(actor),
+        "at": dt.datetime.now(dt.UTC),
+    }
+    if target_email is not None:
+        event["target_email"] = target_email
+    if token_hash_prefix is not None:
+        event["token_hash_prefix"] = token_hash_prefix
+    if pseudo_email is not None:
+        event["pseudo_email"] = pseudo_email
+    if label is not None:
+        event["label"] = label
+    try:
+        lab.backend.append_share_event(lab.team, event)
+    except Exception:  # noqa: BLE001 — 監査失敗で操作を止めない
+        logger.exception(
+            "append_share_event failed (event_type=%s record=%s)",
+            event_type,
+            record_id,
+        )
 
 
 def _audit_source_for(user: User) -> str:
@@ -891,7 +949,45 @@ def grant_record_share(
         role=body.role,
         granted_by=user.email,
     )
+    _append_share_event(
+        lab,
+        event_type="granted",
+        record_id=record_id,
+        role=body.role,
+        actor=user,
+        target_email=email,
+    )
     return _to_detail(rec, user)
+
+
+@router.get("/{record_id}/share-events", response_model=ShareEventListResponse)
+def list_record_share_events(
+    record_id: str,
+    limit: int = 100,
+    lab: Lab = Depends(get_lab_relaxed),
+    user: User = Depends(current_user),
+) -> ShareEventListResponse:
+    """record 単位の共有 event 監査 log (2026-07-01)。
+
+    Cloud Logging (30 日 retention) と併存: Firestore 側は削除しない限り
+    無期限に残る永続監査 log。「1 年前は誰が誰に共有したのか」を後から
+    辿るための保存経路。
+
+    認可: ``fetch_grantable_or_403`` (share list と同じ)。共有された側の
+    user が他の grant 履歴を enumerate できないようにする (情報漏洩防止)。
+    read 不可 → 404、read 通るが grant 不可 → 403。
+
+    limit: 1〜1000。default 100、新しい順 (at DESC)。
+    """
+    if limit < 1 or limit > 1000:
+        raise HTTPException(status_code=400, detail="limit must be 1-1000")
+    # 認可: grant 権と同等 (履歴の閲覧 = grant 主体の情報が全部見える)
+    fetch_grantable_or_403(lab, record_id, user)
+
+    events = lab.backend.list_share_events(lab.team, record_id, limit=limit)
+    return ShareEventListResponse(
+        items=[ShareEventEntry(**e) for e in events]
+    )
 
 
 # --- 外部 token sharing (S1 Phase 2) ---
@@ -1050,6 +1146,16 @@ def issue_record_share_link(
         expires_at=expires_at.isoformat() if expires_at else None,
         issued_by=user.email,
     )
+    _append_share_event(
+        lab,
+        event_type="link_issued",
+        record_id=record_id,
+        role=body.role,
+        actor=user,
+        token_hash_prefix=token_hash[:16],
+        pseudo_email=pseudo_email,
+        label=(body.label or "").strip() or None,
+    )
 
     info = _link_to_info(link)
     return CreatedShareLink(
@@ -1121,6 +1227,15 @@ def revoke_record_share_link(
         token_hash_prefix=target.token_hash[:16],
         revoked_by=user.email,
     )
+    _append_share_event(
+        lab,
+        event_type="link_revoked",
+        record_id=record_id,
+        role=target.role,
+        actor=user,
+        token_hash_prefix=target.token_hash[:16],
+        pseudo_email=target.pseudo_email,
+    )
     return RevokeShareLinkResponse(
         status="ok", token_hash_prefix=target.token_hash[:16]
     )
@@ -1156,6 +1271,16 @@ def revoke_record_share(
             team=lab.team,
             revoked_from=target,
             revoked_by=user.email,
+        )
+        # 存在しなかった場合は「no-op idempotent revoke」なので log しない
+        # (Cloud Logging と同じ扱い)。実際に share が消えた時だけ audit する。
+        _append_share_event(
+            lab,
+            event_type="revoked",
+            record_id=record_id,
+            role="",  # revoke には role 概念なし (event_type で分かる)
+            actor=user,
+            target_email=target,
         )
     return _to_detail(rec, user)
 

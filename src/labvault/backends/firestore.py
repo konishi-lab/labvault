@@ -250,3 +250,45 @@ class FirestoreMetadataBackend:
             .stream()
         )
         return [doc.to_dict() for doc in docs]
+
+    # --- Share event 監査 log (2026-07-01) ---
+
+    def _share_events_ref(self, team: str) -> Any:
+        """``teams/{team}/share_events`` collection ref."""
+        return (
+            self._get_db()
+            .collection("teams")
+            .document(team)
+            .collection("share_events")
+        )
+
+    def append_share_event(self, team: str, event: dict[str, Any]) -> None:
+        """1 event を追記する。auto ID + server timestamp。
+
+        ``at`` field は呼び出し側が set した datetime をそのまま保存する
+        (SERVER_TIMESTAMP に置き換えない): 単一 tx 内で ordering を
+        安定させるため呼び出し側で 1 秒未満の精度で set する想定。
+        """
+        self._share_events_ref(team).add(event)
+
+    def list_share_events(
+        self,
+        team: str,
+        record_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """record 単位で新しい順に返す。
+
+        Firestore composite index: ``record_id ASC, at DESC``
+        (`firestore.indexes.json` に定義)。
+        """
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        q = (
+            self._share_events_ref(team)
+            .where(filter=FieldFilter("record_id", "==", record_id))
+            .order_by("at", direction="DESCENDING")
+            .limit(limit)
+        )
+        return [doc.to_dict() for doc in q.stream()]

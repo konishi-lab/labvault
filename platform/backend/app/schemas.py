@@ -329,6 +329,31 @@ class ShareLinkListResponse(BaseModel):
     items: list[ShareLinkInfo]
 
 
+class ShareEventEntry(BaseModel):
+    """共有 event の監査 log (2026-07-01) の 1 件。
+
+    ``event_type`` は ``granted`` / ``revoked`` / ``link_issued`` /
+    ``link_revoked`` のいずれか。role / target_email / token_hash_prefix
+    等は event_type に応じて有無が変わるので Optional。UI が「その
+    field が無ければ表示しない」で対応する。
+    """
+
+    event_type: str
+    record_id: str
+    role: str = ""
+    actor_email: str
+    actor_audit_source: str = ""
+    at: datetime
+    target_email: str | None = None
+    token_hash_prefix: str | None = None
+    pseudo_email: str | None = None
+    label: str | None = None
+
+
+class ShareEventListResponse(BaseModel):
+    items: list[ShareEventEntry]
+
+
 class RevokeShareLinkResponse(BaseModel):
     status: str  # "ok"
     token_hash_prefix: str
