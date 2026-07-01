@@ -111,6 +111,7 @@ examples/          # すぐ試せるサンプル
 - **Backend Protocol**: **全sync**。Notebook event loop競合回避のため async は使わない
 - **ローカルバッファ**: `_persist()` はメタデータバックエンド + SQLite バッファの両方に書く
 - **バックエンド自動選択**: .env / config.toml に設定があれば Firestore/Nextcloud を自動使用、なければ InMemory
+- **Nextcloud パス構造**: `{group_folder}/labvault/{team_id}/{record_id}/{filename}` (`nextcloud.py:16`)。team ID がサブフォルダで自動的に切り分けられるので、複数 team が同じ `group_folder` を指しても衝突しない
 - **IPython hooks**: Notebook環境では `lab.new()` で全セル自動記録開始
 - **既存Recordへの追記**: `lab.get(id, auto_log=True)` でhooks再起動
 - **装置制御スクリプト(.py)**: `exp.log_value()` / `exp.log_event()` を使う
@@ -182,6 +183,17 @@ CLI はプレーンテキスト出力のため、LLM が Bash 経由で使う場
 - 技術スタック: Next.js (frontend) + FastAPI (backend) on Cloud Run
 - デプロイ先: Cloud Run (asia-northeast1, 無料枠内 $0/月)
 - 機能: レコード閲覧・詳細、条件カラム表示、散布図、条件フィルタ、一括アップロード(NxMグリッド)、タグ/メモ/単位編集
+
+## Cloud Run デプロイ運用
+
+- **自動デプロイ**: `main` push で GitHub Actions が回る
+  - `deploy-backend.yml` → `labvault-api` (asia-northeast1)。paths: `platform/backend/**`, `src/**`, `pyproject.toml`, ワークフロー本体
+  - `deploy-frontend.yml` → `labvault-web` (asia-northeast1)。paths: `platform/frontend/**`, ワークフロー本体
+- **手動デプロイ**: どちらも `workflow_dispatch` で GitHub UI から任意 revision を再デプロイ可能
+- **PR merge = デプロイ**: PR で main に入った時点で該当 workflow が発火。merge 前に本番反映されることは無い (PR は CI のみ)
+- **runtime SA**: `labvault-api@klab-laser-process.iam.gserviceaccount.com` (backend / frontend 共通)。Artifact Registry の `repoAdmin` を持っているので、backend からの `grant_reader` (allowed_users 承認時 / team 追加時) も同じ SA で叩く
+- **公開 URL**: backend `https://labvault-api-6vn6gn4iaa-an.a.run.app` / frontend `https://labvault-web-6vn6gn4iaa-an.a.run.app`
+- **CI**: `ci.yml` は main push + PR で lint (ruff) + type (mypy) + pytest + frontend build。deploy workflow の前段になっているわけではないので、CI red のまま main に入ると deploy も走ってしまう点に注意
 
 ## リリース運用 (private PyPI)
 
