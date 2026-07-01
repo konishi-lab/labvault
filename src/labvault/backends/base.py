@@ -75,6 +75,35 @@ class MetadataBackend(Protocol):
         self, team: str, record_id: str, *, limit: int = 100
     ) -> list[dict[str, Any]]: ...
 
+    def append_share_event(self, team: str, event: dict[str, Any]) -> None:
+        """共有 grant / revoke / share-link 発行・失効の監査 event を
+        追記する (2026-07-01)。
+
+        Firestore 実装は ``teams/{team}/share_events/{auto_id}`` サブ
+        コレクションに 1 doc 挿入。retention は Firestore の default
+        (削除しない限り無期限)。Cloud Logging (30 日) との差別化ポイント。
+
+        event dict の必須 field: ``event_type`` (str), ``record_id`` (str),
+        ``role`` (str), ``actor_email`` (str), ``at`` (datetime)。任意で
+        ``target_email`` (str), ``actor_audit_source`` (str),
+        ``token_hash_prefix`` (str), ``pseudo_email`` (str), ``label`` (str)。
+        """
+        ...
+
+    def list_share_events(
+        self,
+        team: str,
+        record_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """record 単位の共有 event を新しい順で返す。
+
+        Firestore 実装は ``at DESC`` で order by。呼び出し側 (handler) が
+        認可 (grant 主体だけ) を判定する。
+        """
+        ...
+
     def save_template(self, team: str, name: str, data: dict[str, Any]) -> None: ...
 
     def get_template(self, team: str, name: str) -> dict[str, Any] | None: ...

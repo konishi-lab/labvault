@@ -7,52 +7,28 @@ import {
 } from "./share-dialog-helpers";
 
 describe("canGrant", () => {
+  // 2026-07-01 admin only 化: base は non-admin member 想定
   const base = {
     isSuperAdmin: false,
-    currentUserEmail: null,
-    createdBy: "alice@example.com",
     ownerTeam: "konishi-lab",
     isOwnerTeamAdmin: false,
   };
 
-  it("returns true for super admin even when not the owner", () => {
+  it("returns true for super admin", () => {
     expect(canGrant({ ...base, isSuperAdmin: true })).toBe(true);
   });
 
-  it("returns true when current user matches createdBy (case-insensitive)", () => {
-    expect(canGrant({ ...base, currentUserEmail: "Alice@example.com" })).toBe(
-      true,
-    );
-  });
-
   it("returns true when current user is owner-team admin", () => {
-    expect(
-      canGrant({
-        ...base,
-        currentUserEmail: "bob@example.com",
-        isOwnerTeamAdmin: true,
-      }),
-    ).toBe(true);
+    expect(canGrant({ ...base, isOwnerTeamAdmin: true })).toBe(true);
   });
 
-  it("returns false when owner-team admin but ownerTeam is null", () => {
+  it("returns false when owner-team admin flag set but ownerTeam is null", () => {
     expect(
-      canGrant({
-        ...base,
-        currentUserEmail: "bob@example.com",
-        ownerTeam: null,
-        isOwnerTeamAdmin: true,
-      }),
+      canGrant({ ...base, ownerTeam: null, isOwnerTeamAdmin: true }),
     ).toBe(false);
   });
 
-  it("returns false for a shared user (no admin / not owner)", () => {
-    expect(canGrant({ ...base, currentUserEmail: "shared@example.com" })).toBe(
-      false,
-    );
-  });
-
-  it("returns false when no currentUserEmail at all", () => {
+  it("returns false for a non-admin member (creator 本人でも grant 不可)", () => {
     expect(canGrant(base)).toBe(false);
   });
 });

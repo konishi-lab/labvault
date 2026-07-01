@@ -123,21 +123,24 @@ def _hdrs(team: str = "teamA") -> dict[str, str]:
 # --- 認可境界 ----------------------------------------------------------------
 
 
-def test_owner_can_grant(client: TestClient, record_id: str) -> None:
-    """record 作成者本人は grant できる。"""
-    c = _as(client, _owner)
+def test_owner_who_is_not_admin_cannot_grant(
+    client: TestClient, record_id: str
+) -> None:
+    """admin only 化 (2026-07-01): record 作成者本人でも admin でなければ
+    grant 不可。旧仕様では creator 本人にも grant を許していたが、実験者
+    が誤って他 team に record を公開する事故を防ぐため admin 集約に変更。
+    """
+    c = _as(client, _owner)  # owner@a.com は teamA member (admin ではない)
     res = c.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
         json={"email": "bob@b.com", "role": "viewer"},
     )
-    assert res.status_code == 201
-    body = res.json()
-    assert body["shares"]["bob@b.com"] == "viewer"
+    assert res.status_code == 403
 
 
 def test_team_admin_can_grant(client: TestClient, record_id: str) -> None:
-    """同 team の admin も grant できる (作成者本人でなくても OK)。"""
+    """同 team の admin は grant できる (現状の唯一の非 super_admin 経路)。"""
     c = _as(client, _team_a_admin)
     res = c.post(
         f"/api/records/{record_id}/shares",
@@ -147,10 +150,21 @@ def test_team_admin_can_grant(client: TestClient, record_id: str) -> None:
     assert res.status_code == 201
 
 
-def test_member_who_is_not_creator_cannot_grant(
+def test_super_admin_can_grant(client: TestClient, record_id: str) -> None:
+    """super_admin は team を跨いで grant できる (legacy admin role)."""
+    c = _as(client, _super_admin)
+    res = c.post(
+        f"/api/records/{record_id}/shares",
+        headers=_hdrs(),
+        json={"email": "bob@b.com", "role": "viewer"},
+    )
+    assert res.status_code == 201
+
+
+def test_member_who_is_not_admin_cannot_grant(
     client: TestClient, record_id: str
 ) -> None:
-    """同 team でも、作成者でなく admin でもない member は grant 不可。"""
+    """同 team でも admin でなければ grant 不可。"""
 
     def _team_a_member() -> User:
         return _user(email="someone@a.com", teams=[("teamA", "member")])
@@ -181,11 +195,11 @@ def test_outside_team_cannot_grant(client: TestClient, record_id: str) -> None:
 
 def test_self_share_rejected(client: TestClient, record_id: str) -> None:
     """自分自身に共有しようとすると 400。意味がないので UX 上のガード。"""
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)  # admin only 化により admin から発行
     res = c.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
-        json={"email": "owner@a.com", "role": "viewer"},
+        json={"email": "admin_a@a.com", "role": "viewer"},
     )
     assert res.status_code == 400
 
@@ -196,7 +210,7 @@ def test_invalid_role_rejected(client: TestClient, record_id: str) -> None:
     S1-CQ11/13 hot-fix (PR γ-1): Pydantic Literal で schema validation
     時に 422 を返す (handler 内 400 より構造的に早い段階で弾く)。
     """
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
@@ -206,7 +220,7 @@ def test_invalid_role_rejected(client: TestClient, record_id: str) -> None:
 
 
 def test_invalid_email_rejected(client: TestClient, record_id: str) -> None:
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
@@ -235,8 +249,8 @@ def test_outside_team_can_read_after_viewer_grant(
     client: TestClient, record_id: str
 ) -> None:
     """viewer 共有された外部 team member は閲覧可能。"""
-    # owner が grant
-    c1 = _as(client, _owner)
+    # team admin が grant (2026-07-01 admin only 化)
+    c1 = _as(client, _team_a_admin)
     r1 = c1.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
@@ -260,7 +274,7 @@ def test_third_party_still_blocked_after_grant_to_someone_else(
 
     S1-SEC6 (PR γ-2): uniform 404 で存在を漏らさない (旧 403)。
     """
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     c1.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
@@ -275,8 +289,9 @@ def test_third_party_still_blocked_after_grant_to_someone_else(
 # --- revoke 認可 / 挙動 -------------------------------------------------------
 
 
-def test_revoke_by_owner(client: TestClient, record_id: str) -> None:
-    c = _as(client, _owner)
+def test_revoke_by_admin(client: TestClient, record_id: str) -> None:
+    """revoke は grant と同じく admin only (2026-07-01)."""
+    c = _as(client, _team_a_admin)
     c.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
@@ -288,11 +303,28 @@ def test_revoke_by_owner(client: TestClient, record_id: str) -> None:
     assert "bob@b.com" not in body["shares"]
 
 
+def test_revoke_by_owner_forbidden(client: TestClient, record_id: str) -> None:
+    """作成者本人 (admin ではない member) の revoke は 403。"""
+    # まず admin が grant しておく
+    c_admin = _as(client, _team_a_admin)
+    c_admin.post(
+        f"/api/records/{record_id}/shares",
+        headers=_hdrs(),
+        json={"email": "bob@b.com", "role": "viewer"},
+    )
+    # owner (member) が revoke を試みる → 403
+    c_owner = _as(client, _owner)
+    res = c_owner.delete(
+        f"/api/records/{record_id}/shares/bob@b.com", headers=_hdrs()
+    )
+    assert res.status_code == 403
+
+
 def test_revoke_nonexistent_email_is_idempotent(
     client: TestClient, record_id: str
 ) -> None:
     """存在しない email を revoke しても 200。UI 上の race 対策で no-op。"""
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.delete(
         f"/api/records/{record_id}/shares/nobody@nowhere.com", headers=_hdrs()
     )
@@ -301,7 +333,7 @@ def test_revoke_nonexistent_email_is_idempotent(
 
 def test_shared_user_cannot_revoke(client: TestClient, record_id: str) -> None:
     """共有された側 (bob) は他人の share を revoke できない。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     c1.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
@@ -325,7 +357,7 @@ def test_list_shares_blocked_for_shared_user(
     自分の role は ``GET /api/records/{id}`` レスポンスの ``shares`` field
     (自分のエントリ 1 件のみ返る) で確認する。
     """
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     c1.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
@@ -353,11 +385,11 @@ def test_list_shares_blocked_for_non_shared_outsider(
     assert res.status_code == 404
 
 
-def test_list_shares_visible_to_owner_and_admin(
+def test_list_shares_visible_to_admin(
     client: TestClient, record_id: str
 ) -> None:
-    """grant 主体 (owner / team admin) は全件見える。"""
-    c1 = _as(client, _owner)
+    """grant 主体 (team admin / super_admin) は全件見える。"""
+    c1 = _as(client, _team_a_admin)
     c1.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
@@ -369,39 +401,34 @@ def test_list_shares_visible_to_owner_and_admin(
         json={"email": "charlie@c.com", "role": "viewer"},
     )
 
-    # owner は全件見える
     res = c1.get(f"/api/records/{record_id}/shares", headers=_hdrs())
     assert res.status_code == 200
     items = res.json()["items"]
     assert {"email": "bob@b.com", "role": "analyst"} in items
     assert {"email": "charlie@c.com", "role": "viewer"} in items
 
-    # team admin も同様
-    c2 = _as(client, _team_a_admin)
-    res2 = c2.get(f"/api/records/{record_id}/shares", headers=_hdrs())
-    assert res2.status_code == 200
-    items2 = res2.json()["items"]
-    assert len(items2) == 2
 
-
-# --- super-admin はいつでも全権限 ---------------------------------------------
-
-
-def test_super_admin_can_grant(client: TestClient, record_id: str) -> None:
-    c = _as(client, _super_admin)
-    res = c.post(
+def test_list_shares_blocked_for_owner_who_is_not_admin(
+    client: TestClient, record_id: str
+) -> None:
+    """admin only 化 (2026-07-01): record 作成者本人でも admin でなければ
+    shares list は 403。"""
+    c1 = _as(client, _team_a_admin)
+    c1.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
         json={"email": "bob@b.com", "role": "viewer"},
     )
-    assert res.status_code == 201
+    c2 = _as(client, _owner)
+    res = c2.get(f"/api/records/{record_id}/shares", headers=_hdrs())
+    assert res.status_code == 403
 
 
 # --- role 変更 (re-grant で上書き) ---------------------------------------------
 
 
 def test_regrant_updates_role(client: TestClient, record_id: str) -> None:
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     c.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),

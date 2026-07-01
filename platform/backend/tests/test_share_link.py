@@ -130,9 +130,27 @@ def _hdrs(team: str = "teamA") -> dict[str, str]:
 # --- token 発行 ---------------------------------------------------------
 
 
-def test_owner_can_issue_share_link(client: TestClient, record_id: str) -> None:
-    """record creator は share-link を発行できる。"""
-    c = _as(client, _owner)
+def test_owner_who_is_not_admin_cannot_issue_share_link(
+    client: TestClient, record_id: str
+) -> None:
+    """admin only 化 (2026-07-01): record creator 本人でも admin でなければ
+    share-link 発行不可。旧仕様では creator に発行を許していたが、
+    admin 集約に統一 (誤操作防止 + 監査追跡の明瞭化)。
+    """
+    c = _as(client, _owner)  # teamA member, not admin
+    res = c.post(
+        f"/api/records/{record_id}/share-links",
+        headers=_hdrs(),
+        json={"role": "viewer", "pseudo_email": "external+jane@klab.share"},
+    )
+    assert res.status_code == 403
+
+
+def test_admin_can_issue_share_link_full_response_shape(
+    client: TestClient, record_id: str
+) -> None:
+    """発行成功パスの response shape (旧 test_owner_can_issue_share_link 相当)."""
+    c = _as(client, _team_a_admin)
     res = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -192,7 +210,7 @@ def test_outsider_cannot_issue_share_link(client: TestClient, record_id: str) ->
 
 def test_invalid_role_rejected(client: TestClient, record_id: str) -> None:
     """S1-CQ11/13 (PR γ-1): Pydantic Literal で schema レベル 422。"""
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -202,7 +220,7 @@ def test_invalid_role_rejected(client: TestClient, record_id: str) -> None:
 
 
 def test_invalid_pseudo_email_rejected(client: TestClient, record_id: str) -> None:
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -212,7 +230,7 @@ def test_invalid_pseudo_email_rejected(client: TestClient, record_id: str) -> No
 
 
 def test_excessive_expires_rejected(client: TestClient, record_id: str) -> None:
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -227,7 +245,7 @@ def test_excessive_expires_rejected(client: TestClient, record_id: str) -> None:
 
 def test_expires_zero_means_no_expiry(client: TestClient, record_id: str) -> None:
     """expires_days=0 は「無期限」(expires_at=null) として記録される。"""
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -246,7 +264,7 @@ def test_expires_zero_means_no_expiry(client: TestClient, record_id: str) -> Non
 
 
 def test_owner_can_revoke_share_link(client: TestClient, record_id: str) -> None:
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     issued = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -268,7 +286,7 @@ def test_owner_can_revoke_share_link(client: TestClient, record_id: str) -> None
 
 def test_outsider_cannot_revoke(client: TestClient, record_id: str) -> None:
     """S1-SEC6 (PR γ-2): outsider は read 不可 → uniform 404 (旧 403)。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -293,7 +311,7 @@ def test_outsider_cannot_list(client: TestClient, record_id: str) -> None:
 def test_revoke_unknown_prefix_returns_404(
     client: TestClient, record_id: str
 ) -> None:
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.delete(
         f"/api/records/{record_id}/share-links/deadbeefdeadbeef", headers=_hdrs()
     )
@@ -308,7 +326,7 @@ def test_viewer_token_can_read_record(
 ) -> None:
     """viewer token で record 詳細を引ける (Authorization 経由)。"""
     # owner として発行 (token 取得)
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -334,7 +352,7 @@ def test_viewer_token_cannot_upload(
     client: TestClient, record_id: str, store: InMemoryShareLinkStore
 ) -> None:
     """viewer token で upload を試みると 403。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -358,7 +376,7 @@ def test_analyst_token_can_upload_with_audit(
     client: TestClient, record_id: str, lab: Lab
 ) -> None:
     """analyst token で upload OK、updated_by に pseudo_email が刻まれる。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -389,7 +407,7 @@ def test_analyst_token_can_create_child_with_audit(
     client: TestClient, record_id: str
 ) -> None:
     """analyst token で子 record 作成、created_by が pseudo_email。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -416,7 +434,7 @@ def test_analyst_token_cannot_create_root_record(
     client: TestClient, record_id: str
 ) -> None:
     """analyst token でも root record (parent_id 無し) は作れない。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -440,7 +458,7 @@ def test_analyst_token_cannot_grant_share(
     client: TestClient, record_id: str
 ) -> None:
     """analyst token でも shares grant (再共有) はできない。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -464,7 +482,7 @@ def test_analyst_token_cannot_issue_share_link(
     client: TestClient, record_id: str
 ) -> None:
     """analyst token でも token 再発行はできない (chain of trust 切断)。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -495,7 +513,7 @@ def test_token_cannot_access_other_record(
     other = lab.new("other-record", auto_log=False, created_by="owner@a.com")
 
     # rec1 用の viewer token を発行
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -525,7 +543,7 @@ def test_revoked_token_rejected(
     client: TestClient, record_id: str, store: InMemoryShareLinkStore
 ) -> None:
     """revoke 済 token は 401。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -616,7 +634,7 @@ def test_share_link_me_returns_scope(
     client: TestClient, record_id: str
 ) -> None:
     """share-link token で /me を叩くと scope (record_id / role / pseudo) が返る。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -650,7 +668,7 @@ def test_share_link_me_rejects_firebase_user(
     client: TestClient, record_id: str
 ) -> None:
     """Firebase user が /me を叩くと 403 (share-link 専用 endpoint)。"""
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.get("/api/share-links/me", headers=_hdrs())
     assert res.status_code == 403
 
@@ -668,7 +686,7 @@ def test_share_link_user_cannot_see_other_users_shares(
     rec.grant_share("alice@x.com", "viewer")
 
     # share-link token を pseudo_email='ext@y.com' で発行
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -693,7 +711,7 @@ def test_share_link_user_cannot_list_shares(
     client: TestClient, record_id: str
 ) -> None:
     """S1-CQ1: share-link token で /api/records/{id}/shares を叩くと 403。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -713,7 +731,7 @@ def test_share_link_user_blocked_from_shared_with_me(
     client: TestClient, record_id: str
 ) -> None:
     """S1-SEC1: share-link token で /shared-with-me を叩くと 403。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -743,7 +761,7 @@ def test_share_link_viewer_cannot_see_children(
     parent.sub("secret-child-2")
 
     # viewer scope の share-link token を発行
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -787,7 +805,7 @@ def test_share_link_analyst_bulk_upload_blocked_for_children_out_of_scope(
     parent.sub("child-A2")
 
     # analyst scope の share-link token を発行
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -880,7 +898,7 @@ def test_share_link_viewer_cannot_use_edit_endpoints(
     記述ミスで将来誰かが get_lab → get_lab_relaxed に切替え、share-link
     user に意図せず権限を渡してしまっても、この test が落ちて発覚する。
     """
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -923,7 +941,7 @@ def test_share_link_analyst_cannot_use_edit_endpoints(
     file upload + bulk-upload) のみで、record 自身の edit (status / tags
     等) や team 一覧は不可。
     """
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -964,7 +982,7 @@ def test_b1_pseudo_email_matching_allowed_users_rejected(
         {"alice@example.com": {"email": "alice@example.com", "active": True}}
     )
 
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -982,7 +1000,7 @@ def test_b1_pseudo_email_not_in_allowed_users_accepted(
     client: TestClient, record_id: str, fake_db: Any
 ) -> None:
     """allowed_users に居ない email なら通常通り 201。"""
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -995,7 +1013,7 @@ def test_audit_source_share_link_on_child_create(
     client: TestClient, record_id: str
 ) -> None:
     """analyst token で子 record を作ると created/updated 両方が "share-link"。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -1022,7 +1040,7 @@ def test_audit_source_firebase_on_normal_create(
     client: TestClient,
 ) -> None:
     """Firebase user (owner) が root record を作ると created/updated 両方 "firebase"。"""
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.post(
         "/api/records",
         headers=_hdrs(),
@@ -1043,7 +1061,7 @@ def test_audit_source_updated_only_when_share_link_appends_file(
 
     # owner が作成 (already exists via fixture, created_by="owner@a.com")。
     # 一度 firebase 経路でファイルを足して audit_source を "firebase" に焼く
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     res0 = c1.post(
         f"/api/records/{record_id}/files",
         headers=_hdrs(),
@@ -1084,7 +1102,7 @@ def test_audit_source_roundtrip_via_get(
     rec._updated_audit_source = "share-link"
     rec._persist()
 
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     res = c.get(f"/api/records/{record_id}", headers=_hdrs())
     assert res.status_code == 200
     body = res.json()
@@ -1099,7 +1117,7 @@ def test_obs9_last_used_at_updates_on_verify(
     client: TestClient, record_id: str, store: InMemoryShareLinkStore
 ) -> None:
     """S1-OBS9/UX5: share-link token を使った時に last_used_at が更新される。"""
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -1119,7 +1137,7 @@ def test_obs9_last_used_at_updates_on_verify(
     assert res.status_code == 200
 
     # owner 視点で list すると last_used_at が入っている
-    _as(client, _owner)
+    _as(client, _team_a_admin)
     list_res = client.get(
         f"/api/records/{record_id}/share-links", headers=_hdrs()
     )
@@ -1188,7 +1206,7 @@ def test_data5_record_delete_cascades_share_link_revoke(
 ) -> None:
     """S1-DATA5: record 削除時に該当 record の share-link が一括 revoke される。"""
     # 2 件発行
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     issued1 = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -1223,7 +1241,7 @@ def test_data5_record_delete_idempotent_for_already_revoked(
     client: TestClient, record_id: str
 ) -> None:
     """既に revoke 済 link は再 revoke しない (idempotent)。"""
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     issued = c.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -1308,7 +1326,7 @@ def test_obs3_bulk_upload_events_include_share_link_actor(
     parent = lab.get(record_id)
     parent.sub("child-a")
 
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     issued = c1.post(
         f"/api/records/{record_id}/share-links",
         headers=_hdrs(),
@@ -1356,7 +1374,7 @@ def test_obs3_bulk_upload_events_include_firebase_actor(
     parent = lab.get(record_id)
     parent.sub("child-fb")
 
-    c = _as(client, _owner)
+    c = _as(client, _team_a_admin)
     with caplog.at_level(_logging.INFO, logger="app.routers.bulk_upload"):
         res = c.post(
             f"/api/records/{record_id}/bulk-upload?rows=1&cols=1",
@@ -1374,7 +1392,8 @@ def test_obs3_bulk_upload_events_include_firebase_actor(
         if isinstance(f, dict) and f.get("event", "").startswith("bulk_upload.")
     ]
     for f in bulk_events:
-        assert f.get("actor") == "owner@a.com"
+        # admin only 化 (2026-07-01) 後、bulk_upload の actor は team admin
+        assert f.get("actor") == "admin_a@a.com"
         assert f.get("actor_audit_source") == "firebase"
 
 
@@ -1415,7 +1434,7 @@ def test_sec6_viewer_can_read_but_not_write_returns_403_not_404(
     (404 にすると逆に user が混乱する。存在は既知なので隠す意味なし)。
     """
     # owner が viewer share を grant
-    c1 = _as(client, _owner)
+    c1 = _as(client, _team_a_admin)
     c1.post(
         f"/api/records/{record_id}/shares",
         headers=_hdrs(),
