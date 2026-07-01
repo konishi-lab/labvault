@@ -280,7 +280,7 @@ async def bulk_upload(
                 # なし。Firebase shares 経由の analyst も同様にガード強化
                 # (child が parent より厳しい shares を持つ場合の暗黙昇格を
                 # 防ぐ)。
-                if not can_analyze(user, target):
+                if not can_analyze(user, target, lab=lab):
                     errors.append(
                         f"{filename}: forbidden (no analyze permission on "
                         f"child {target.id})"

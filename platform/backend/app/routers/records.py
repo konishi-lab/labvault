@@ -722,7 +722,9 @@ def get_children(
     # S1-SEC3: 子ごとの認可。share-link scope user は scope record のみ
     # 通過 (parent 自身は children に出ない構造なので、share-link で
     # parent を持つ user は children を 0 件として見ることになる)。
-    visible_children = [c for c in all_children_raw if can_read(user, c)]
+    # 2026-07-01: 親 shares を子孫が継承する。can_read に lab を渡すと
+    # 直接 shares に居ない user でも祖先の shares を辿って True になる。
+    visible_children = [c for c in all_children_raw if can_read(user, c, lab=lab)]
     total = len(visible_children)
     children = visible_children[offset : offset + limit]
 
@@ -752,8 +754,8 @@ def get_children_conditions(
     # C2 (2026-06-30): lab.list(parent_id=...) 経由で push-down する。
     all_children = lab.list(parent_id=record_id, limit=limit)
 
-    # S1-SEC3: per-child 認可
-    children = [c for c in all_children if can_read(user, c)]
+    # S1-SEC3: per-child 認可 (2026-07-01 継承対応で lab を渡す)
+    children = [c for c in all_children if can_read(user, c, lab=lab)]
 
     items = []
     for c in children:

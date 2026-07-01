@@ -189,6 +189,11 @@ export function CellLogSection({
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 2026-07-01: セクション全体をデフォルト折り畳み。record 詳細画面は他の
+  // カード (conditions / results / files / cell logs) が縦に長く伸びがちで、
+  // Notebook 由来の record では特に cell log セクションだけで 50+ 行になる。
+  // 「一覧するときは基本閉じておいて、必要になったら開く」に統一。
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -208,53 +213,72 @@ export function CellLogSection({
     return null;
   }
 
+  const count = entries?.length ?? 0;
+  const errorCount = entries?.filter((e) => e.error).length ?? 0;
+
   return (
     <Card id={anchorId} className="md:col-span-2 scroll-mt-20">
-      <CardHeader>
-        <CardTitle className="text-base flex items-center gap-2">
-          Notebook セルログ
-          {entries && (
-            <span className="text-xs font-normal text-muted-foreground">
-              ({entries.length}
-              {hasMore && "+"})
-            </span>
-          )}
-          <span
-            className="text-xs font-normal text-muted-foreground"
-            title="IPython hooks が pre/post_run_cell で自動記録したセル実行履歴。LLM が Notebook で何をやったか辿るための差別化資産 (R13)"
-          >
-            · 自動記録
-          </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
-        {loading && (
-          <div className="p-3 space-y-2">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-6 w-full" />
-            ))}
-          </div>
-        )}
-        {error && (
-          <p className="px-3 py-2 text-xs text-destructive">
-            ログの取得に失敗しました: {error}
-          </p>
-        )}
-        {!loading && !error && entries && (
-          <div className="divide-y-0">
-            {entries.map((e) => (
-              <CellRow key={e.cell_id} entry={e} />
-            ))}
-            {hasMore && (
-              <div className="px-3 py-2 text-[10px] text-amber-700 bg-amber-50 border-t border-amber-200">
-                ⚠ 表示上限 (200 件) に達しました。それ以降のセルログは
-                MCP `get_notebook_log` または SDK `record.cell_logs()`
-                から `limit` を上げて取得してください。
-              </div>
+      <CardHeader className="p-0">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="w-full text-left px-6 py-4 hover:bg-muted/30 cursor-pointer flex items-center gap-2"
+          aria-expanded={open}
+        >
+          <CardTitle className="text-base flex items-center gap-2 flex-1">
+            Notebook セルログ
+            {entries && (
+              <span className="text-xs font-normal text-muted-foreground">
+                ({count}
+                {hasMore && "+"}
+                {errorCount > 0 && (
+                  <span className="text-red-700"> · ⚠ {errorCount}</span>
+                )}
+                )
+              </span>
             )}
-          </div>
-        )}
-      </CardContent>
+            <span
+              className="text-xs font-normal text-muted-foreground"
+              title="IPython hooks が pre/post_run_cell で自動記録したセル実行履歴。LLM が Notebook で何をやったか辿るための差別化資産 (R13)"
+            >
+              · 自動記録
+            </span>
+          </CardTitle>
+          <span className="text-xs text-muted-foreground shrink-0">
+            {open ? "▼" : "▶"}
+          </span>
+        </button>
+      </CardHeader>
+      {open && (
+        <CardContent className="p-0">
+          {loading && (
+            <div className="p-3 space-y-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-6 w-full" />
+              ))}
+            </div>
+          )}
+          {error && (
+            <p className="px-3 py-2 text-xs text-destructive">
+              ログの取得に失敗しました: {error}
+            </p>
+          )}
+          {!loading && !error && entries && (
+            <div className="divide-y-0 border-t border-border/40">
+              {entries.map((e) => (
+                <CellRow key={e.cell_id} entry={e} />
+              ))}
+              {hasMore && (
+                <div className="px-3 py-2 text-[10px] text-amber-700 bg-amber-50 border-t border-amber-200">
+                  ⚠ 表示上限 (200 件) に達しました。それ以降のセルログは
+                  MCP `get_notebook_log` または SDK `record.cell_logs()`
+                  から `limit` を上げて取得してください。
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      )}
     </Card>
   );
 }
