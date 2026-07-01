@@ -425,6 +425,78 @@ class TestLabPublicAPI:
         assert [log["cell_number"] for log in logs] == [1, 2]
 
 
+class TestLabGetUsage:
+    """Lab.get_usage — team の storage 集計 (2026-07-01)。"""
+
+    def _seed(self, lab: Lab) -> None:
+        from labvault.core.types import DataRef
+
+        rec1 = lab.new("a1", auto_log=False, created_by="alice@x.com")
+        rec2 = lab.new("a2", auto_log=False, created_by="alice@x.com")
+        rec3 = lab.new("b1", auto_log=False, created_by="bob@x.com")
+        for r, files in (
+            (
+                rec1,
+                [
+                    DataRef(name="x.npz", size_bytes=100_000),
+                    DataRef(name="x.png", size_bytes=500),
+                ],
+            ),
+            (rec2, [DataRef(name="y.npz", size_bytes=200_000)]),
+            (rec3, [DataRef(name="z.png", size_bytes=1_000)]),
+        ):
+            r._data_refs.extend(files)
+            r._persist()
+
+    def test_totals(self, lab: Lab) -> None:
+        self._seed(lab)
+        s = lab.get_usage()
+        assert s["total_records"] == 3
+        assert s["total_files"] == 4
+        assert s["total_bytes"] == 301_500
+
+    def test_by_creator_split(self, lab: Lab) -> None:
+        self._seed(lab)
+        s = lab.get_usage()
+        assert s["by_creator"]["alice@x.com"] == {
+            "records": 2,
+            "files": 3,
+            "bytes": 300_500,
+        }
+        assert s["by_creator"]["bob@x.com"] == {
+            "records": 1,
+            "files": 1,
+            "bytes": 1_000,
+        }
+
+    def test_by_extension_and_type(self, lab: Lab) -> None:
+        self._seed(lab)
+        s = lab.get_usage()
+        assert s["by_extension"]["npz"] == {"files": 2, "bytes": 300_000}
+        assert s["by_extension"]["png"] == {"files": 2, "bytes": 1_500}
+        # 全部 experiment (default type)
+        assert s["by_type"]["experiment"] == 3
+
+    def test_created_by_filter(self, lab: Lab) -> None:
+        self._seed(lab)
+        s = lab.get_usage(created_by="alice@x.com")
+        assert s["total_records"] == 2
+        assert s["total_files"] == 3
+        assert s["total_bytes"] == 300_500
+        assert set(s["by_creator"].keys()) == {"alice@x.com"}
+
+    def test_deleted_records_excluded(self, lab: Lab) -> None:
+        from labvault.core.types import DataRef
+
+        rec = lab.new("gone", auto_log=False, created_by="alice@x.com")
+        rec._data_refs.append(DataRef(name="gone.npz", size_bytes=999))
+        rec._persist()
+        lab.delete(rec.id)
+        s = lab.get_usage()
+        assert s["total_records"] == 0
+        assert s["total_bytes"] == 0
+
+
 class TestNoPrivateAccessInvariant:
     """C2 invariant: 外部モジュールから lab._team / lab._metadata を触らない。
 

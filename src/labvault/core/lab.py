@@ -580,6 +580,91 @@ class Lab:
         """
         self._metadata.save_cell_log(self._team, record_id, data)
 
+    def get_usage(
+        self,
+        *,
+        created_by: str | None = None,
+        max_records: int = 20000,
+    ) -> dict[str, Any]:
+        """team の storage 利用量を集計する (2026-07-01)。
+
+        `data_refs[].size_bytes` を record 全件走査して合算し、以下を返す:
+
+        - ``total_records``: 削除されていない record 数
+        - ``total_files``: 添付ファイル総数 (data_refs entries)
+        - ``total_bytes``: 添付ファイルの size_bytes 合計
+        - ``by_creator``: ``{email: {records, files, bytes}}``
+        - ``by_extension``: ``{ext: {files, bytes}}`` (先頭 20 拡張子)
+        - ``by_type``: ``{record_type: records}``
+
+        Args:
+            created_by: email 完全一致で絞り込む (省略時は team 全体)
+            max_records: 走査上限 (安全弁)。大きい team では調整推奨。
+
+        Firestore の集計 API は限定的なので client-side 集計。5,000〜10,000
+        records で数秒。MCP tool / CLI ``labvault usage`` から呼ぶ想定。
+        """
+        from collections import Counter, defaultdict
+
+        target = (created_by or "").strip().lower() or None
+        rows = self._metadata.list_records(
+            self._team,
+            created_by=created_by,
+            parent_id="__unset__",  # parent フィルタなし = 全 record
+            limit=max_records,
+        )
+
+        total_records = 0
+        total_files = 0
+        total_bytes = 0
+        by_creator: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"records": 0, "files": 0, "bytes": 0}
+        )
+        ext_files: Counter[str] = Counter()
+        ext_bytes: Counter[str] = Counter()
+        by_type: Counter[str] = Counter()
+
+        for row in rows:
+            if row.get("deleted_at"):
+                continue
+            cb_raw = row.get("created_by") or ""
+            cb = cb_raw.strip().lower() if isinstance(cb_raw, str) else ""
+            if target is not None and cb != target:
+                continue
+            total_records += 1
+            by_type[row.get("type") or "<unknown>"] += 1
+            creator_key = cb_raw or "<unknown>"
+            by_creator[creator_key]["records"] += 1
+            for ref in row.get("data_refs") or []:
+                if not isinstance(ref, dict):
+                    continue
+                size = int(ref.get("size_bytes") or 0)
+                total_files += 1
+                total_bytes += size
+                by_creator[creator_key]["files"] += 1
+                by_creator[creator_key]["bytes"] += size
+                name = ref.get("name") or ""
+                if isinstance(name, str) and "." in name:
+                    ext = name.rsplit(".", 1)[-1].lower()
+                else:
+                    ext = "<no-ext>"
+                ext_files[ext] += 1
+                ext_bytes[ext] += size
+
+        top_ext = ext_files.most_common(20)
+        return {
+            "team": self._team,
+            "total_records": total_records,
+            "total_files": total_files,
+            "total_bytes": total_bytes,
+            "by_creator": dict(by_creator),
+            "by_extension": {
+                ext: {"files": count, "bytes": ext_bytes[ext]}
+                for ext, count in top_ext
+            },
+            "by_type": dict(by_type),
+        }
+
     @property
     def sync_status(self) -> dict[str, Any]:
         """同期状態を返す。"""
