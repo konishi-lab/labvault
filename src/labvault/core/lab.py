@@ -659,8 +659,7 @@ class Lab:
             "total_bytes": total_bytes,
             "by_creator": dict(by_creator),
             "by_extension": {
-                ext: {"files": count, "bytes": ext_bytes[ext]}
-                for ext, count in top_ext
+                ext: {"files": count, "bytes": ext_bytes[ext]} for ext, count in top_ext
             },
             "by_type": dict(by_type),
         }

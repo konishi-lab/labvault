@@ -118,9 +118,7 @@ def test_tags_composite_index_exists() -> None:
         for idx in data["indexes"]
         if _fields_of(idx) == expected and idx.get("queryScope") == "COLLECTION"
     ]
-    assert len(found) == 1, (
-        f"Missing COLLECTION composite index for tags: {expected}"
-    )
+    assert len(found) == 1, f"Missing COLLECTION composite index for tags: {expected}"
 
 
 def test_shared_links_does_not_require_composite_index() -> None:

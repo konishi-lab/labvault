@@ -322,17 +322,14 @@ def usage(created_by: str | None, top_creators: int) -> None:
             ext.items(), key=lambda kv: kv[1]["bytes"], reverse=True
         ):
             click.echo(
-                f"  {stats['files']:5,}  .{e:<12s}  "
-                f"{_human_bytes(stats['bytes'])}"
+                f"  {stats['files']:5,}  .{e:<12s}  {_human_bytes(stats['bytes'])}"
             )
         click.echo("")
 
     types = summary["by_type"]
     if types:
         click.echo("by record type:")
-        for t, count in sorted(
-            types.items(), key=lambda kv: kv[1], reverse=True
-        ):
+        for t, count in sorted(types.items(), key=lambda kv: kv[1], reverse=True):
             click.echo(f"  {count:5,}  {t}")
 
 
