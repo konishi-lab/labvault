@@ -137,8 +137,7 @@ def test_share_events_index_exists() -> None:
     found = [
         idx
         for idx in data["indexes"]
-        if _fields_of(idx) == expected
-        and idx.get("collectionGroup") == "share_events"
+        if _fields_of(idx) == expected and idx.get("collectionGroup") == "share_events"
     ]
     assert len(found) == 1, f"Missing share_events composite index: {expected}"
 

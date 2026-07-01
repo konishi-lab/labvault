@@ -256,10 +256,7 @@ class FirestoreMetadataBackend:
     def _share_events_ref(self, team: str) -> Any:
         """``teams/{team}/share_events`` collection ref."""
         return (
-            self._get_db()
-            .collection("teams")
-            .document(team)
-            .collection("share_events")
+            self._get_db().collection("teams").document(team).collection("share_events")
         )
 
     def append_share_event(self, team: str, event: dict[str, Any]) -> None:
