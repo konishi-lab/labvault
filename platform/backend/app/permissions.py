@@ -16,25 +16,49 @@ helper を 1 つ持って全 handler でそれを使う形にする。
 の 3 段階で使い分ける。share は **編集権限を渡さない** ことが重要 (PR
 時点でのスコープ決定): share された側は record 自体を変更できず、子
 record を作るか viewer として読むだけ。
+
+## share の子孫継承 (2026-07-01)
+
+親 record に付いた ``shares`` は、子 / 孫 / ... にも継承される (実験
+シリーズを丸ごと共有するユースケースが主。root を共有すれば下の解析
+record 全部が付いてくる)。
+
+- 継承するのは ``can_read`` / ``can_analyze`` のみ。``can_grant`` /
+  ``can_edit`` は継承しない (共有された人が再共有・編集できるように
+  なると事故が起きやすいため意図的に据え置き)
+- 子に直接 ``shares[email]`` エントリがある場合はそれが優先。継承は
+  「エントリが無い」ときのみ。これにより特定の子だけ role を下げる
+  操作 (parent=analyst, child=viewer 明示) が可能
+- 継承経路の追跡には lab (parent を fetch する) が必要。lab を渡さない
+  ``can_read(user, rec)`` は継承しない (後方互換)。fetch_readable_or_404
+  / fetch_analyzable_or_403 経由なら自動で lab が渡される
+- share-link scope (token 公開リンク) は依然として **record 1 本固定**。
+  scope check が先に走り、子孫には決して降りない (Phase 2 契約)
+- ループ / 深すぎる chain は ``_MAX_PARENT_DEPTH`` (=32) で切る
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from fastapi import HTTPException
-
-from .auth import User, is_super_admin
 
 # S1-CQ4 (2026-06-29): 共有 role の定義は SDK 側 (``Record.SHARE_ROLES``)
 # を single source of truth として import する。旧実装では backend に
 # `VALID_SHARE_ROLES` を別途定義していて、SDK と手動同期になっていた。
 from labvault.core.record import Record as _SDKRecord
 
+from .auth import User, is_super_admin
+
 ROLE_VIEWER = "viewer"
 ROLE_ANALYST = "analyst"
 # 後方互換のため定数も export 維持 (handler が import している)
 VALID_SHARE_ROLES = _SDKRecord.SHARE_ROLES
+
+# 親を辿る最大段数。実測 chain は 1-3 段が普通だが、循環 / 悪意ある深い
+# chain (実装ミスで parent_id が壊れているケース) の暴走を防ぐガード。
+_MAX_PARENT_DEPTH = 32
 
 
 def _get_share_role(record: Any, user_email: str) -> str | None:
@@ -61,7 +85,7 @@ def _get_share_role(record: Any, user_email: str) -> str | None:
     return None
 
 
-def can_read(user: User, record: Any) -> bool:
+def can_read(user: User, record: Any, *, lab: Any = None) -> bool:
     """user がこの record の **詳細 / ファイル DL** を見られるか。
 
     判定順:
@@ -71,6 +95,9 @@ def can_read(user: User, record: Any) -> bool:
     2. super_admin → 常に True
     3. team membership (record.team が user.teams に居る) → True
     4. shares に user.email がある (role を問わず) → True
+    5. (2026-07-01) lab が渡されていれば、親 record の shares を辿って
+       いずれかに user.email があれば True (子孫継承)。直接 4 で match
+       した場合は 4 が優先されるため、ここには到達しない
     """
     if user.share_link_scope is not None:
         return _matches_share_link_scope(user.share_link_scope, record)
@@ -79,10 +106,12 @@ def can_read(user: User, record: Any) -> bool:
     record_team = _record_team(record)
     if record_team and user.has_team(record_team):
         return True
-    return _get_share_role(record, user.email) is not None
+    if _get_share_role(record, user.email) is not None:
+        return True
+    return _inherits_share_role(lab, record, user.email) is not None
 
 
-def can_analyze(user: User, record: Any) -> bool:
+def can_analyze(user: User, record: Any, *, lab: Any = None) -> bool:
     """user がこの record に対し **解析 (子 record 作成 + file/results 投稿)**
     できるか。
 
@@ -91,8 +120,12 @@ def can_analyze(user: User, record: Any) -> bool:
        scope.role == "analyst" のみ True。viewer scope はここで False。
        scope mismatch も False (他の path に fall through しない)
     2. team membership → True (team 内ユーザーは元々何でもできる)
-    3. shares で role == "analyst" → True
-    4. それ以外 (super_admin だけ / viewer share / 関係なし) → False
+    3. shares に user.email エントリがあればそれを見る:
+       - role == "analyst" → True
+       - role == "viewer"  → False (**明示的に downgrade された child**
+         なら継承しない。「parent=analyst でも child=viewer 指定」ができる)
+    4. (2026-07-01) shares に直接エントリが無ければ、lab 経由で親を
+       辿って **最も近い祖先** の role を継承 (analyst のみ True)
     """
     if user.share_link_scope is not None:
         return (
@@ -104,7 +137,10 @@ def can_analyze(user: User, record: Any) -> bool:
     record_team = _record_team(record)
     if record_team and user.has_team(record_team):
         return True
-    return _get_share_role(record, user.email) == ROLE_ANALYST
+    direct = _get_share_role(record, user.email)
+    if direct is not None:
+        return direct == ROLE_ANALYST
+    return _inherits_share_role(lab, record, user.email) == ROLE_ANALYST
 
 
 def can_grant(user: User, record: Any) -> bool:
@@ -161,13 +197,13 @@ def can_edit(user: User, record: Any) -> bool:
 # --- HTTPException を投げる require_* ヘルパ ---
 
 
-def require_read(user: User, record: Any) -> None:
-    if not can_read(user, record):
+def require_read(user: User, record: Any, *, lab: Any = None) -> None:
+    if not can_read(user, record, lab=lab):
         raise HTTPException(status_code=403, detail="forbidden")
 
 
-def require_analyze(user: User, record: Any) -> None:
-    if not can_analyze(user, record):
+def require_analyze(user: User, record: Any, *, lab: Any = None) -> None:
+    if not can_analyze(user, record, lab=lab):
         raise HTTPException(status_code=403, detail="analyst access required")
 
 
@@ -207,7 +243,7 @@ def fetch_readable_or_404(lab: Any, record_id: str, user: User) -> Any:
         rec = lab.get(record_id)
     except RecordNotFoundError:
         raise HTTPException(status_code=404, detail="Record not found") from None
-    if not can_read(user, rec):
+    if not can_read(user, rec, lab=lab):
         # 404 で uniform。403 にすると存在を漏らす。
         raise HTTPException(status_code=404, detail="Record not found")
     return rec
@@ -221,7 +257,7 @@ def fetch_analyzable_or_403(lab: Any, record_id: str, user: User) -> Any:
       隠す意味なし、書込権限不足を明示)
     """
     rec = fetch_readable_or_404(lab, record_id, user)
-    if not can_analyze(user, rec):
+    if not can_analyze(user, rec, lab=lab):
         raise HTTPException(
             status_code=403, detail="analyst access required"
         )
@@ -319,4 +355,48 @@ def _record_field(record: Any, name: str) -> Any:
         return getattr(record, name)
     if isinstance(record, dict):
         return record.get(name)
+    return None
+
+
+def _walk_parents(lab: Any, record: Any) -> Iterator[Any]:
+    """親から祖父母、曾祖父母…と順に yield する。
+
+    - ``parent_id`` が None / 空 / str 以外なら停止
+    - ``lab.get`` が RecordNotFoundError なら停止 (壊れた chain の途中で
+      切れているケース。継承を諦める方が安全)
+    - 循環参照 (A→B→A) や過剰に深い chain は ``_MAX_PARENT_DEPTH`` で切る
+    - lab が None なら継承なし (後方互換フォールバック)
+    """
+    if lab is None:
+        return
+    from labvault.core.exceptions import RecordNotFoundError
+
+    seen: set[str] = set()
+    start_id = _record_id(record)
+    if isinstance(start_id, str):
+        seen.add(start_id)
+
+    current = record
+    for _ in range(_MAX_PARENT_DEPTH):
+        pid = _record_field(current, "parent_id")
+        if not isinstance(pid, str) or not pid or pid in seen:
+            return
+        seen.add(pid)
+        try:
+            parent = lab.get(pid)
+        except RecordNotFoundError:
+            return
+        yield parent
+        current = parent
+
+
+def _inherits_share_role(lab: Any, record: Any, user_email: str) -> str | None:
+    """親を辿って最初に見つかった (= 最も近い祖先の) share role を返す。
+
+    見つからなければ None。lab=None なら常に None (継承しない)。
+    """
+    for ancestor in _walk_parents(lab, record):
+        role = _get_share_role(ancestor, user_email)
+        if role is not None:
+            return role
     return None
