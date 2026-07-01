@@ -7,35 +7,26 @@ import type { ShareLinkInfo } from "@/lib/api";
 
 export interface CanGrantInput {
   isSuperAdmin: boolean;
-  currentUserEmail: string | null;
-  createdBy: string;
   ownerTeam: string | null;
   isOwnerTeamAdmin: boolean;
 }
 
 /**
- * S1 Phase 1B: ``grant 主体`` 判定。backend の ``can_grant`` と一致:
- * super_admin OR record.created_by 本人 OR owner team の admin。
- * shares 経由でアクセスしている user は再 grant 不可 (= ここで false)。
+ * ``grant 主体`` 判定。backend の ``can_grant`` と一致:
+ * super_admin OR owner team の admin。
  *
- * 比較は両側 lowercase で normalize する (Firestore 上の email は
- * lowercase 正規化済みだが、frontend の入力ソース次第で大文字混じり
- * が混入し得る)。
+ * **admin only 化 (2026-07-01)**: 以前は record.created_by 本人にも
+ * grant を許していたが、実験者が誤って他 team に record を公開する
+ * 事故を防ぐため admin 集約に統一。record 作成者は team admin に
+ * 依頼する形になる。shares 経由でアクセスしている user は再 grant
+ * 不可 (= ここで false) — 従来通り。
  */
 export function canGrant({
   isSuperAdmin,
-  currentUserEmail,
-  createdBy,
   ownerTeam,
   isOwnerTeamAdmin,
 }: CanGrantInput): boolean {
   if (isSuperAdmin) return true;
-  if (
-    currentUserEmail !== null &&
-    createdBy.toLowerCase() === currentUserEmail.toLowerCase()
-  ) {
-    return true;
-  }
   if (ownerTeam !== null && isOwnerTeamAdmin) return true;
   return false;
 }

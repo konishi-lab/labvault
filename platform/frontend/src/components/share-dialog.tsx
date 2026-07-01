@@ -93,13 +93,11 @@ export function ShareDialog({
   // 罠を構造的に防ぐ。
   const [justIssued, setJustIssued] = useState<CreatedShareLink | null>(null);
 
-  // S1 TEST15 (2026-06-30): pure logic は share-dialog-helpers に切出し、
-  // unit test 可能にしている。backend の ``can_grant`` と一致:
-  // super_admin OR record.created_by 本人 OR owner team の admin。
+  // pure logic は share-dialog-helpers に切出し、unit test 可能にして
+  // いる。backend の ``can_grant`` と一致: super_admin OR owner team の
+  // admin (admin only 化 2026-07-01)。
   const canGrant = computeCanGrant({
     isSuperAdmin,
-    currentUserEmail,
-    createdBy,
     ownerTeam,
     isOwnerTeamAdmin,
   });
@@ -370,9 +368,10 @@ export function ShareDialog({
           </form>
         ) : (
           <p className="text-xs text-muted-foreground border-t pt-3">
-            共有の追加・削除は record の作成者 (
-            <span className="font-mono">{createdBy || "(不明)"}</span>) または
-            team admin のみが行えます。
+            共有の追加・削除は所有 team の admin のみが行えます (2026-07-01
+            より admin 集約)。record 作成者 (
+            <span className="font-mono">{createdBy || "(不明)"}</span>) が
+            共有したい場合は所属 team の admin に依頼してください。
           </p>
         )}
 

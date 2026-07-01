@@ -148,15 +148,19 @@ def can_grant(user: User, record: Any) -> bool:
 
     判定順:
     1. share-link user (S1 Phase 2) → 常に False (再共有 / token 再発行
-       を禁止。token は record owner / team admin から明示発行されたもの
-       だけが有効)
+       を禁止。token は team admin から明示発行されたものだけが有効)
     2. super_admin → True
-    3. user.email == record.created_by → True (本人による grant)
-    4. record.team の team admin → True
+    3. record.team の team admin → True
+
+    **admin only 化 (2026-07-01)**: 以前は `record.created_by` 本人にも
+    grant を許していたが、実験者が誤って他 team に record を公開してし
+    まう事故が起き得るため、admin 集約に統一。record 作成者は team
+    admin に依頼する形になる。監査目的でも「grant は必ず admin」の方が
+    追跡しやすい。
 
     **「他人が grant した share を引き継いだ別チームメンバー」は grant
-    できない** (= shares 経由でアクセスしている人は再共有不可)。意図的な
-    制限で、share が再帰的に拡散するのを防ぐ。
+    できない** (= shares 経由でアクセスしている人は再共有不可) — こちらの
+    伝播防止は継続。
     """
     if user.share_link_scope is not None:
         return False
@@ -165,16 +169,7 @@ def can_grant(user: User, record: Any) -> bool:
     record_team = _record_team(record)
     if not record_team:
         return False
-    # team admin
-    if user.role_in(record_team) == "admin":
-        return True
-    # record creator 本人
-    created_by = _record_field(record, "created_by")
-    return bool(
-        isinstance(created_by, str)
-        and created_by
-        and user.email == created_by.strip().lower()
-    )
+    return user.role_in(record_team) == "admin"
 
 
 def can_edit(user: User, record: Any) -> bool:
